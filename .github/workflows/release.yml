@@ -78,7 +78,7 @@ jobs:
           mkdir -p staging/rs-majula
           cp target/${{ matrix.target }}/release/rs-server${{ matrix.ext }} staging/rs-majula/
           cp -r content staging/rs-majula/
-          cp -r keys staging/rs-majula/
+          cp -r .keys staging/rs-majula/
           cp -r public staging/rs-majula/
           tar -czf rs-majula-${{ matrix.target }}.tar.gz -C staging rs-majula
 
