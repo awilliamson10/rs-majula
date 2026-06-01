@@ -1,0 +1,106 @@
+[workspace]
+members = [
+    "rs-engine",
+    "rs-engine/rs-cam",
+    "rs-engine/rs-datastruct",
+    "rs-engine/rs-inv",
+    "rs-engine/rs-vm",
+    "rs-engine/rs-util",
+    "rs-engine/rs-entity",
+    "rs-engine/rs-zone",
+    "rs-engine/rs-grid",
+    "rs-engine/rs-var",
+    "rs-engine/rs-queue",
+    "rs-engine/rs-hero",
+    "rs-engine/rs-info",
+    "rs-engine/rs-timer",
+    "rs-engine/rs-stat",
+    "rs-pack",
+    "rs-protocol",
+    "rs-protocol/macros",
+    "rs-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+authors = ["RustCityRS"]
+license = "MIT"
+repository = "https://github.com/RustCityRS/rs-majula"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.52", features = ["full"] }
+tokio-postgres = "0.7"
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
+
+# Serialization
+sailfish = "0.11"
+
+# Security
+argon2 = { version = "0.5", features = ["std"] }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Cryptography
+rs-crypto = "0.2"
+
+# HTTP/Networking
+
+# Fast hashing for integer keys
+rustc-hash = "2"
+
+# Fast integer-to-string formatting
+itoa = "1"
+
+# MISC
+rs-io = "0.2"
+rs-pathfinder = "0.1"
+rs-runec = "0.2"
+num_enum = "0.7"
+notify = "8.2"
+
+# CLI
+clap = { version = "4.6", features = ["derive"] }
+
+# Terminal UI
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+# Internal crates
+rs-protocol = { path = "rs-protocol" }
+rs-protocol-macros = { path = "rs-protocol/macros" }
+rs-cam = { path = "rs-engine/rs-cam" }
+rs-datastruct = { path = "rs-engine/rs-datastruct" }
+rs-engine = { path = "rs-engine" }
+rs-grid = { path = "rs-engine/rs-grid" }
+rs-vm = { path = "rs-engine/rs-vm" }
+rs-inv = { path = "rs-engine/rs-inv" }
+rs-util = { path = "rs-engine/rs-util" }
+rs-entity = { path = "rs-engine/rs-entity" }
+rs-zone = { path = "rs-engine/rs-zone" }
+rs-var = { path = "rs-engine/rs-var" }
+rs-queue = { path = "rs-engine/rs-queue" }
+rs-hero = { path = "rs-engine/rs-hero" }
+rs-info = { path = "rs-engine/rs-info" }
+rs-timer = { path = "rs-engine/rs-timer" }
+rs-stat = { path = "rs-engine/rs-stat" }
+rs-pack = { path = "rs-pack" }
+
+[workspace.lints]
+rust.unused_must_use = "deny"
+rust.missing_debug_implementations = "allow"
+clippy.collapsible_if = "allow"
+clippy.derivable_impls = "allow"
+clippy.new_without_default = "allow"

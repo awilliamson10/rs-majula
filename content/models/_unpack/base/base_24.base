@@ -1,0 +1,9 @@
+[base_24]
+bone0=translate,0
+bone1=alpha,0
+bone2=translate,1
+bone3=alpha,1
+bone4=translate,2
+bone5=alpha,2,3
+bone6=translate,5
+bone7=rotate,0,1,2,3,4

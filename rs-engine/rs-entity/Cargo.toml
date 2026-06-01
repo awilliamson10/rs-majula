@@ -1,0 +1,24 @@
+[package]
+name = "rs-entity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+rs-cam = { workspace = true }
+rs-grid = { workspace = true }
+rs-hero = { workspace = true }
+rs-info = { workspace = true }
+rs-inv = { workspace = true }
+rs-pack = { workspace = true }
+rs-pathfinder = { workspace = true }
+rs-queue = { workspace = true }
+rs-timer = { workspace = true }
+rs-var = { workspace = true }
+rs-vm = { workspace = true }
+rs-stat = { workspace = true }
+
+[lints]
+workspace = true

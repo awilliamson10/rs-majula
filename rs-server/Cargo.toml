@@ -1,0 +1,38 @@
+[package]
+name = "rs-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rs-server"
+path = "src/main.rs"
+
+[dependencies]
+rs-crypto = { workspace = true }
+rs-protocol = { workspace = true }
+rs-engine = { workspace = true }
+rs-io = { workspace = true }
+rs-pack = { workspace = true }
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+sailfish = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+sysinfo = { workspace = true }
+notify = { workspace = true }
+rand = "0.10"
+
+[lints]
+workspace = true
+
+[dev-dependencies]

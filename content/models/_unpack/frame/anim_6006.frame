@@ -1,0 +1,6 @@
+[anim_6006]
+delay=3
+base=base_137
+bone0=xyz,104,85,87
+bone1=xz,103,90
+bone2=y,16525

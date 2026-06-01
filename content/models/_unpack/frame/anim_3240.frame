@@ -1,0 +1,13 @@
+[anim_3240]
+delay=4
+base=base_62
+bone0=y,68
+bone1=y,68
+bone2=xyz,16519,16519,16519
+bone3=y,22
+bone4=y,22
+bone5=xyz,16539,16539,16539
+bone6=y,114
+bone7=y,114
+bone8=none
+bone9=x,77

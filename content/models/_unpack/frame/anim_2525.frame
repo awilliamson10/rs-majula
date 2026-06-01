@@ -1,0 +1,9 @@
+[anim_2525]
+delay=50
+base=base_9
+bone0=xyz,16518,111,47
+bone1=xyz,64,64,64
+bone2=xyz,16254,32,47
+bone3=xyz,64,64,64
+bone4=xyz,16243,16288,47
+bone5=xyz,64,64,64

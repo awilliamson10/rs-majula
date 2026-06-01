@@ -1,0 +1,90 @@
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about = "RuneScape Config Pack Tool")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Compile text config files and build an in-memory CacheStore
+    Pack {
+        /// Source directory containing config files (.npc, .hunt, etc.)
+        #[arg(short, long, default_value = "content")]
+        source: PathBuf,
+        /// Pack directory for name-id resolution
+        #[arg(long, default_value = "content/pack")]
+        pack: PathBuf,
+        /// Strict verification mode
+        #[arg(long)]
+        verify: bool,
+        /// Force rebuild all types
+        #[arg(long)]
+        force: bool,
+    },
+    /// Extract original JAG archives into content files for re-packing
+    Unpack {
+        /// Directory containing expected JAG files
+        #[arg(short, long, default_value = "expected")]
+        expected: PathBuf,
+        /// Output directory for unpacked content
+        #[arg(short, long, default_value = "content_unpack")]
+        output: PathBuf,
+    },
+    /// Verify roundtrip: unpack → pack → compare CRCs
+    Verify {
+        /// Directory containing expected JAG files
+        #[arg(short, long, default_value = "expected")]
+        expected: PathBuf,
+        /// Directory with unpacked content to pack from
+        #[arg(short, long, default_value = "content_unpack")]
+        unpacked: PathBuf,
+    },
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Pack {
+            source,
+            pack,
+            verify,
+            force,
+        } => {
+            let (store, scripts) = rs_pack::pack_all(&source, &pack, verify)?;
+            tracing::info!(
+                "CacheStore: {} packs, {} jingles, {} maps, {} songs, {} objs, {} invs, {} varps, {} scripts",
+                store.jags.len(),
+                store.jingles.count(),
+                store.mapsquares.len(),
+                store.songs.count(),
+                store.objs.count(),
+                store.invs.count(),
+                store.varps.count(),
+                scripts.count(),
+            );
+        }
+        Commands::Unpack { expected, output } => {
+            let pack = output.join("pack");
+            rs_pack::unpack::unpack_all(&expected, &output, &pack)?;
+        }
+        Commands::Verify { expected, unpacked } => {
+            rs_pack::unpack::verify::verify_roundtrip(&expected, &unpacked)?;
+        }
+    }
+
+    Ok(())
+}

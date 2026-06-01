@@ -1,0 +1,5 @@
+[base_3]
+bone0=translate,1
+bone1=scale,0,2
+bone2=translate,0
+bone3=scale,2

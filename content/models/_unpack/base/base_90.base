@@ -1,0 +1,13 @@
+[base_90]
+bone0=translate,0
+bone1=scale,0,1,2,3,4
+bone2=translate,1
+bone3=scale,1,2,3,4
+bone4=translate,2
+bone5=scale,2,3,4
+bone6=translate,3
+bone7=scale,3,4
+bone8=translate,4
+bone9=scale,4
+bone10=translate,0
+bone11=rotate,0,1,2,3,4

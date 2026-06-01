@@ -1,0 +1,14 @@
+[base_55]
+bone0=translate,0,1,2,3,4
+bone1=rotate,0,1,2,3,4
+bone2=origin,0,1,2,3,4
+bone3=translate,1
+bone4=rotate,1
+bone5=translate,4
+bone6=rotate,4
+bone7=translate,3
+bone8=rotate,3
+bone9=translate,2
+bone10=rotate,2
+bone11=translate,0
+bone12=rotate,0

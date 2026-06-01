@@ -1,0 +1,4 @@
+[base_15]
+bone0=translate,2,0
+bone1=rotate,2,0,1
+bone2=scale,2,0,1

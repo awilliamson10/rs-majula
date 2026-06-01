@@ -1,0 +1,17 @@
+[base_71]
+bone0=translate,9
+bone1=rotate,7
+bone2=scale,7
+bone3=alpha,7
+bone4=origin,5
+bone5=translate,9
+bone6=rotate,0,1,2,3,4,8,5,6
+bone7=scale,0,1,2,3,4,8,5,6
+bone8=translate,4,8
+bone9=scale,0,1,4
+bone10=translate,1,4
+bone11=scale,0,1
+bone12=translate,8
+bone13=scale,5
+bone14=translate,8
+bone15=scale,6

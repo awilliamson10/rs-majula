@@ -1,0 +1,57 @@
+*.ejs linguist-detectable=false
+*.js linguist-detectable=false
+*.mjs linguist-detectable=false
+*.sh linguist-detectable=false
+*.ps1 linguist-detectable=false
+*.py linguist-detectable=false
+
+# Auto-detect text files, normalize to LF in repo, native line endings on checkout
+* text=auto
+
+# Force LF everywhere for source/content files (consistent across OS)
+*.pack text eol=lf
+*.rs2 text eol=lf
+*.constant text eol=lf
+*.varp text eol=lf
+*.varn text eol=lf
+*.vars text eol=lf
+*.npc text eol=lf
+*.obj text eol=lf
+*.loc text eol=lf
+*.hunt text eol=lf
+*.inv text eol=lf
+*.if text eol=lf
+*.cs2 text eol=lf
+*.sym text eol=lf
+*.hashes text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# Binary files
+*.dat binary
+*.idx binary
+*.dat2 binary
+*.bin binary
+*.7z binary
+*.zip binary
+*.jar binary
+*.class binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.synth binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.midi binary
+*.mid binary
+*.ogg binary

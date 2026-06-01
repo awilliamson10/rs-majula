@@ -1,0 +1,1997 @@
+use crate::zone_event::ZoneEvent;
+use crate::zone_event_type::ZoneEventType;
+use crate::zone_message::{ZoneMessage, pack_zone_coord};
+use rs_entity::obj::NO_RECEIVER;
+use rs_entity::{EntityLifeTime, Loc, Obj};
+use rs_grid::ZoneCoordGrid;
+use rs_io::Packet;
+use rs_pack::types::LocLayer;
+use rs_protocol::network::game::server::loc_add_change::LocAddChange;
+use rs_protocol::network::game::server::loc_anim::LocAnim;
+use rs_protocol::network::game::server::loc_del::LocDel;
+use rs_protocol::network::game::server::obj_add::ObjAdd;
+use rs_protocol::network::game::server::obj_del::ObjDel;
+use rs_protocol::network::game::server::obj_reveal::ObjReveal;
+
+/// An 8x8 tile region that manages all entities and events within its bounds.
+///
+/// Each `Zone` tracks the players, NPCs, locs (map objects/scenery), and objs
+/// (ground items) occupying its 8x8 tile area. It also maintains a queue of
+/// [`ZoneEvent`]s representing state changes that must be communicated to
+/// observing clients.
+///
+/// # Event model
+///
+/// When entities are added, removed, or modified, the zone queues events that
+/// are consumed during the zone output phase of each engine tick. Events are
+/// categorized as:
+///
+/// - **Enclosed** -- broadcast to all players observing the zone.
+/// - **Follows** -- sent only to a specific player (e.g., privately visible objs).
+///
+/// Enclosed events are batched into a shared byte buffer via [`compute_shared`](Self::compute_shared)
+/// for efficient delivery.
+///
+/// # Lifecycle
+///
+/// Entities with [`EntityLifeTime::Despawn`] are removed from storage when deleted.
+/// Entities with [`EntityLifeTime::Respawn`] remain in storage but become invisible
+/// until their respawn clock expires.
+#[derive(Debug)]
+pub struct Zone {
+    pub coord: ZoneCoordGrid,
+    pub players: Vec<u16>,
+    pub npcs: Vec<u16>,
+    pub locs: Vec<Loc>,
+    pub objs: Vec<Obj>,
+    events: Vec<ZoneEvent>,
+    shared: Option<Vec<u8>>,
+}
+
+impl Zone {
+    /// Creates a new, empty zone at the given coordinate.
+    ///
+    /// # Arguments
+    ///
+    /// * `coord` -- The zone's position in the zone grid.
+    ///
+    /// # Returns
+    ///
+    /// A `Zone` with empty entity lists and no queued events.
+    ///
+    /// **Called by:** [`ZoneMap::zone_mut`](crate::zone_map::ZoneMap::zone_mut) when
+    /// lazily creating zones on first access.
+    #[inline]
+    pub fn new(coord: ZoneCoordGrid) -> Self {
+        Self {
+            coord,
+            players: Vec::new(),
+            npcs: Vec::new(),
+            locs: Vec::new(),
+            objs: Vec::new(),
+            events: Vec::new(),
+            shared: None,
+        }
+    }
+
+    /// Registers a player as present in this zone.
+    ///
+    /// No-op if the player is already registered. Uses a linear search since
+    /// the player count per zone is expected to be small.
+    ///
+    /// # Arguments
+    ///
+    /// * `player` -- The player's PID (player index).
+    ///
+    /// # Side Effects
+    ///
+    /// Appends `player` to `self.players` if not already present.
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` when a player enters a zone.
+    #[inline]
+    pub fn add_player(&mut self, player: u16) {
+        if !self.players.contains(&player) {
+            self.players.push(player);
+        }
+    }
+
+    /// Unregisters a player from this zone.
+    ///
+    /// Uses `swap_remove` for O(1) removal. No-op if the player is not present.
+    ///
+    /// # Arguments
+    ///
+    /// * `player` -- The player's PID to remove.
+    ///
+    /// # Side Effects
+    ///
+    /// Removes `player` from `self.players` via swap-remove (order is not preserved).
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` when a player leaves a zone.
+    #[inline]
+    pub fn remove_player(&mut self, player: u16) {
+        if let Some(i) = self.players.iter().position(|&p| p == player) {
+            self.players.swap_remove(i);
+        }
+    }
+
+    /// Registers an NPC as present in this zone.
+    ///
+    /// No-op if the NPC is already registered.
+    ///
+    /// # Arguments
+    ///
+    /// * `npc` -- The NPC's index.
+    ///
+    /// # Side Effects
+    ///
+    /// Appends `npc` to `self.npcs` if not already present.
+    ///
+    /// **Called by:** `Engine` methods when an NPC enters this zone.
+    #[inline]
+    pub fn add_npc(&mut self, npc: u16) {
+        if !self.npcs.contains(&npc) {
+            self.npcs.push(npc);
+        }
+    }
+
+    /// Unregisters an NPC from this zone.
+    ///
+    /// Uses `swap_remove` for O(1) removal. No-op if the NPC is not present.
+    ///
+    /// # Arguments
+    ///
+    /// * `npc` -- The NPC's index to remove.
+    ///
+    /// # Side Effects
+    ///
+    /// Removes `npc` from `self.npcs` via swap-remove.
+    ///
+    /// **Called by:** `Engine` methods when an NPC leaves this zone.
+    #[inline]
+    pub fn remove_npc(&mut self, npc: u16) {
+        if let Some(i) = self.npcs.iter().position(|&n| n == npc) {
+            self.npcs.swap_remove(i);
+        }
+    }
+
+    /// Adds a static (map-defined) loc to this zone during world loading.
+    ///
+    /// Static locs are loaded from the game cache at startup. Unlike dynamic locs
+    /// added via [`add_loc`](Self::add_loc), no zone event is queued because
+    /// players receive static locs through the map loading protocol.
+    ///
+    /// # Arguments
+    ///
+    /// * `loc` -- The loc to add.
+    ///
+    /// # Side Effects
+    ///
+    /// Appends `loc` to `self.locs`.
+    ///
+    /// **Called by:** `GameMap::load` during server startup.
+    #[inline]
+    pub fn add_static_loc(&mut self, loc: Loc) {
+        self.locs.push(loc);
+    }
+
+    /// Adds a static (map-defined) obj to this zone during world loading.
+    ///
+    /// Static objs are loaded from the game cache at startup. Unlike dynamic objs
+    /// added via [`add_obj`](Self::add_obj), no zone event is queued because
+    /// players receive static objs through the zone rebuild protocol.
+    ///
+    /// # Arguments
+    ///
+    /// * `obj` -- The obj to add.
+    ///
+    /// # Side Effects
+    ///
+    /// Appends `obj` to `self.objs`.
+    ///
+    /// **Called by:** `GameMap::load` during server startup.
+    #[inline]
+    pub fn add_static_obj(&mut self, obj: Obj) {
+        self.objs.push(obj);
+    }
+
+    // ---- zone events ----
+
+    /// Appends a zone event to the pending event queue.
+    ///
+    /// Events remain in the queue until the next call to [`reset`](Self::reset),
+    /// which occurs at the start of each engine tick. Enclosed events are
+    /// serialized into a shared buffer via [`compute_shared`](Self::compute_shared).
+    ///
+    /// # Arguments
+    ///
+    /// * `id` -- Optional entity identifier (oid or lid) used for event cancellation
+    ///   via [`clear_queued_events`](Self::clear_queued_events). `None` for non-entity
+    ///   events like map animations.
+    /// * `event_type` -- Whether this event is broadcast (`Enclosed`) or targeted (`Follows`).
+    /// * `receiver37` -- The target player UID (lower 37 bits) for `Follows` events,
+    ///   or `None` for `Enclosed` events.
+    /// * `message` -- The protocol message payload.
+    ///
+    /// # Side Effects
+    ///
+    /// Pushes a new [`ZoneEvent`] onto `self.events`.
+    ///
+    /// **Called by:** `add_loc`, `change_loc`, `remove_loc`, `respawn_loc`, `anim_loc`,
+    /// `merge_loc`, `add_obj`, `reveal_obj`, `remove_obj_at`, `respawn_obj`,
+    /// `anim_map`, `map_proj_anim`.
+    pub fn queue_event(
+        &mut self,
+        id: Option<u64>,
+        event_type: ZoneEventType,
+        receiver37: Option<u64>,
+        message: ZoneMessage,
+    ) {
+        self.events.push(ZoneEvent {
+            event_type,
+            receiver37,
+            message,
+            id,
+        });
+    }
+
+    /// Removes all queued events matching the given entity identifier.
+    ///
+    /// Used to cancel stale events when an entity is removed or replaced before
+    /// the events have been dispatched. For example, when a loc is removed, any
+    /// previously queued `LocAddChange` event for that loc is cancelled.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` -- The entity identifier (oid or lid) whose events should be removed.
+    ///
+    /// # Side Effects
+    ///
+    /// Retains only events whose `id` does not match `Some(id)`.
+    ///
+    /// **Called by:** `remove_loc`, `reveal_obj`, `remove_obj_at`.
+    pub fn clear_queued_events(&mut self, id: u64) {
+        self.events.retain(|e| e.id != Some(id));
+    }
+
+    /// Pre-serializes all enclosed events into a shared byte buffer.
+    ///
+    /// Iterates over all queued events with type [`ZoneEventType::Enclosed`],
+    /// encodes each into a contiguous byte buffer, and stores the result in
+    /// `self.shared`. This buffer can then be sent to every player observing
+    /// the zone without re-serializing per player.
+    ///
+    /// If there are no enclosed events, `self.shared` remains `None`.
+    ///
+    /// # Side Effects
+    ///
+    /// Sets `self.shared` to `Some(bytes)` if there are enclosed events.
+    ///
+    /// **Called by:** `Engine::compute_zone_shared` during the zone phase.
+    ///
+    /// **Calls:** [`ZoneMessage::sizeof_zone`], [`ZoneMessage::encode_zone`].
+    pub fn compute_shared(&mut self) {
+        let len: usize = self
+            .events
+            .iter()
+            .filter(|e| e.event_type == ZoneEventType::Enclosed)
+            .map(|e| e.message.sizeof_zone())
+            .sum();
+
+        if len == 0 {
+            return;
+        }
+
+        let mut buf = Packet::new(len);
+        for event in &self.events {
+            if event.event_type != ZoneEventType::Enclosed {
+                continue;
+            }
+            event.message.encode_zone(&mut buf);
+        }
+
+        self.shared = Some(buf.data[..buf.pos].to_vec());
+    }
+
+    /// Returns the pre-serialized enclosed event bytes, if any were computed.
+    ///
+    /// # Returns
+    ///
+    /// `Some(&[u8])` containing the serialized enclosed events, or `None` if
+    /// [`compute_shared`](Self::compute_shared) was not called or there were no
+    /// enclosed events.
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` to append shared zone data
+    /// to each observing player's output buffer.
+    pub fn shared_bytes(&self) -> Option<&[u8]> {
+        self.shared.as_deref()
+    }
+
+    /// Returns `true` if this zone has any pending follows (player-targeted) events.
+    ///
+    /// Used as a fast check to skip per-player event filtering when there are
+    /// no follows events.
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` to decide whether to iterate
+    /// follows events for each player.
+    pub fn has_follows_events(&self) -> bool {
+        self.events
+            .iter()
+            .any(|e| e.event_type == ZoneEventType::Follows)
+    }
+
+    /// Returns an iterator over all pending follows (player-targeted) events.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to [`ZoneEvent`]s with type
+    /// [`ZoneEventType::Follows`].
+    ///
+    /// **Called by:** [`visible_follows_events`](Self::visible_follows_events).
+    pub fn follows_events(&self) -> impl Iterator<Item = &ZoneEvent> {
+        self.events
+            .iter()
+            .filter(|e| e.event_type == ZoneEventType::Follows)
+    }
+
+    /// Returns an iterator over all pending enclosed (broadcast) events.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to [`ZoneEvent`]s with type
+    /// [`ZoneEventType::Enclosed`].
+    pub fn enclosed_events(&self) -> impl Iterator<Item = &ZoneEvent> {
+        self.events
+            .iter()
+            .filter(|e| e.event_type == ZoneEventType::Enclosed)
+    }
+
+    /// Returns `true` if this zone has any pending events of any type.
+    ///
+    /// Used as a fast check to determine whether the zone needs processing
+    /// during the zone output phase.
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    // ---- zone output ----
+
+    /// Returns an iterator over all objs in this zone that are visible to a given player.
+    ///
+    /// Visibility is determined by two criteria:
+    /// 1. The obj must be visible at the given clock (i.e., not expired for despawn objs,
+    ///    or past its respawn time for respawn objs).
+    /// 2. The obj must either have no receiver (visible to all) or its receiver must
+    ///    match `user37` (privately visible to that player only).
+    ///
+    /// # Arguments
+    ///
+    /// * `user37` -- The lower-37-bit UID of the player requesting visibility.
+    /// * `clock` -- The current engine tick clock for expiry checks.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over visible [`Obj`] references.
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` to send ground item data when
+    /// a player enters a new zone.
+    pub fn visible_objs(&self, user37: u64, clock: u64) -> impl Iterator<Item = &Obj> {
+        self.objs.iter().filter(move |obj| {
+            obj.visible(clock) && (obj.receiver37 == NO_RECEIVER || obj.receiver37 == user37)
+        })
+    }
+
+    /// Returns an iterator over follows event messages visible to a given player.
+    ///
+    /// Filters follows events to include only those that either have no receiver
+    /// (visible to all) or match the given `user37`.
+    ///
+    /// # Arguments
+    ///
+    /// * `user37` -- The lower-37-bit UID of the player requesting events.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over [`ZoneMessage`] references for matching follows events.
+    ///
+    /// **Called by:** `ActivePlayer::update_zones` to send player-specific zone
+    /// updates (e.g., privately visible obj adds/deletes).
+    ///
+    /// **Calls:** [`follows_events`](Self::follows_events).
+    pub fn visible_follows_events(&self, user37: u64) -> impl Iterator<Item = &ZoneMessage> {
+        self.follows_events()
+            .filter(move |e| e.receiver37.is_none_or(|r| r == user37))
+            .map(|e| &e.message)
+    }
+
+    /// Clears all queued events and the shared byte buffer for the next tick.
+    ///
+    /// Called at the start of each engine tick after events from the previous
+    /// tick have been dispatched to all observing players.
+    ///
+    /// # Side Effects
+    ///
+    /// - Sets `self.shared` to `None`.
+    /// - Clears `self.events`.
+    ///
+    /// **Called by:** The engine's tick reset phase.
+    pub fn reset(&mut self) {
+        self.shared = None;
+        self.events.clear();
+    }
+
+    // ---- loc management ----
+
+    /// Dynamically adds a loc to this zone and queues an enclosed `LocAddChange` event.
+    ///
+    /// The loc is reverted to its base state and its clock is cleared before insertion.
+    /// Only locs with [`EntityLifeTime::Despawn`] are stored in `self.locs`; respawn
+    /// locs are assumed to already exist in storage (as static locs loaded from the map).
+    ///
+    /// # Arguments
+    ///
+    /// * `loc` -- The loc to add. Consumed by this method.
+    ///
+    /// # Side Effects
+    ///
+    /// - Calls `loc.revert()` and clears `loc.last_clock`.
+    /// - Pushes the loc to `self.locs` if it has `Despawn` lifetime.
+    /// - Queues an enclosed `LocAddChange` event.
+    ///
+    /// **Called by:** `Engine` methods when scripts or game logic place a loc.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn add_loc(&mut self, mut loc: Loc) {
+        let coord = loc.packed_zone_coord();
+        let lid = loc.lid();
+        loc.revert();
+        loc.last_clock = None;
+        if loc.lifetime() == EntityLifeTime::Despawn {
+            self.locs.push(loc);
+        }
+        self.queue_event(
+            Some(lid),
+            ZoneEventType::Enclosed,
+            None,
+            ZoneMessage::LocAddChange(LocAddChange {
+                coord,
+                id: loc.id(),
+                shape_angle: loc.packed_shape_angle(),
+            }),
+        );
+    }
+
+    /// Notifies clients that a loc at the given index has changed its type/shape/angle.
+    ///
+    /// The loc's `last_clock` is cleared and an enclosed `LocAddChange` event is
+    /// queued with the loc's current (changed) state. The caller is responsible
+    /// for having already called `loc.change(...)` on the loc before invoking this.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.locs` of the loc that changed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.locs`.
+    ///
+    /// # Side Effects
+    ///
+    /// - Clears `self.locs[idx].last_clock`.
+    /// - Queues an enclosed `LocAddChange` event.
+    ///
+    /// **Called by:** `Engine` methods when scripts change a loc's type.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn change_loc(&mut self, idx: usize) {
+        let loc = &mut self.locs[idx];
+        loc.last_clock = None;
+        let coord = loc.packed_zone_coord();
+        let lid = loc.lid();
+        let message = ZoneMessage::LocAddChange(LocAddChange {
+            coord,
+            id: loc.id(),
+            shape_angle: loc.packed_shape_angle(),
+        });
+        self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
+    }
+
+    /// Removes a loc from this zone and queues an enclosed `LocDel` event.
+    ///
+    /// behavior depends on the loc's lifetime:
+    /// - [`EntityLifeTime::Despawn`]: The loc is removed from `self.locs` via swap-remove.
+    /// - [`EntityLifeTime::Respawn`]: The loc remains in storage but is reverted to its
+    ///   base state (it will be invisible until respawned).
+    ///
+    /// Any previously queued events for this loc are cancelled before the
+    /// delete event is queued.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.locs` of the loc to remove.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.locs`.
+    ///
+    /// # Side Effects
+    ///
+    /// - Cancels prior events via [`clear_queued_events`](Self::clear_queued_events).
+    /// - Removes or reverts the loc depending on its lifetime.
+    /// - Queues an enclosed `LocDel` event.
+    ///
+    /// **Called by:** `Engine::remove_loc`, zone phase `LocDelete` processing.
+    ///
+    /// **Calls:** [`clear_queued_events`](Self::clear_queued_events),
+    /// [`queue_event`](Self::queue_event).
+    pub fn remove_loc(&mut self, idx: usize) {
+        let loc = &self.locs[idx];
+        let coord = loc.packed_zone_coord();
+        let lid = loc.lid();
+        let shape_angle = loc.packed_shape_angle();
+        let lifecycle = loc.lifetime();
+        self.clear_queued_events(lid);
+        if lifecycle == EntityLifeTime::Despawn {
+            self.locs.swap_remove(idx);
+        } else {
+            self.locs[idx].revert();
+        }
+        self.queue_event(
+            Some(lid),
+            ZoneEventType::Enclosed,
+            None,
+            ZoneMessage::LocDel(LocDel { coord, shape_angle }),
+        );
+    }
+
+    /// Finds the index of a visible loc at the given position with the given type id.
+    ///
+    /// Searches `self.locs` for a loc matching the exact x/z coordinates and type
+    /// id that is currently visible (active).
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate to match.
+    /// * `z` -- The absolute z coordinate to match.
+    /// * `id` -- The loc type id to match.
+    ///
+    /// # Returns
+    ///
+    /// `Some(index)` if a matching visible loc is found, `None` otherwise.
+    ///
+    /// **Called by:** `Engine` methods for loc lookup, zone phase processing,
+    /// op handlers (`oploc`).
+    pub fn get_loc(&self, x: u16, z: u16, id: u16) -> Option<usize> {
+        self.locs
+            .iter()
+            .position(|l| l.coord().x() == x && l.coord().z() == z && l.id() == id && l.visible())
+    }
+
+    /// Finds the index of a visible loc at the given position on the given layer.
+    ///
+    /// Searches `self.locs` for a loc matching the exact x/z coordinates and
+    /// [`LocLayer`] that is currently visible.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate to match.
+    /// * `z` -- The absolute z coordinate to match.
+    /// * `layer` -- The loc layer to match (e.g., Ground, WallDecor).
+    ///
+    /// # Returns
+    ///
+    /// `Some(index)` if a matching visible loc is found, `None` otherwise.
+    ///
+    /// **Called by:** `Engine` shared phase for loc collision checks.
+    pub fn get_loc_by_layer(&self, x: u16, z: u16, layer: LocLayer) -> Option<usize> {
+        self.locs.iter().position(|l| {
+            l.coord().x() == x && l.coord().z() == z && l.layer() == layer && l.visible()
+        })
+    }
+
+    /// Respawns a previously removed loc, restoring it to its base state.
+    ///
+    /// Reverts the loc to its original type/shape/angle, clears its clock,
+    /// and queues an enclosed `LocAddChange` event to notify clients.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.locs` of the loc to respawn.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.locs`.
+    ///
+    /// # Side Effects
+    ///
+    /// - Calls `revert()` on the loc and clears `last_clock`.
+    /// - Queues an enclosed `LocAddChange` event.
+    ///
+    /// **Called by:** Zone phase `LocDelete` processing when a respawn timer expires.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn respawn_loc(&mut self, idx: usize) {
+        let loc = &mut self.locs[idx];
+        loc.revert();
+        loc.last_clock = None;
+        let coord = loc.packed_zone_coord();
+        let lid = loc.lid();
+        let message = ZoneMessage::LocAddChange(LocAddChange {
+            coord,
+            id: loc.id(),
+            shape_angle: loc.packed_shape_angle(),
+        });
+        self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
+    }
+
+    /// Plays an animation sequence on a loc and queues an enclosed `LocAnim` event.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.locs` of the loc to animate.
+    /// * `seq` -- The animation sequence id to play.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.locs`.
+    ///
+    /// # Side Effects
+    ///
+    /// Queues an enclosed `LocAnim` event.
+    ///
+    /// **Called by:** `Engine` methods when scripts trigger a loc animation.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn anim_loc(&mut self, idx: usize, seq: u16) {
+        let loc = &self.locs[idx];
+        let coord = loc.packed_zone_coord();
+        let lid = loc.lid();
+        self.queue_event(
+            Some(lid),
+            ZoneEventType::Enclosed,
+            None,
+            ZoneMessage::LocAnim(LocAnim {
+                coord,
+                shape_angle: loc.packed_shape_angle(),
+                seq,
+            }),
+        );
+    }
+
+    /// Queues a pre-built zone message for a loc merge operation.
+    ///
+    /// Loc merges are used for multi-tile locs that affect rendering across
+    /// zone boundaries. The caller constructs the [`ZoneMessage::LocMerge`]
+    /// payload externally.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.locs` of the loc being merged.
+    /// * `message` -- The pre-built `LocMerge` zone message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.locs`.
+    ///
+    /// # Side Effects
+    ///
+    /// Queues an enclosed event with the provided message.
+    ///
+    /// **Called by:** `Engine` methods for loc merge operations.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn merge_loc(&mut self, idx: usize, message: ZoneMessage) {
+        let loc = &self.locs[idx];
+        let lid = loc.lid();
+        self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
+    }
+
+    // ---- obj management ----
+
+    /// Adds an obj (ground item) to this zone and queues an `ObjAdd` event.
+    ///
+    /// Only objs with [`EntityLifeTime::Despawn`] are stored in `self.objs`.
+    /// Respawn objs are assumed to already exist in storage.
+    ///
+    /// The event type depends on whether the obj has a receiver:
+    /// - No receiver (`None`): queues an `Enclosed` event visible to all.
+    /// - With receiver (`Some`): queues a `Follows` event visible only to the receiver.
+    ///
+    /// # Arguments
+    ///
+    /// * `obj` -- The obj to add. Consumed by this method.
+    /// * `receiver37` -- The player UID (lower 37 bits) who should see the obj
+    ///   privately, or `None` for a publicly visible obj.
+    ///
+    /// # Side Effects
+    ///
+    /// - Pushes the obj to `self.objs` if it has `Despawn` lifetime.
+    /// - Queues an `ObjAdd` event (enclosed or follows depending on receiver).
+    ///
+    /// **Called by:** `Engine::add_obj` when scripts or game logic drop a ground item.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn add_obj(&mut self, obj: Obj, receiver37: Option<u64>) {
+        let coord = pack_zone_coord(obj.coord().x(), obj.coord().z());
+        let oid = obj.oid();
+        let message = ZoneMessage::ObjAdd(ObjAdd {
+            coord,
+            id: obj.id(),
+            count: obj.count.clamp(0, 65535) as u16,
+        });
+
+        if obj.lifetime() == EntityLifeTime::Despawn {
+            self.objs.push(obj);
+        }
+
+        let (event_type, event_receiver) = if receiver37.is_none() {
+            (ZoneEventType::Enclosed, None)
+        } else {
+            (ZoneEventType::Follows, receiver37)
+        };
+
+        self.queue_event(Some(oid), event_type, event_receiver, message);
+    }
+
+    /// Finds the index of an obj matching exact coordinates, type id, and receiver.
+    ///
+    /// Unlike [`get_obj`](Self::get_obj), this requires an exact receiver match
+    /// rather than falling back to public objs.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate to match.
+    /// * `z` -- The absolute z coordinate to match.
+    /// * `id` -- The obj type id to match.
+    /// * `receiver37` -- The exact receiver UID to match.
+    ///
+    /// # Returns
+    ///
+    /// `Some(index)` if a matching obj is found, `None` otherwise.
+    ///
+    /// **Called by:** `Engine` methods when checking for existing receiver-specific
+    /// objs before merging or stacking.
+    pub fn get_obj_of_receiver(&self, x: u16, z: u16, id: u16, receiver37: u64) -> Option<usize> {
+        self.objs.iter().position(|o| {
+            o.coord().x() == x && o.coord().z() == z && o.id() == id && o.receiver37 == receiver37
+        })
+    }
+
+    /// Finds the index of an obj matching coordinates, type id, and optional receiver.
+    ///
+    /// Receiver matching behavior:
+    /// - `None`: matches only public objs (those with `NO_RECEIVER`).
+    /// - `Some(r)`: matches objs that are either public (`NO_RECEIVER`) or
+    ///   privately owned by the given receiver.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate to match.
+    /// * `z` -- The absolute z coordinate to match.
+    /// * `id` -- The obj type id to match.
+    /// * `receiver37` -- The player UID to match against, or `None` for public-only.
+    ///
+    /// # Returns
+    ///
+    /// `Some(index)` if a matching obj is found, `None` otherwise.
+    ///
+    /// **Called by:** `Engine` shared phase for obj interaction checks,
+    /// op handlers (`opobj`).
+    pub fn get_obj(&self, x: u16, z: u16, id: u16, receiver37: Option<u64>) -> Option<usize> {
+        self.objs.iter().position(|o| {
+            o.coord().x() == x
+                && o.coord().z() == z
+                && o.id() == id
+                && match receiver37 {
+                    None => o.receiver37 == NO_RECEIVER,
+                    Some(r) => o.receiver37 == NO_RECEIVER || o.receiver37 == r,
+                }
+        })
+    }
+
+    /// Reveals a privately-owned obj to all players and queues an enclosed `ObjReveal` event.
+    ///
+    /// Transitions an obj from player-private visibility to public visibility by
+    /// clearing its receiver and setting its reveal timestamp. Any previously queued
+    /// events for this obj are cancelled before the reveal event is queued.
+    ///
+    /// No-op if no matching obj is found.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate of the obj.
+    /// * `z` -- The absolute z coordinate of the obj.
+    /// * `id` -- The obj type id.
+    /// * `receiver37` -- The current owner's UID (lower 37 bits) to match.
+    /// * `receiver_pid` -- The PID of the player who originally owned the obj,
+    ///   included in the reveal message for client rendering.
+    ///
+    /// # Side Effects
+    ///
+    /// - Sets the obj's `receiver37` to `NO_RECEIVER`.
+    /// - Sets the obj's `reveal` to `u64::MAX`.
+    /// - Cancels prior events via [`clear_queued_events`](Self::clear_queued_events).
+    /// - Queues an enclosed `ObjReveal` event.
+    ///
+    /// **Called by:** Zone phase `ObjReveal` processing when the reveal timer expires.
+    ///
+    /// **Calls:** [`clear_queued_events`](Self::clear_queued_events),
+    /// [`queue_event`](Self::queue_event).
+    pub fn reveal_obj(&mut self, x: u16, z: u16, id: u16, receiver37: u64, receiver_pid: u16) {
+        let Some(idx) = self.objs.iter().position(|o| {
+            o.coord().x() == x && o.coord().z() == z && o.id() == id && o.receiver37 == receiver37
+        }) else {
+            return;
+        };
+        self.clear_queued_events(self.objs[idx].oid());
+        let count = self.objs[idx].count;
+        self.objs[idx].receiver37 = NO_RECEIVER;
+        self.objs[idx].reveal = u64::MAX;
+        let coord = pack_zone_coord(x, z);
+        self.queue_event(
+            Some(self.objs[idx].oid()),
+            ZoneEventType::Enclosed,
+            None,
+            ZoneMessage::ObjReveal(ObjReveal {
+                coord,
+                id,
+                count: count.clamp(0, 65535) as u16,
+                receiver: receiver_pid,
+            }),
+        );
+    }
+
+    /// Removes an obj whose `last_clock` matches the expected clock value.
+    ///
+    /// This is a clock-guarded removal used for scheduled despawns. If the obj's
+    /// clock has been updated since the removal was scheduled (e.g., due to a
+    /// merge/stack), the removal is a no-op, preventing stale deletions.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate of the obj.
+    /// * `z` -- The absolute z coordinate of the obj.
+    /// * `id` -- The obj type id.
+    /// * `expected_clock` -- The clock value the obj must have for removal to proceed.
+    ///
+    /// # Side Effects
+    ///
+    /// Delegates to [`remove_obj_at`](Self::remove_obj_at) if a match is found.
+    ///
+    /// **Called by:** Zone phase `ObjDelete` processing when a despawn timer fires.
+    ///
+    /// **Calls:** [`remove_obj_at`](Self::remove_obj_at).
+    pub fn remove_obj_by_clock(&mut self, x: u16, z: u16, id: u16, expected_clock: u64) {
+        let Some(idx) = self.objs.iter().position(|o| {
+            o.coord().x() == x
+                && o.coord().z() == z
+                && o.id() == id
+                && o.last_clock == expected_clock
+        }) else {
+            return;
+        };
+        self.remove_obj_at(idx, None);
+    }
+
+    /// Removes an obj by position, type, and receiver, with an optional respawn clock.
+    ///
+    /// Used for player-initiated removal (e.g., picking up a ground item) and
+    /// engine-driven removal. Only matches objs that have `Despawn` lifetime or
+    /// whose `last_clock` is `u64::MAX` (currently visible respawn objs).
+    ///
+    /// Receiver matching follows the same rules as [`get_obj`](Self::get_obj).
+    ///
+    /// No-op if no matching obj is found.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate of the obj.
+    /// * `z` -- The absolute z coordinate of the obj.
+    /// * `id` -- The obj type id.
+    /// * `receiver37` -- The receiver to match, or `None` for public-only.
+    /// * `respawn_at` -- For respawn objs, the clock tick at which the obj should
+    ///   reappear. Ignored for despawn objs.
+    ///
+    /// # Side Effects
+    ///
+    /// Delegates to [`remove_obj_at`](Self::remove_obj_at) if a match is found.
+    ///
+    /// **Called by:** `Engine::remove_obj`, cheat handlers.
+    ///
+    /// **Calls:** [`remove_obj_at`](Self::remove_obj_at).
+    pub fn remove_obj(
+        &mut self,
+        x: u16,
+        z: u16,
+        id: u16,
+        receiver37: Option<u64>,
+        respawn_at: Option<u64>,
+    ) {
+        let Some(idx) = self.objs.iter().position(|o| {
+            o.coord().x() == x
+                && o.coord().z() == z
+                && o.id() == id
+                && (o.lifetime() == EntityLifeTime::Despawn || o.last_clock == u64::MAX)
+                && match receiver37 {
+                    None => o.receiver37 == NO_RECEIVER,
+                    Some(r) => o.receiver37 == NO_RECEIVER || o.receiver37 == r,
+                }
+        }) else {
+            return;
+        };
+        self.remove_obj_at(idx, respawn_at);
+    }
+
+    /// Internal helper that removes the obj at the given index and queues an `ObjDel` event.
+    ///
+    /// behavior depends on the obj's lifetime:
+    /// - [`EntityLifeTime::Despawn`]: The obj is removed from `self.objs` via swap-remove.
+    /// - [`EntityLifeTime::Respawn`]: The obj remains in storage but its `last_clock` is
+    ///   set to `respawn_at` (or `u64::MAX` if `None`), hiding it until that tick.
+    ///
+    /// The event type mirrors the obj's visibility: privately-owned objs get a
+    /// `Follows` event; public objs get an `Enclosed` event.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- The index into `self.objs` of the obj to remove.
+    /// * `respawn_at` -- For respawn objs, the clock tick at which to reappear.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is out of bounds for `self.objs`.
+    ///
+    /// # Side Effects
+    ///
+    /// - Cancels prior events via [`clear_queued_events`](Self::clear_queued_events).
+    /// - Removes or hides the obj depending on its lifetime.
+    /// - Queues an `ObjDel` event (enclosed or follows).
+    ///
+    /// **Called by:** [`remove_obj`](Self::remove_obj),
+    /// [`remove_obj_by_clock`](Self::remove_obj_by_clock).
+    ///
+    /// **Calls:** [`clear_queued_events`](Self::clear_queued_events),
+    /// [`queue_event`](Self::queue_event).
+    fn remove_obj_at(&mut self, idx: usize, respawn_at: Option<u64>) {
+        let obj = &self.objs[idx];
+        let oid = obj.oid();
+        let coord = pack_zone_coord(obj.coord().x(), obj.coord().z());
+        let id = obj.id();
+        let (event_type, event_receiver) = if obj.receiver37 != NO_RECEIVER {
+            (ZoneEventType::Follows, Some(obj.receiver37))
+        } else {
+            (ZoneEventType::Enclosed, None)
+        };
+        self.clear_queued_events(oid);
+        if self.objs[idx].lifetime() == EntityLifeTime::Despawn {
+            self.objs.swap_remove(idx);
+        } else {
+            self.objs[idx].last_clock = respawn_at.unwrap_or(u64::MAX);
+        }
+        self.queue_event(
+            Some(oid),
+            event_type,
+            event_receiver,
+            ZoneMessage::ObjDel(ObjDel { coord, id }),
+        );
+    }
+
+    /// Respawns a previously removed obj, making it visible again.
+    ///
+    /// Only matches objs with [`EntityLifeTime::Respawn`] that are currently
+    /// hidden (i.e., `last_clock != u64::MAX`). Resets the obj's clock to
+    /// `u64::MAX` (permanently visible) and queues an enclosed `ObjAdd` event.
+    ///
+    /// No-op if no matching hidden respawn obj is found.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` -- The absolute x coordinate of the obj.
+    /// * `z` -- The absolute z coordinate of the obj.
+    /// * `id` -- The obj type id.
+    ///
+    /// # Side Effects
+    ///
+    /// - Sets `last_clock` to `u64::MAX` on the matching obj.
+    /// - Queues an enclosed `ObjAdd` event.
+    ///
+    /// **Called by:** Zone phase `ObjAdd` processing when a respawn timer expires.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn respawn_obj(&mut self, x: u16, z: u16, id: u16) {
+        let Some(idx) = self.objs.iter().position(|o| {
+            o.coord().x() == x
+                && o.coord().z() == z
+                && o.id() == id
+                && o.lifetime() == EntityLifeTime::Respawn
+                && o.last_clock != u64::MAX
+        }) else {
+            return;
+        };
+        self.objs[idx].last_clock = u64::MAX;
+        let coord = pack_zone_coord(x, z);
+        let count = self.objs[idx].count;
+        let oid = self.objs[idx].oid();
+        self.queue_event(
+            Some(oid),
+            ZoneEventType::Enclosed,
+            None,
+            ZoneMessage::ObjAdd(ObjAdd {
+                coord,
+                id,
+                count: count.clamp(0, 65535) as u16,
+            }),
+        );
+    }
+
+    // ---- non-entity events ----
+
+    /// Queues a map animation event (e.g., a spot animation on a tile).
+    ///
+    /// Map animations are not tied to any entity and are always broadcast to
+    /// all players observing the zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` -- The pre-built [`ZoneMessage::MapAnim`] payload.
+    ///
+    /// # Side Effects
+    ///
+    /// Queues an enclosed event with no entity id.
+    ///
+    /// **Called by:** `Engine` methods when scripts trigger tile animations.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn anim_map(&mut self, message: ZoneMessage) {
+        self.queue_event(None, ZoneEventType::Enclosed, None, message);
+    }
+
+    /// Queues a map projectile animation event (e.g., an arrow flying between tiles).
+    ///
+    /// Projectile animations are not tied to any entity and are always broadcast
+    /// to all players observing the zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` -- The pre-built [`ZoneMessage::MapProjAnim`] payload.
+    ///
+    /// # Side Effects
+    ///
+    /// Queues an enclosed event with no entity id.
+    ///
+    /// **Called by:** `Engine` methods when scripts trigger projectile animations.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    pub fn map_proj_anim(&mut self, message: ZoneMessage) {
+        self.queue_event(None, ZoneEventType::Enclosed, None, message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rs_grid::CoordGrid;
+    use rs_pack::types::{LocAngle, LocLayer, LocShape};
+
+    fn zone() -> Zone {
+        Zone::new(ZoneCoordGrid::new(402, 0, 402))
+    }
+
+    fn coord(x: u16, z: u16) -> CoordGrid {
+        CoordGrid::new(x, 0, z)
+    }
+
+    fn despawn_obj(x: u16, z: u16, id: u16, count: u32) -> Obj {
+        Obj::new(coord(x, z), EntityLifeTime::Despawn, id, count)
+    }
+
+    fn respawn_obj(x: u16, z: u16, id: u16, count: u32) -> Obj {
+        Obj::new(coord(x, z), EntityLifeTime::Respawn, id, count)
+    }
+
+    fn respawn_loc(x: u16, z: u16, id: u16) -> Loc {
+        Loc::new(
+            coord(x, z),
+            1,
+            1,
+            EntityLifeTime::Respawn,
+            id,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        )
+    }
+
+    fn despawn_loc(x: u16, z: u16, id: u16) -> Loc {
+        Loc::new(
+            coord(x, z),
+            1,
+            1,
+            EntityLifeTime::Despawn,
+            id,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        )
+    }
+
+    fn count_enclosed(zone: &Zone) -> usize {
+        zone.enclosed_events().count()
+    }
+
+    fn count_follows(zone: &Zone) -> usize {
+        zone.follows_events().count()
+    }
+
+    // ---- obj: add ----
+
+    #[test]
+    fn add_despawn_obj_pushes_to_vec() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.last_clock = 200;
+        z.add_obj(obj, None);
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.objs[0].id(), 100);
+    }
+
+    #[test]
+    fn add_respawn_obj_does_not_push_to_vec() {
+        let mut z = zone();
+        z.add_obj(respawn_obj(3222, 3222, 100, 5), None);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    #[test]
+    fn add_obj_without_receiver_queues_enclosed_event() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.add_obj(obj, None);
+        assert_eq!(count_enclosed(&z), 1);
+        assert_eq!(count_follows(&z), 0);
+    }
+
+    #[test]
+    fn add_obj_with_receiver_queues_follows_event() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        obj.receiver37 = 12345;
+        z.add_obj(obj, Some(12345));
+        assert_eq!(count_follows(&z), 1);
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    // ---- obj: visible_objs ----
+
+    #[test]
+    fn visible_objs_despawn_before_expiry() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(0, 100).count(), 1);
+    }
+
+    #[test]
+    fn visible_objs_despawn_at_expiry_hidden() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(0, 200).count(), 0);
+    }
+
+    #[test]
+    fn visible_objs_despawn_after_expiry_hidden() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(0, 250).count(), 0);
+    }
+
+    #[test]
+    fn visible_objs_respawn_no_clock_visible() {
+        let mut z = zone();
+        z.objs.push(respawn_obj(3222, 3222, 100, 1));
+        assert_eq!(z.visible_objs(0, 0).count(), 1);
+    }
+
+    #[test]
+    fn visible_objs_respawn_hidden_until_clock() {
+        let mut z = zone();
+        let mut obj = respawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 50;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(0, 49).count(), 0);
+        assert_eq!(z.visible_objs(0, 50).count(), 1);
+        assert_eq!(z.visible_objs(0, 51).count(), 1);
+    }
+
+    #[test]
+    fn visible_objs_receiver_filtering() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        obj.receiver37 = 111;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(111, 50).count(), 1);
+        assert_eq!(z.visible_objs(222, 50).count(), 0);
+    }
+
+    #[test]
+    fn visible_objs_no_receiver_visible_to_all() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(111, 50).count(), 1);
+        assert_eq!(z.visible_objs(222, 50).count(), 1);
+    }
+
+    // ---- obj: reveal ----
+
+    #[test]
+    fn reveal_obj_clears_receiver() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        assert_eq!(z.objs[0].receiver37, NO_RECEIVER);
+        assert_eq!(z.objs[0].reveal, u64::MAX);
+    }
+
+    #[test]
+    fn reveal_obj_makes_visible_to_all() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        assert_eq!(z.visible_objs(222, 50).count(), 0);
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        assert_eq!(z.visible_objs(222, 50).count(), 1);
+    }
+
+    #[test]
+    fn reveal_obj_queues_enclosed_event() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::ObjReveal(_)))
+        );
+    }
+
+    #[test]
+    fn reveal_obj_nonexistent_is_noop() {
+        let mut z = zone();
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    // ---- obj: remove_obj_by_clock ----
+
+    #[test]
+    fn remove_obj_by_clock_matching() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj_by_clock(3222, 3222, 100, 200);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    #[test]
+    fn remove_obj_by_clock_stale_is_noop() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 300;
+        z.objs.push(obj);
+        z.remove_obj_by_clock(3222, 3222, 100, 200);
+        assert_eq!(z.objs.len(), 1);
+    }
+
+    #[test]
+    fn remove_obj_by_clock_queues_del_event() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj_by_clock(3222, 3222, 100, 200);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::ObjDel(_)))
+        );
+    }
+
+    // ---- obj: remove_obj (player pickup) ----
+
+    #[test]
+    fn remove_obj_despawn_removes_from_vec() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj(3222, 3222, 100, None, None);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    #[test]
+    fn remove_obj_respawn_stays_in_vec() {
+        let mut z = zone();
+        z.objs.push(respawn_obj(3222, 3222, 100, 1));
+        z.remove_obj(3222, 3222, 100, None, Some(50));
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.objs[0].last_clock, 50);
+    }
+
+    #[test]
+    fn remove_obj_respawn_hidden_until_respawn() {
+        let mut z = zone();
+        z.objs.push(respawn_obj(3222, 3222, 100, 1));
+        z.remove_obj(3222, 3222, 100, None, Some(50));
+        assert_eq!(z.visible_objs(0, 49).count(), 0);
+        assert_eq!(z.visible_objs(0, 50).count(), 1);
+    }
+
+    #[test]
+    fn remove_obj_with_receiver_matches_receiver() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj(3222, 3222, 100, Some(111), None);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    #[test]
+    fn remove_obj_wrong_receiver_is_noop() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj(3222, 3222, 100, Some(222), None);
+        assert_eq!(z.objs.len(), 1);
+    }
+
+    #[test]
+    fn remove_obj_revealed_then_delete_uses_enclosed() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        z.reset();
+        z.remove_obj(3222, 3222, 100, None, None);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::ObjDel(_)))
+        );
+        assert_eq!(count_follows(&z), 0);
+    }
+
+    #[test]
+    fn remove_obj_unrevealed_delete_uses_follows() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj(3222, 3222, 100, Some(111), None);
+        assert!(
+            z.follows_events()
+                .any(|e| matches!(&e.message, ZoneMessage::ObjDel(_)))
+        );
+    }
+
+    #[test]
+    fn remove_obj_skips_already_hidden_respawn() {
+        let mut z = zone();
+        let obj = respawn_obj(3222, 3222, 100, 1);
+        z.objs.push(obj);
+        z.remove_obj(3222, 3222, 100, None, Some(50));
+        z.reset();
+        z.remove_obj(3222, 3222, 100, None, Some(100));
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    // ---- obj: respawn_obj ----
+
+    #[test]
+    fn respawn_obj_clears_clock_and_queues_add() {
+        let mut z = zone();
+        let mut obj = respawn_obj(3222, 3222, 100, 5);
+        obj.last_clock = 50;
+        z.objs.push(obj);
+        z.respawn_obj(3222, 3222, 100);
+        assert_eq!(z.objs[0].last_clock, u64::MAX);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::ObjAdd(_)))
+        );
+    }
+
+    #[test]
+    fn respawn_obj_not_hidden_is_noop() {
+        let mut z = zone();
+        z.objs.push(respawn_obj(3222, 3222, 100, 5));
+        z.respawn_obj(3222, 3222, 100);
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    #[test]
+    fn respawn_obj_despawn_is_noop() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.last_clock = 50;
+        z.objs.push(obj);
+        z.respawn_obj(3222, 3222, 100);
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    // ---- obj: merge simulation ----
+
+    #[test]
+    fn merge_obj_stale_delete_ignored() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.last_clock = 100;
+        z.objs.push(obj);
+        z.objs[0].count = 10;
+        z.objs[0].last_clock = 200;
+        z.remove_obj_by_clock(3222, 3222, 100, 100);
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.objs[0].count, 10);
+    }
+
+    #[test]
+    fn merge_obj_new_delete_works() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 10);
+        obj.last_clock = 200;
+        z.objs.push(obj);
+        z.remove_obj_by_clock(3222, 3222, 100, 200);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    // ---- obj: full lifecycle ----
+
+    #[test]
+    fn obj_full_lifecycle_add_reveal_delete() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 5);
+        obj.receiver37 = 111;
+        obj.reveal = 50;
+        obj.last_clock = 200;
+        z.add_obj(obj, Some(111));
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.visible_objs(111, 10).count(), 1);
+        assert_eq!(z.visible_objs(222, 10).count(), 0);
+
+        z.reset();
+        z.reveal_obj(3222, 3222, 100, 111, 1);
+        assert_eq!(z.visible_objs(222, 60).count(), 1);
+
+        z.reset();
+        z.remove_obj_by_clock(3222, 3222, 100, 200);
+        assert_eq!(z.objs.len(), 0);
+    }
+
+    #[test]
+    fn obj_respawn_full_lifecycle() {
+        let mut z = zone();
+        z.objs.push(respawn_obj(3222, 3222, 100, 5));
+        assert_eq!(z.visible_objs(0, 0).count(), 1);
+
+        z.remove_obj(3222, 3222, 100, None, Some(50));
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.visible_objs(0, 49).count(), 0);
+
+        z.reset();
+        z.respawn_obj(3222, 3222, 100);
+        assert_eq!(z.visible_objs(0, 50).count(), 1);
+        assert_eq!(z.objs[0].last_clock, u64::MAX);
+    }
+
+    // ---- loc: add ----
+
+    #[test]
+    fn add_despawn_loc_pushes_to_vec() {
+        let mut z = zone();
+        z.add_loc(despawn_loc(3222, 3222, 100));
+        assert_eq!(z.locs.len(), 1);
+    }
+
+    #[test]
+    fn add_respawn_loc_does_not_push() {
+        let mut z = zone();
+        z.add_loc(respawn_loc(3222, 3222, 100));
+        assert_eq!(z.locs.len(), 0);
+    }
+
+    #[test]
+    fn add_loc_queues_enclosed_event() {
+        let mut z = zone();
+        z.add_loc(despawn_loc(3222, 3222, 100));
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::LocAddChange(_)))
+        );
+    }
+
+    #[test]
+    fn add_loc_reverts_and_clears_clock() {
+        let mut z = zone();
+        let mut loc = despawn_loc(3222, 3222, 100);
+        loc.change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        loc.last_clock = Some(999);
+        z.add_loc(loc);
+        assert!(!z.locs[0].is_changed());
+        assert_eq!(z.locs[0].last_clock, None);
+    }
+
+    // ---- loc: active() derived state ----
+
+    #[test]
+    fn loc_active_normal_respawn() {
+        let loc = respawn_loc(3222, 3222, 100);
+        assert!(loc.visible());
+    }
+
+    #[test]
+    fn loc_active_despawn_always() {
+        let mut loc = despawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(999);
+        assert!(loc.visible());
+    }
+
+    #[test]
+    fn loc_active_changed_respawn() {
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        loc.last_clock = Some(999);
+        assert!(loc.visible());
+    }
+
+    #[test]
+    fn loc_inactive_removed_respawn() {
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(999);
+        assert!(!loc.visible());
+    }
+
+    #[test]
+    fn loc_inactive_reverted_with_clock() {
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        loc.revert();
+        loc.last_clock = Some(999);
+        assert!(!loc.visible());
+    }
+
+    // ---- loc: change ----
+
+    #[test]
+    fn change_loc_updates_type() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.change_loc(0);
+        assert!(z.locs[0].is_changed());
+        assert_eq!(z.locs[0].id(), 200);
+    }
+
+    #[test]
+    fn change_loc_queues_add_change_event() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.change_loc(0);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::LocAddChange(_)))
+        );
+    }
+
+    #[test]
+    fn change_loc_clears_last_clock() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.locs[0].last_clock = Some(999);
+        z.change_loc(0);
+        assert_eq!(z.locs[0].last_clock, None);
+    }
+
+    // ---- loc: remove ----
+
+    #[test]
+    fn remove_despawn_loc_removes_from_vec() {
+        let mut z = zone();
+        z.locs.push(despawn_loc(3222, 3222, 100));
+        z.remove_loc(0);
+        assert_eq!(z.locs.len(), 0);
+    }
+
+    #[test]
+    fn remove_respawn_loc_stays_in_vec() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.remove_loc(0);
+        assert_eq!(z.locs.len(), 1);
+    }
+
+    #[test]
+    fn remove_respawn_loc_reverts() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.remove_loc(0);
+        assert!(!z.locs[0].is_changed());
+        assert_eq!(z.locs[0].id(), 100);
+    }
+
+    #[test]
+    fn remove_loc_queues_del_event() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.remove_loc(0);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::LocDel(_)))
+        );
+    }
+
+    #[test]
+    fn remove_loc_cancels_previous_events() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.change_loc(0);
+        assert_eq!(count_enclosed(&z), 1);
+        z.remove_loc(0);
+        let active_enclosed: Vec<_> = z.enclosed_events().collect();
+        assert_eq!(active_enclosed.len(), 1);
+        assert!(matches!(
+            &active_enclosed[0].message,
+            ZoneMessage::LocDel(_)
+        ));
+    }
+
+    // ---- loc: get_loc / get_loc_by_layer ----
+
+    #[test]
+    fn get_loc_finds_active() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        assert!(z.get_loc(3222, 3222, 100).is_some());
+    }
+
+    #[test]
+    fn get_loc_skips_inactive() {
+        let mut z = zone();
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(50);
+        z.locs.push(loc);
+        assert!(z.get_loc(3222, 3222, 100).is_none());
+    }
+
+    #[test]
+    fn get_loc_by_layer_finds_active() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        assert!(z.get_loc_by_layer(3222, 3222, LocLayer::Ground).is_some());
+    }
+
+    #[test]
+    fn get_loc_by_layer_finds_changed() {
+        let mut z = zone();
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        loc.last_clock = Some(999);
+        z.locs.push(loc);
+        assert!(z.get_loc_by_layer(3222, 3222, LocLayer::Ground).is_some());
+    }
+
+    // ---- loc: respawn ----
+
+    #[test]
+    fn respawn_loc_reverts_and_clears_clock() {
+        let mut z = zone();
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(50);
+        z.locs.push(loc);
+        assert!(!z.locs[0].visible());
+        z.respawn_loc(0);
+        assert!(z.locs[0].visible());
+        assert_eq!(z.locs[0].last_clock, None);
+        assert!(!z.locs[0].is_changed());
+    }
+
+    #[test]
+    fn respawn_loc_queues_add_change_event() {
+        let mut z = zone();
+        let mut loc = respawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(50);
+        z.locs.push(loc);
+        z.respawn_loc(0);
+        assert!(
+            z.enclosed_events()
+                .any(|e| matches!(&e.message, ZoneMessage::LocAddChange(_)))
+        );
+    }
+
+    // ---- loc: full lifecycle ----
+
+    #[test]
+    fn loc_change_and_revert_lifecycle() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        assert_eq!(z.locs[0].id(), 100);
+        assert!(z.locs[0].visible());
+
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.locs[0].last_clock = Some(50);
+        z.change_loc(0);
+        assert_eq!(z.locs[0].id(), 200);
+        assert!(z.locs[0].visible());
+        assert!(z.locs[0].is_changed());
+
+        z.reset();
+        z.locs[0].revert();
+        z.locs[0].last_clock = None;
+        z.change_loc(0);
+        assert_eq!(z.locs[0].id(), 100);
+        assert!(z.locs[0].visible());
+        assert!(!z.locs[0].is_changed());
+    }
+
+    #[test]
+    fn loc_remove_and_respawn_lifecycle() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+        assert!(z.locs[0].visible());
+
+        z.remove_loc(0);
+        z.locs[0].last_clock = Some(50);
+        assert!(!z.locs[0].visible());
+
+        z.reset();
+        z.respawn_loc(0);
+        assert!(z.locs[0].visible());
+        assert_eq!(z.locs[0].id(), 100);
+    }
+
+    #[test]
+    fn loc_changed_then_removed_then_respawned() {
+        let mut z = zone();
+        z.locs.push(respawn_loc(3222, 3222, 100));
+
+        z.locs[0].change(
+            200,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::Ground,
+        );
+        z.locs[0].last_clock = Some(50);
+        z.change_loc(0);
+        assert_eq!(z.locs[0].id(), 200);
+        assert!(z.locs[0].visible());
+
+        z.reset();
+        z.remove_loc(0);
+        z.locs[0].last_clock = Some(100);
+        assert!(!z.locs[0].visible());
+        assert!(!z.locs[0].is_changed());
+        assert_eq!(z.locs[0].id(), 100);
+
+        z.reset();
+        z.respawn_loc(0);
+        assert!(z.locs[0].visible());
+        assert_eq!(z.locs[0].id(), 100);
+    }
+
+    #[test]
+    fn despawn_loc_add_then_expire() {
+        let mut z = zone();
+        let mut loc = despawn_loc(3222, 3222, 100);
+        loc.last_clock = Some(50);
+        z.add_loc(loc);
+        assert_eq!(z.locs.len(), 1);
+        assert!(z.locs[0].visible());
+
+        z.reset();
+        z.remove_loc(0);
+        assert_eq!(z.locs.len(), 0);
+    }
+
+    // ---- zone: reset ----
+
+    #[test]
+    fn reset_clears_events_and_shared() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.add_obj(obj, None);
+        z.compute_shared();
+        assert!(z.shared_bytes().is_some());
+        z.reset();
+        assert!(z.shared_bytes().is_none());
+        assert!(!z.has_events());
+    }
+
+    // ---- zone: event cancellation ----
+
+    #[test]
+    fn clear_queued_events_cancels_matching() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.add_obj(obj, None);
+        assert_eq!(count_enclosed(&z), 1);
+        let oid = z.objs[0].oid();
+        z.clear_queued_events(oid);
+        assert_eq!(count_enclosed(&z), 0);
+    }
+
+    // ---- entity keys ----
+
+    #[test]
+    fn obj_entity_key_differs_by_receiver() {
+        let o1 = despawn_obj(3222, 3222, 100, 1);
+        let mut o2 = despawn_obj(3222, 3222, 100, 1);
+        o2.receiver37 = 111;
+        assert_ne!(o1.oid(), o2.oid());
+    }
+
+    #[test]
+    fn obj_entity_key_differs_by_type() {
+        let o1 = despawn_obj(3222, 3222, 100, 1);
+        let o2 = despawn_obj(3222, 3222, 200, 1);
+        assert_ne!(o1.oid(), o2.oid());
+    }
+
+    #[test]
+    fn loc_entity_key_differs_by_layer() {
+        let l1 = respawn_loc(3222, 3222, 100);
+        let l2 = Loc::new(
+            coord(3222, 3222),
+            1,
+            1,
+            EntityLifeTime::Respawn,
+            100,
+            LocShape::CentrepieceStraight,
+            LocAngle::North,
+            LocLayer::WallDecor,
+        );
+        assert_ne!(l1.lid(), l2.lid());
+    }
+
+    // ---- multiple objs in same zone ----
+
+    #[test]
+    fn multiple_objs_same_coord_different_type() {
+        let mut z = zone();
+        let mut o1 = despawn_obj(3222, 3222, 100, 1);
+        o1.last_clock = 200;
+        let mut o2 = despawn_obj(3222, 3222, 200, 1);
+        o2.last_clock = 200;
+        z.objs.push(o1);
+        z.objs.push(o2);
+        z.remove_obj(3222, 3222, 100, None, None);
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.objs[0].id(), 200);
+    }
+
+    #[test]
+    fn multiple_objs_same_type_different_receiver() {
+        let mut z = zone();
+        let mut o1 = despawn_obj(3222, 3222, 100, 1);
+        o1.receiver37 = 111;
+        o1.last_clock = 200;
+        let mut o2 = despawn_obj(3222, 3222, 100, 1);
+        o2.receiver37 = 222;
+        o2.last_clock = 200;
+        z.objs.push(o1);
+        z.objs.push(o2);
+        z.remove_obj(3222, 3222, 100, Some(111), None);
+        assert_eq!(z.objs.len(), 1);
+        assert_eq!(z.objs[0].receiver37, 222);
+    }
+
+    // ---- visible_follows_events ----
+
+    #[test]
+    fn visible_follows_events_filters_by_receiver() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.add_obj(obj, Some(111));
+        assert_eq!(z.visible_follows_events(111).count(), 1);
+        assert_eq!(z.visible_follows_events(222).count(), 0);
+    }
+
+    // ---- compute_shared ----
+
+    #[test]
+    fn compute_shared_only_enclosed() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.last_clock = 200;
+        z.add_obj(obj.clone(), None);
+        let mut obj2 = despawn_obj(3222, 3222, 200, 1);
+        obj2.receiver37 = 111;
+        obj2.last_clock = 200;
+        z.add_obj(obj2, Some(111));
+        z.compute_shared();
+        assert!(z.shared_bytes().is_some());
+    }
+
+    #[test]
+    fn compute_shared_empty_when_no_enclosed() {
+        let mut z = zone();
+        let mut obj = despawn_obj(3222, 3222, 100, 1);
+        obj.receiver37 = 111;
+        obj.last_clock = 200;
+        z.add_obj(obj, Some(111));
+        z.compute_shared();
+        assert!(z.shared_bytes().is_none());
+    }
+}

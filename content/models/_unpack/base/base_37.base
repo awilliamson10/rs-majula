@@ -1,0 +1,9 @@
+[base_37]
+bone0=translate,1
+bone1=scale,6,3,4,7,0,2,1
+bone2=translate,0
+bone3=scale,6,3,4,7,0,2
+bone4=translate,2
+bone5=scale,6,3,4,2
+bone6=translate,3
+bone7=scale,3,4

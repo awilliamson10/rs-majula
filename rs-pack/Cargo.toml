@@ -1,0 +1,29 @@
+[package]
+name = "rs-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rs-pack"
+path = "src/main.rs"
+
+[dependencies]
+rs-io = { workspace = true }
+rs-runec = { workspace = true }
+
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+num_enum = { workspace = true }
+rustc-hash = { workspace = true }
+image = "0.25"
+
+[lints]
+workspace = true

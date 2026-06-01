@@ -1,0 +1,37 @@
+[package]
+name = "rs-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+rs-cam = { workspace = true }
+rs-datastruct = { workspace = true }
+rs-entity = { workspace = true }
+rs-grid = { workspace = true }
+rs-inv = { workspace = true }
+rs-vm = { workspace = true }
+rs-zone = { workspace = true }
+rs-var = { workspace = true }
+rs-stat = { workspace = true }
+rs-info = { workspace = true }
+rs-pack = { workspace = true }
+rs-crypto = { workspace = true }
+rs-io = { workspace = true }
+rs-protocol = { workspace = true }
+rs-pathfinder = { workspace = true }
+rs-util = { workspace = true }
+
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+argon2 = { workspace = true }
+num_enum = { workspace = true }
+rustc-hash = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]

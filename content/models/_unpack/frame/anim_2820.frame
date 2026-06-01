@@ -1,0 +1,6 @@
+[anim_2820]
+delay=50
+base=base_42
+bone0=y,32
+bone1=z,69
+bone2=x,66

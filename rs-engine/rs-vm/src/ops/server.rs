@@ -1,0 +1,300 @@
+use crate::engine::{ScriptEngine, cache, engine, engine_mut};
+use crate::register::OpsRegistry;
+use crate::state::ExecutionState;
+use crate::util::{pop_seq, pop_spotanim};
+use crate::{handlers, none};
+use rs_grid::CoordGrid;
+use rs_pack::cache::script::*;
+use rsmod::rsmod::flag::collision_flag::CollisionFlag;
+
+/// Registers server and world-level opcodes for coordinate utilities, map queries,
+/// pathfinding checks, projectile animations, and zone management.
+///
+/// # Opcodes Registered
+///
+/// Key opcodes include:
+/// - **Coordinate helpers:** `COORDX`, `COORDY`, `COORDZ`, `MOVECOORD`, `DISTANCE`
+/// - **Zone / area tests:** `INZONE`, `MAP_BLOCKED`, `MAP_INDOORS`, `MAP_MULTIWAY`,
+///   `MAP_PLAYERCOUNT`, `MAP_MEMBERS`, `MAP_LIVE`, `MAP_LOCADDUNSAFE`
+/// - **Pathfinding:** `LINEOFSIGHT`, `LINEOFWALK`, `MAP_FINDSQUARE`
+/// - **World state:** `MAP_CLOCK`, `PLAYERCOUNT`
+/// - **Animations / effects:** `PROJANIM_MAP`, `SPOTANIM_MAP`, `SEQLENGTH`
+/// - **Suspension:** `WORLD_DELAY`
+///
+/// # Call Stack
+///
+/// **Called by:** `Engine::new` (in `rs-engine/src/engine.rs`) via `ops::server::build`
+/// **Calls:** `OpsRegistry::new`, `OpsRegistry::insert` via the `handlers!` / `none!` macros
+pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
+    handlers! { |m|
+        // 1000
+        none!(m, COORDX => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(coord.x() as i32);
+        });
+
+        // 1001
+        none!(m, COORDY => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(coord.y() as i32);
+        });
+
+        // 1002
+        none!(m, COORDZ => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(coord.z() as i32);
+        });
+
+        // 1003
+        none!(m, DISTANCE => |s| {
+            let b = CoordGrid::from(s.pop_int() as u32);
+            let a = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(a.distance(b));
+        });
+
+        // 1004
+        none!(m, INZONE => |s| {
+            let test = CoordGrid::from(s.pop_int() as u32);
+            let ne = CoordGrid::from(s.pop_int() as u32);
+            let sw = CoordGrid::from(s.pop_int() as u32);
+            let ok = test.y() == sw.y()
+                && test.x() >= sw.x()
+                && test.x() <= ne.x()
+                && test.z() >= sw.z()
+                && test.z() <= ne.z();
+            s.push_int(ok as i32);
+        });
+
+        // 1005
+        none!(m, LINEOFSIGHT => |s| {
+            let to = CoordGrid::from(s.pop_int() as u32);
+            let from = CoordGrid::from(s.pop_int() as u32);
+            if from.y() != to.y() {
+                s.push_int(0);
+                return Ok(());
+            }
+            if !engine::<E>().members() && !cache().is_free(to.x(), to.z()) {
+                s.push_int(0);
+                return Ok(());
+            }
+            s.push_int(rsmod::has_line_of_sight(from.y(), from.x(), from.z(), to.x(), to.z(), 1, 1, 1, 1, 0) as i32);
+        });
+
+        // 1006
+        none!(m, LINEOFWALK => |s| {
+            let to = CoordGrid::from(s.pop_int() as u32);
+            let from = CoordGrid::from(s.pop_int() as u32);
+            if from.y() != to.y() {
+                s.push_int(0);
+                return Ok(());
+            }
+            if !engine::<E>().members() && !cache().is_free(to.x(), to.z()) {
+                s.push_int(0);
+                return Ok(());
+            }
+            s.push_int(rsmod::has_line_of_walk(from.y(), from.x(), from.z(), to.x(), to.z(), 1, 1, 1, 1, 0) as i32);
+        });
+
+        // 1007
+        none!(m, MAP_BLOCKED => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            if !engine::<E>().members() && !cache().is_free(coord.x(), coord.z()) {
+                s.push_int(1);
+                return Ok(());
+            }
+            s.push_int(rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::WalkBlocked as u32) as i32);
+        });
+
+        // 1008
+        none!(m, MAP_CLOCK => |s| {
+            s.push_int(engine::<E>().clock() as i32);
+        });
+
+        // 1009
+        none!(m, MAP_FINDSQUARE => |s| {
+            let find_type = s.pop_int();
+            let max_radius = s.pop_int();
+            let min_radius = s.pop_int();
+            let coord = s.pop_int();
+            let origin = CoordGrid::from(coord as u32);
+            let free_world = !engine::<E>().members();
+
+            if max_radius < 10 {
+                for _ in 0..50 {
+                    let dx = (engine_mut::<E>().random().next_double() * (2 * max_radius + 1) as f64) as i32 - max_radius;
+                    let dz = (engine_mut::<E>().random().next_double() * (2 * max_radius + 1) as f64) as i32 - max_radius;
+                    let distance = dx.abs().max(dz.abs());
+                    if distance < min_radius || distance > max_radius {
+                        continue;
+                    }
+                    let rx = (origin.x() as i32 + dx) as u16;
+                    let rz = (origin.z() as i32 + dz) as u16;
+                    if free_world && !cache().is_free(rx, rz) {
+                        continue;
+                    }
+                    let blocked = rsmod::is_flagged(rx, rz, origin.y(), CollisionFlag::WalkBlocked as u32);
+                    let vis_ok = match find_type {
+                        1 => rsmod::has_line_of_walk(origin.y(), rx, rz, origin.x(), origin.z(), 1, 1, 1, 1, 0),
+                        2 => rsmod::has_line_of_sight(origin.y(), rx, rz, origin.x(), origin.z(), 1, 1, 1, 1, 0),
+                        _ => true,
+                    };
+                    if vis_ok && !blocked {
+                        s.push_int(CoordGrid::new(rx, origin.y(), rz).packed() as i32);
+                        return Ok(());
+                    }
+                }
+            } else {
+                for x in (origin.x() as i32 - max_radius)..=(origin.x() as i32 + max_radius) {
+                    let dx = x - origin.x() as i32;
+                    let dz = (engine_mut::<E>().random().next_double() * (2 * max_radius + 1) as f64) as i32 - max_radius;
+                    let distance = dx.abs().max(dz.abs());
+                    if distance < min_radius || distance > max_radius {
+                        continue;
+                    }
+                    let rx = x as u16;
+                    let rz = (origin.z() as i32 + dz) as u16;
+                    if free_world && !cache().is_free(rx, rz) {
+                        continue;
+                    }
+                    let blocked = rsmod::is_flagged(rx, rz, origin.y(), CollisionFlag::WalkBlocked as u32);
+                    let too_close = CoordGrid::new(rx, origin.y(), rz).in_distance(origin, min_radius as u8);
+                    let vis_ok = match find_type {
+                        1 => rsmod::has_line_of_walk(origin.y(), rx, rz, origin.x(), origin.z(), 1, 1, 1, 1, 0),
+                        2 => rsmod::has_line_of_sight(origin.y(), rx, rz, origin.x(), origin.z(), 1, 1, 1, 1, 0),
+                        _ => true,
+                    };
+                    if vis_ok && !blocked && !too_close {
+                        s.push_int(CoordGrid::new(rx, origin.y(), rz).packed() as i32);
+                        return Ok(());
+                    }
+                }
+            }
+            s.push_int(coord);
+        });
+
+        // 1010
+        none!(m, MAP_INDOORS => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::Roof as u32) as i32);
+        });
+
+        // 1011
+        none!(m, MAP_LIVE => |s| {
+            #[cfg(debug_assertions)]
+            s.push_int(0);
+            #[cfg(not(debug_assertions))]
+            s.push_int(1);
+        });
+
+        // 1012
+        none!(m, MAP_LOCADDUNSAFE => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(engine::<E>().locaddunsafe(coord) as i32);
+        });
+
+        // 1013
+        none!(m, MAP_MEMBERS => |s| {
+            s.push_int(engine::<E>().members() as i32);
+        });
+
+        // 1014
+        none!(m, MAP_MULTIWAY => |s| {
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            s.push_int(cache().is_multi(coord.x(), coord.z(), coord.y()) as i32);
+        });
+
+        // 1015
+        none!(m, MAP_PLAYERCOUNT => |s| {
+            let to = CoordGrid::from(s.pop_int() as u32);
+            let from = CoordGrid::from(s.pop_int() as u32);
+
+            let mut count = 0;
+            let from_zx = from.x() >> 3;
+            let from_zz = from.z() >> 3;
+            let to_zx = (to.x() + 7) >> 3;
+            let to_zz = (to.z() + 7) >> 3;
+
+            for zx in from_zx..=to_zx {
+                for zz in from_zz..=to_zz {
+                    let coords = engine::<E>().get_zone_player_coords(zx << 3, from.y(), zz << 3);
+                    for packed in coords {
+                        let c = CoordGrid::from(packed);
+                        if c.x() >= from.x() && c.x() <= to.x() && c.z() >= from.z() && c.z() <= to.z() {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+
+            s.push_int(count);
+        });
+
+        // 1016
+        none!(m, MOVECOORD => |s| {
+            let dz = s.pop_int();
+            let dy = s.pop_int();
+            let dx = s.pop_int();
+            let base = CoordGrid::from(s.pop_int() as u32);
+            let nc = CoordGrid::new(
+                (base.x() as i32 + dx) as u16,
+                (base.y() as i32 + dy).clamp(0, 3) as u8,
+                (base.z() as i32 + dz) as u16,
+            );
+            s.push_int(nc.packed() as i32);
+        });
+
+        // 1017
+        none!(m, PLAYERCOUNT => |s| {
+            s.push_int(engine::<E>().playercount() as i32);
+        });
+
+        // 1018
+        none!(m, PROJANIM_MAP => |s| {
+            let arc = s.pop_int();
+            let peak = s.pop_int();
+            let duration = s.pop_int();
+            let delay = s.pop_int();
+            let dst_height = s.pop_int();
+            let src_height = s.pop_int();
+            let spotanim = pop_spotanim(s)?;
+            let dst = CoordGrid::from(s.pop_int() as u32);
+            let src = CoordGrid::from(s.pop_int() as u32);
+            engine_mut::<E>().map_proj_anim(
+                src.y(),
+                src.x(),
+                src.z(),
+                dst.x(),
+                dst.z(),
+                0,
+                spotanim.id,
+                (src_height << 2) as u8,
+                (dst_height << 2) as u8,
+                delay as u16,
+                duration as u16,
+                peak as u8,
+                arc as u8
+            );
+        });
+
+        // 1019
+        none!(m, SEQLENGTH => |s| {
+            let seq = pop_seq(s)?;
+            s.push_int(seq.duration as i32);
+        });
+
+        // 1020
+        none!(m, SPOTANIM_MAP => |s| {
+            let delay = s.pop_int();
+            let height = s.pop_int();
+            let coord = CoordGrid::from(s.pop_int() as u32);
+            let spotanim = pop_spotanim(s)?;
+            engine_mut::<E>().anim_map(coord.y(), coord.x(), coord.z(), spotanim.id, height as u8, delay as u16);
+        });
+
+        // 1021
+        none!(m, WORLD_DELAY => |s| {
+            // arg is popped elsewhere
+            s.execution = ExecutionState::WorldSuspended;
+        });
+    }
+}

@@ -1,0 +1,16 @@
+[base_63]
+bone0=translate,1
+bone1=alpha,1
+bone2=translate,3
+bone3=alpha,3
+bone4=translate,5
+bone5=alpha,5
+bone6=translate,0
+bone7=alpha,0
+bone8=translate,2
+bone9=alpha,2
+bone10=translate,4
+bone11=alpha,4
+bone12=origin,0,1
+bone13=origin,2,3
+bone14=origin,4,5

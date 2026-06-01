@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target/
+
+# Java/Maven/Gradle build artifacts
+**/target/
+**/.gradle/
+**/build/
+**/*.class
+**/*.jar
+
+# IDE
+.idea/
+*.iml
+
+# Logs and temp files
+*.log
+*.stackdump
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Screenshots
+screenshot_*.png
+
+# Build output (compiled configs, exports)
+data/

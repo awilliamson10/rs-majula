@@ -1,0 +1,22 @@
+[package]
+name = "rs-vm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+rs-grid = { workspace = true }
+rs-inv = { workspace = true }
+rs-pack = { workspace = true }
+rs-pathfinder = { workspace = true }
+rs-util = { workspace = true }
+
+thiserror = { workspace = true }
+tracing = { workspace = true }
+num_enum = { workspace = true }
+itoa = { workspace = true }
+
+[lints]
+workspace = true

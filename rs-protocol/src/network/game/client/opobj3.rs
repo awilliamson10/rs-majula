@@ -1,0 +1,22 @@
+use crate::network::game::client::ClientProtMessage;
+use crate::network::game::client_prot_category::ClientProtCategory;
+use crate::network::game::client_prot_message::ClientProtMessageInfo;
+use rs_io::{Packet, PacketFrame};
+use rs_protocol_macros::client_prot;
+
+#[client_prot(Fixed(6), UserEvent)]
+pub struct OpObj3 {
+    pub x: u16,
+    pub z: u16,
+    pub obj: u16,
+}
+
+impl ClientProtMessage for OpObj3 {
+    fn decode(buf: &mut Packet, _: usize) -> Self {
+        OpObj3 {
+            x: buf.g2(),
+            z: buf.g2(),
+            obj: buf.g2(),
+        }
+    }
+}

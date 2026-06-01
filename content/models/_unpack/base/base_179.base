@@ -1,0 +1,16 @@
+[base_179]
+bone0=translate,1,0
+bone1=rotate,1,0
+bone2=scale,1,0
+bone3=alpha,1,0
+bone4=origin,1,0
+bone5=translate,1
+bone6=rotate,1
+bone7=scale,1
+bone8=alpha,1
+bone9=origin,1
+bone10=translate,0
+bone11=rotate,0
+bone12=scale,0
+bone13=alpha,0
+bone14=origin,0

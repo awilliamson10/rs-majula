@@ -1,0 +1,3 @@
+[submodule "rs-ether"]
+	path = rs-ether
+	url = git@github.com:RustCityRS/rs-ether.git

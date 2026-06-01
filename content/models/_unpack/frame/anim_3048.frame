@@ -1,0 +1,5 @@
+[anim_3048]
+delay=4
+base=base_58
+bone0=x,16485
+bone1=z,49
