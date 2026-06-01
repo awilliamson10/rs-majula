@@ -87,6 +87,10 @@ cargo run -p rs-server
 > populated world locally, prefer the `dev-opt` profile (near-release speed,
 > still has debuginfo): `cargo run --profile dev-opt -p rs-server`.
 
+> For **maximum performance** (production or benchmarking), run in release mode —
+> `cargo run --release -p rs-server` — for full optimizations and fat LTO, at the
+> cost of the longest compile.
+
 Stop Postgres when you're done with `docker compose down` (add `-v` to also wipe
 the database volume).
 
@@ -151,8 +155,9 @@ Defined in `.cargo/config.toml`:
   debug-only hot-reload.
 - **`dev-opt`** — `inherits = dev` with `opt-level = 2`; the practical profile for
   running a real world locally. `cargo run --profile dev-opt -p rs-server`.
-- **`release`** — `opt-level=3`, fat LTO, `panic = "unwind"` (load-bearing for the
-  engine's `catch_unwind` recovery). `cargo run --release -p rs-server`.
+- **`release`** — **maximum performance**: `opt-level=3`, fat LTO, `panic = "unwind"`
+  (load-bearing for the engine's `catch_unwind` recovery). Slowest to compile; use it
+  for production and benchmarking. `cargo run --release -p rs-server`.
 
 ## Content toolchain (optional)
 
