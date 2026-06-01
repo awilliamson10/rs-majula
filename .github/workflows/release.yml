@@ -51,6 +51,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -80,6 +82,9 @@ jobs:
           cp -r content staging/rs-majula/
           cp -r .keys staging/rs-majula/
           cp -r public staging/rs-majula/
+          cp -r rs-ether staging/rs-majula/
+          rm -rf staging/rs-majula/rs-ether/.git
+          cp docker-compose.yml staging/rs-majula/
           tar -czf rs-majula-${{ matrix.target }}.tar.gz -C staging rs-majula
 
       - name: Upload artifact
