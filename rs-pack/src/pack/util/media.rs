@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 use std::path::Path;
 
 pub fn convert_image(index: &mut Vec<u8>, sprite_dir: &Path) -> Vec<u8> {
