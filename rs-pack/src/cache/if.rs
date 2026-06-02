@@ -294,7 +294,7 @@ impl IfTypeProvider {
             if let Some(name) = &com.com_name
                 && !name.is_empty()
             {
-                names.insert(Box::from(name.clone()), id);
+                names.insert(name.clone(), id);
             }
 
             if (id as usize) < types.len() {
