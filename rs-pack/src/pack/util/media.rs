@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::path::Path;
 
 pub fn convert_image(index: &mut Vec<u8>, sprite_dir: &Path) -> Vec<u8> {
@@ -92,8 +93,7 @@ pub fn convert_image(index: &mut Vec<u8>, sprite_dir: &Path) -> Vec<u8> {
     index.push((tile_h >> 8) as u8);
     index.push(tile_h as u8);
     index.push(palette.len() as u8);
-    for j in 1..palette.len() {
-        let c = palette[j];
+    for &c in palette.iter().skip(1) {
         index.push((c >> 16) as u8);
         index.push((c >> 8) as u8);
         index.push(c as u8);
