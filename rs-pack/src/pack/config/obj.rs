@@ -463,7 +463,7 @@ pub fn pack_objs(
         }
 
         // handle 249
-        parse_params(registry, &param_types, &mut server, props, debugname);
+        parse_params(registry, param_types, &mut server, props, debugname);
 
         // 250
         server.p1(250);
