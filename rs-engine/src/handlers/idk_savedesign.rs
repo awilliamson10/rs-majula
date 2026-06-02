@@ -96,8 +96,8 @@ impl ClientGameHandler for IdkSaveDesign {
             }
         }
 
-        for i in 0..5 {
-            if self.colour[i] as usize >= DESIGN_BODY_COLORS[i].len() {
+        for (i, colour) in DESIGN_BODY_COLORS.iter().enumerate() {
+            if self.colour[i] as usize >= colour.len() {
                 // bad client: colour index is out of range
                 return Ok(());
             }
