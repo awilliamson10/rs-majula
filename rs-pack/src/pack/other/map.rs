@@ -77,7 +77,7 @@ fn fast_parse_int(s: &[u8]) -> i32 {
 fn fast_parse_usize(s: &[u8]) -> usize {
     let mut n: usize = 0;
     for &b in s {
-        if (b'0'..=b'9').contains(&b) {
+        if b.is_ascii_digit() {
             n = n * 10 + (b - b'0') as usize;
         } else {
             break;
