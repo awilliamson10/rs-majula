@@ -1173,7 +1173,7 @@ impl Engine {
         let target_op = active.npc.interaction.target_op;
 
         // Failsafe: if target_op is somehow invalid, reset to default
-        if target_op == None && active.npc.interaction.target.is_none() {
+        if target_op.is_none() && active.npc.interaction.target.is_none() {
             let npc_type = cache().npcs.get_by_id(active.npc.uid.id());
             let default = npc_type.map(|t| t.defaultmode).unwrap_or(NpcMode::None);
             active.npc.interaction.target_op = Some(default as u8);
