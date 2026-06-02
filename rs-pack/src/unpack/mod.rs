@@ -176,7 +176,7 @@ pub fn decode_sprite_group(
 
     let strip_pixels = palette.len() - 1;
     let strip_rows = if tile_w > 0 {
-        (strip_pixels as u32 + tile_w - 1) / tile_w
+        (strip_pixels as u32).div_ceil(tile_w)
     } else {
         0
     };
