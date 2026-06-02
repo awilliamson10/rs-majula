@@ -371,7 +371,7 @@ fn parse_frame_bone(s: &str) -> (u8, Vec<i32>) {
     let flags = axis_flags_id(axes);
     let deltas = parts
         .next()
-        .map(|rest| parse_csv_i32(rest))
+        .map(parse_csv_i32)
         .unwrap_or_default();
     (flags, deltas)
 }
@@ -382,7 +382,7 @@ fn parse_bone_entry(s: &str) -> (u8, Vec<u8>) {
     let bone_type = BoneType::from_config_str(type_name) as u8;
     let labels = parts
         .next()
-        .map(|rest| parse_csv_u8(rest))
+        .map(parse_csv_u8)
         .unwrap_or_default();
     (bone_type, labels)
 }
