@@ -510,7 +510,7 @@ fn is_alpha(c: char) -> bool {
 }
 
 fn is_numerical(c: char) -> bool {
-    ('0'..='9').contains(&c)
+    c.is_ascii_digit()
 }
 
 fn is_lowercase_alpha(c: char) -> bool {
