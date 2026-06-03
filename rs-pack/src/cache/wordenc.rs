@@ -425,8 +425,8 @@ impl WordEncProvider {
             }
 
             let mut is_symbol_or_not_lowercase_alpha = false;
-            for idx in current_index..number_index {
-                if !is_symbol(chars[idx]) && !is_not_lowercase_alpha(chars[idx]) {
+            for &c in chars.iter().take(number_index).skip(current_index) {
+                if !is_symbol(c) && !is_not_lowercase_alpha(c) {
                     is_symbol_or_not_lowercase_alpha = true;
                 }
             }
