@@ -973,8 +973,8 @@ fn format_chars(chars: &mut [char]) {
             pos += 1;
         }
     }
-    for i in pos..chars.len() {
-        chars[i] = ' ';
+    for c in chars.iter_mut().skip(pos) {
+        *c = ' ';
     }
 }
 
