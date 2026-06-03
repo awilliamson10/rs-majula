@@ -183,10 +183,10 @@ impl WordEncProvider {
 
             let mut numeral_count = 0;
             let mut alpha_count = 0;
-            for idx in start_index..current_index {
-                if is_numerical(chars[idx]) {
+            for &c in chars.iter().take(current_index).skip(start_index) {
+                if is_numerical(c) {
                     numeral_count += 1;
-                } else if is_alpha(chars[idx]) {
+                } else if is_alpha(c) {
                     alpha_count += 1;
                 }
             }
