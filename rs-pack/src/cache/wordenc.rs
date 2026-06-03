@@ -931,8 +931,8 @@ fn index_of_number(chars: &[char], offset: usize) -> usize {
 }
 
 fn index_of_non_number(offset: usize, chars: &[char]) -> usize {
-    for i in offset..chars.len() {
-        if !is_numerical(chars[i]) {
+    for (i, &c) in chars.iter().enumerate().skip(offset) {
+        if !is_numerical(c) {
             return i;
         }
     }
