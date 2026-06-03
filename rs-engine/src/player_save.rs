@@ -372,9 +372,9 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
     let y = sav.g1();
 
     let mut body = [0i32; 7];
-    for i in 0..7 {
+    for b in &mut body {
         let v = sav.g1() as i32;
-        body[i] = if v == 255 { -1 } else { v };
+        *b = if v == 255 { -1 } else { v };
     }
     let mut colors = [0u8; 5];
     for i in 0..5 {
