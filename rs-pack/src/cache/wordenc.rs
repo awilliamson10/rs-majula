@@ -383,7 +383,7 @@ impl WordEncProvider {
             if slash_filter_status > 2 {
                 if slash_filter_status == 4 {
                     let mut found = false;
-                    for (pi, &c) in slash.iter().enumerate().take(chars.len()).skip((end_filter + 1)) {
+                    for (pi, &c) in slash.iter().enumerate().take(chars.len()).skip(end_filter + 1) {
                         if found {
                             if c != '*' {
                                 break;
