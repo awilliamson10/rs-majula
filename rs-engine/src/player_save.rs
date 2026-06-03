@@ -443,8 +443,8 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
     let mut last_afk_zone: u16 = 0;
     if version >= 3 {
         let afk_count = sav.g1() as usize;
-        for i in 0..afk_count.min(2) {
-            afk_zones[i] = sav.g4s() as u32;
+        for z in afk_zones.iter_mut().take(afk_count.min(2)) {
+            *z = sav.g4s() as u32;
         }
         for _ in 2..afk_count {
             sav.g4s();
