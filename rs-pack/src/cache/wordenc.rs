@@ -618,11 +618,11 @@ fn suffix_symbol_status(
     if offset + 1 == chars.len() {
         return 2;
     }
-    for i in (offset + 1)..chars.len() {
-        if !is_symbol(chars[i]) {
+    for &c in chars.iter().skip(offset + 1) {
+        if !is_symbol(c) {
             break;
         }
-        if symbols.contains(&chars[i]) {
+        if symbols.contains(&c) {
             return 3;
         }
     }
