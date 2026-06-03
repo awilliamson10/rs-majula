@@ -130,7 +130,7 @@ pub fn pack_dbrows(
                             .get(k % col_types.len().max(1))
                             .copied()
                             .unwrap_or(b'i');
-                        let svt = ScriptVarType::try_from(type_char).unwrap();
+                        let svt = ScriptVarType::try_from(type_char)?;
                         let Some(value) = get_param_value_for_type(svt.type_name(), registry, val)
                         else {
                             panic!(
