@@ -207,8 +207,8 @@ pub fn decode_sprite_group(
             let mut indices = vec![0u8; pixel_count];
 
             if pixel_order == 0 {
-                for i in 0..pixel_count {
-                    indices[i] = dat.g1();
+                for p in indices.iter_mut().take(pixel_count) {
+                    *p = dat.g1();
                 }
             } else {
                 for x in 0..content_w as usize {
