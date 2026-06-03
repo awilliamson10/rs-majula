@@ -795,7 +795,7 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
         }
         return 0;
     }
-    if bad_char >= '0' && bad_char <= '9' {
+    if ('0'..='9').contains(&bad_char) {
         if bad_char == '0' {
             if current_char == 'o' || current_char == 'O' {
                 return 1;
