@@ -110,8 +110,8 @@ impl FontType {
 
         font.char_advance[94] = font.char_advance[8];
 
-        for c in 0..256 {
-            font.draw_width[c] = font.char_advance[CHAR_LOOKUP[c] as usize];
+        for (i, &c) in CHAR_LOOKUP.iter().enumerate() {
+            font.draw_width[i] = font.char_advance[c as usize];
         }
 
         font
