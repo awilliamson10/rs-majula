@@ -550,11 +550,11 @@ fn masked_count_backwards(chars: &[char], offset: usize) -> usize {
 
 fn masked_count_forwards(chars: &[char], offset: usize) -> usize {
     let mut count = 0;
-    for i in (offset + 1)..chars.len() {
-        if !is_symbol(chars[i]) {
+    for &c in chars.iter().skip(offset + 1) {
+        if !is_symbol(c) {
             break;
         }
-        if chars[i] == '*' {
+        if c == '*' {
             count += 1;
         }
     }
