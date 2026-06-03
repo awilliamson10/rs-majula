@@ -509,10 +509,10 @@ fn compute_face_vertex_len(face_count: usize, v2: &[u8]) -> usize {
 
 fn compute_vertex_delta_len(vertex_count: usize, p1: &[u8], axis: u8) -> usize {
     let mut len = 0;
-    for i in 0..vertex_count.min(p1.len()) {
-        if p1[i] & (1 << axis) != 0 {
+    for &p in p1.iter().take(vertex_count.min(p1.len())) {
+        if p & (1 << axis) != 0 {
             len += 2;
-        } else if p1[i] & (1 << (axis + 3)) != 0 {
+        } else if p & (1 << (axis + 3)) != 0 {
             len += 1;
         }
     }
