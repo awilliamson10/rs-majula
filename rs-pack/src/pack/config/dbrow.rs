@@ -157,7 +157,7 @@ pub fn pack_dbrows(
         if let Some(tn) = table_name {
             if let Some(tid) = table_pack.get_by_debugname(tn) {
                 server.p1(4);
-                server.p2(tid as u16);
+                server.p2(tid);
             }
         }
 
