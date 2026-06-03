@@ -670,7 +670,7 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
     if bad_char == current_char {
         return 1;
     }
-    if bad_char >= 'a' && bad_char <= 'm' {
+    if ('a'..='m').contains(&bad_char) {
         match bad_char {
             'a' => {
                 if matches!(current_char, '4' | '@' | '^') {
