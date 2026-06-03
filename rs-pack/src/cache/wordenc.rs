@@ -735,7 +735,7 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
         }
         return 0;
     }
-    if bad_char >= 'n' && bad_char <= 'z' {
+    if ('n'..='z').contains(&bad_char) {
         match bad_char {
             'o' => {
                 if matches!(current_char, '0' | '*') {
