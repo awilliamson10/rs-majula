@@ -441,8 +441,8 @@ impl WordEncProvider {
 
             let end = index_of_non_number(number_index, chars);
             let mut value: i32 = 0;
-            for idx in number_index..end {
-                value = value * 10 + (chars[idx] as i32 - 48);
+            for &c in chars.iter().take(end).skip(number_index) {
+                value = value * 10 + (c as i32 - 48);
             }
 
             if value <= 255 && end - number_index <= 8 {
