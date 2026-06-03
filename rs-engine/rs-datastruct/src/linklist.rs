@@ -27,6 +27,7 @@ pub struct LinkList<T> {
     cursor: usize,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl<T> LinkList<T> {
     /// Creates a new, empty `LinkList`.
     ///

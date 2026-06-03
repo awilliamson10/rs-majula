@@ -5,6 +5,7 @@ struct HashEntry<T> {
     next: usize,
 }
 
+#[allow(clippy::len_without_is_empty)]
 pub struct HashTable<T> {
     bucket_count: usize,
     entries: Vec<HashEntry<T>>,

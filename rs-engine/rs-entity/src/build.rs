@@ -10,6 +10,7 @@ pub const MAX_NPCS: usize = 8192;
 ///
 /// Uses unsafe pointer arithmetic for performance-critical `contains`, `insert`,
 /// and `remove` operations on the bit vector.
+#[allow(clippy::len_without_is_empty)]
 pub struct IdBitSet {
     bits: Vec<u32>,
     ids: Vec<u16>,
