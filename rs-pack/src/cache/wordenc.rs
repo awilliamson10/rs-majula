@@ -922,8 +922,8 @@ fn process_tlds(chars: &[char], tld: &[u8], mut current_index: usize) -> (usize,
 }
 
 fn index_of_number(chars: &[char], offset: usize) -> usize {
-    for i in offset..chars.len() {
-        if is_numerical(chars[i]) {
+    for (i, &c) in chars.iter().enumerate().skip(offset) {
+        if is_numerical(c) {
             return i;
         }
     }
