@@ -377,8 +377,8 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
         *b = if v == 255 { -1 } else { v };
     }
     let mut colors = [0u8; 5];
-    for i in 0..5 {
-        colors[i] = sav.g1();
+    for c in &mut colors {
+        *c = sav.g1();
     }
     let gender = sav.g1();
 
