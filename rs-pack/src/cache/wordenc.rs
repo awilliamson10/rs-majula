@@ -979,7 +979,7 @@ fn format_chars(chars: &mut [char]) {
 }
 
 fn is_character_allowed(c: char) -> bool {
-    (c >= ' ' && c <= '\x7f') || c == ' ' || c == '\n' || c == '\t' || c == '£' || c == '€'
+    (' '..='\x7f').contains(&c) || c == ' ' || c == '\n' || c == '\t' || c == '£' || c == '€'
 }
 
 fn replace_uppercases(chars: &mut [char], comparison: &[char]) {
