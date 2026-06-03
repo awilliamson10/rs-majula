@@ -696,10 +696,8 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
             'd' if current_char == '[' && next_char == ')' => {
                 return 2;
             }
-            'e' => {
-                if current_char == '3' || current_char == '€' {
-                    return 1;
-                }
+            'e' if current_char == '3' || current_char == '€' => {
+                return 1;
             }
             'f' => {
                 if current_char == 'p' && next_char == 'h' {
