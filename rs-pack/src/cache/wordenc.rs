@@ -396,13 +396,13 @@ impl WordEncProvider {
                     }
                 }
                 let mut found = false;
-                for pi in (end_filter + 1)..chars.len() {
+                for (pi, &c) in chars.iter().enumerate().skip(end_filter + 1) {
                     if found {
-                        if is_symbol(chars[pi]) {
+                        if is_symbol(c) {
                             break;
                         }
                         end_filter = pi;
-                    } else if !is_symbol(chars[pi]) {
+                    } else if !is_symbol(c) {
                         found = true;
                         end_filter = pi;
                     }
