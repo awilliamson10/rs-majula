@@ -514,7 +514,7 @@ fn is_numerical(c: char) -> bool {
 }
 
 fn is_lowercase_alpha(c: char) -> bool {
-    ('a'..='z').contains(&c)
+    c.is_ascii_lowercase()
 }
 
 fn is_uppercase_alpha(c: char) -> bool {
