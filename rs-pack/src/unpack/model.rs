@@ -498,8 +498,8 @@ fn extract_ob2(
 
 fn compute_face_vertex_len(face_count: usize, v2: &[u8]) -> usize {
     let mut len = 0;
-    for i in 0..face_count.min(v2.len()) {
-        match v2[i] {
+    for &v in v2.iter().take(face_count.min(v2.len())) {
+        match v {
             1 | 2 => len += 4,
             _ => len += 6,
         }
