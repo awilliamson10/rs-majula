@@ -714,10 +714,8 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
                     return 1;
                 }
             }
-            'h' => {
-                if current_char == '#' {
-                    return 1;
-                }
+            'h' if current_char == '#' => {
+                return 1;
             }
             'i' => {
                 if matches!(current_char, 'y' | 'l' | 'j' | '1' | '!' | ':' | ';' | '|') {
