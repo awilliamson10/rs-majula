@@ -383,7 +383,12 @@ impl WordEncProvider {
             if slash_filter_status > 2 {
                 if slash_filter_status == 4 {
                     let mut found = false;
-                    for (pi, &c) in slash.iter().enumerate().take(chars.len()).skip(end_filter + 1) {
+                    for (pi, &c) in slash
+                        .iter()
+                        .enumerate()
+                        .take(chars.len())
+                        .skip(end_filter + 1)
+                    {
                         if found {
                             if c != '*' {
                                 break;
@@ -765,8 +770,8 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
             }
             'v' if (current_char == '\\' && next_char == '/')
                 || (current_char == '\\' && next_char == '|')
-                || (current_char == '|' && next_char == '/')
-            => {
+                || (current_char == '|' && next_char == '/') =>
+            {
                 return 2;
             }
             'w' if current_char == 'v' && next_char == 'v' => {
@@ -775,8 +780,8 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
             'x' if (current_char == ')' && next_char == '(')
                 || (current_char == '}' && next_char == '{')
                 || (current_char == ']' && next_char == '[')
-                || (current_char == '>' && next_char == '<')
-            => {
+                || (current_char == '>' && next_char == '<') =>
+            {
                 return 2;
             }
             _ => {}
