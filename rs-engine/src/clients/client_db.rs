@@ -761,18 +761,18 @@ async fn save_profile(
     let last_date = profile.last_date;
     let staff_mod_level = profile.staff_mod_level as i16;
 
-    let varp_ids: Vec<i16> = profile.varps.iter().map(|&(id, _)| id as i16).collect();
+    let varp_ids: Vec<i32> = profile.varps.iter().map(|&(id, _)| id as i32).collect();
     let varp_values: Vec<i32> = profile.varps.iter().map(|&(_, v)| v).collect();
 
-    let mut inv_types: Vec<i16> = Vec::new();
+    let mut inv_types: Vec<i32> = Vec::new();
     let mut inv_slots: Vec<i16> = Vec::new();
-    let mut inv_objs: Vec<i16> = Vec::new();
+    let mut inv_objs: Vec<i32> = Vec::new();
     let mut inv_counts: Vec<i32> = Vec::new();
     for inv in &profile.invs {
         for &(slot, obj_id, count) in &inv.items {
-            inv_types.push(inv.inv_type as i16);
+            inv_types.push(inv.inv_type as i32);
             inv_slots.push(slot as i16);
-            inv_objs.push(obj_id as i16);
+            inv_objs.push(obj_id as i32);
             inv_counts.push(count as i32);
         }
     }
@@ -900,8 +900,7 @@ async fn load_profile(client: &Client, user37: u64) -> Result<Option<PlayerProfi
     let staff_mod_level: i16 = row.get(col::STAFF_MOD_LEVEL);
 
     let mut invs: Vec<PlayerProfileInv> = Vec::new();
-    for i in 0..inv_types.len() {
-        let inv_type = inv_types[i] as u16;
+    for (i, inv_type) in inv_types.iter().map(|x| *x as u16).enumerate() {
         let item = (
             inv_slots.get(i).copied().unwrap_or(0) as u16,
             inv_objs.get(i).copied().unwrap_or(0) as u16,
