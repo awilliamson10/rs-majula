@@ -8823,7 +8823,7 @@ script `dat`/`idx` becomes the `ScriptProvider` (line 283). Everything lands in 
 | `wordenc`                     | `WordEncProvider`                             | Chat censor tables                                                                                    |
 | `songs` / `jingles`           | `MidiProvider`                                | Music with computed tick-lengths                                                                      |
 | `static_assets`               | `HashMap<Box<str>, Arc<[u8]>>`                | Files under `public/` served verbatim (e.g. HTTP)                                                     |
-| `multimap` / `freemap`        | `HashSet<u32>`                                | Packed zone-key sets for multiway/F2P flags                                                           |
+| `multimap` / `freemap`        | `MapSquareCsv`                                | Packed zone-key sets for multiway/F2P flags                                                           |
 
 `Arc<[u8]>` is used for every blob that is *sent to clients* (JAGs, map squares, MIDI) so the network layer can clone a
 cheap reference-counted handle into an outbound packet queue without copying the payload. The `static_assets` map is

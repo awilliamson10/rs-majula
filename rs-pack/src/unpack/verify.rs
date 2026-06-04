@@ -1,10 +1,13 @@
-use std::collections::HashMap;
-use std::path::Path;
-
 use crate::pack::pack_registry::PackRegistry;
+use crate::types::{MapSquareCrcs, MapSquares};
 use crate::unpack;
 use rs_io::crc;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 use tracing::{error, info};
+
+type ExpectedMapSquare = (MapSquares, MapSquareCrcs);
 
 pub fn verify_roundtrip(expected_dir: &Path, unpacked_dir: &Path) -> anyhow::Result<()> {
     let pack_dir = unpacked_dir.join("pack");
@@ -194,12 +197,7 @@ fn check(name: &str, expected: i32, actual: i32, pass: &mut u32, fail: &mut u32)
     }
 }
 
-fn load_expected_maps(
-    maps_dir: &Path,
-) -> (
-    HashMap<(char, u8, u8), Vec<u8>>,
-    HashMap<(char, u8, u8), i32>,
-) {
+fn load_expected_maps(maps_dir: &Path) -> ExpectedMapSquare {
     let mut data_map = HashMap::new();
     let mut crc_map = HashMap::new();
 
@@ -232,7 +230,7 @@ fn load_expected_maps(
 
         let file_data = std::fs::read(&path).unwrap_or_default();
         let file_crc = crc::getcrc(&file_data, 0, file_data.len());
-        data_map.insert((prefix, x, z), file_data);
+        data_map.insert((prefix, x, z), Arc::from(file_data));
         crc_map.insert((prefix, x, z), file_crc);
     }
 

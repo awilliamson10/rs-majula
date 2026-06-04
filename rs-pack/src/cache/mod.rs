@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::cache::r#enum::EnumType;
 use crate::cache::r#if::IfTypeProvider;
 use crate::cache::r#struct::StructType;
+use crate::types::{MapSquareCrcs, MapSquareCsv, MapSquares};
 use category::CategoryType;
 use dbrow::DbRowType;
 use dbtable::{DbTableIndex, DbTableType};
@@ -59,8 +60,8 @@ pub struct CacheStore {
     pub crctable_bytes: Arc<[u8]>,
     pub crcs: HashMap<&'static str, i32>,
     pub jags: HashMap<&'static str, Arc<[u8]>>,
-    pub mapsquares: HashMap<(char, u8, u8), Arc<[u8]>>,
-    pub mapcrcs: HashMap<(char, u8, u8), i32>,
+    pub mapsquares: MapSquares,
+    pub mapcrcs: MapSquareCrcs,
     pub objs: TypeProvider<ObjType>,
     pub invs: TypeProvider<InvType>,
     pub varps: TypeProvider<VarPlayerType>,
@@ -88,8 +89,8 @@ pub struct CacheStore {
     pub songs: MidiProvider,
     pub jingles: MidiProvider,
     pub static_assets: HashMap<Box<str>, Arc<[u8]>>,
-    pub multimap: std::collections::HashSet<u32>,
-    pub freemap: std::collections::HashSet<u32>,
+    pub multimap: MapSquareCsv,
+    pub freemap: MapSquareCsv,
 }
 
 pub use crate::types::ScriptVarType;

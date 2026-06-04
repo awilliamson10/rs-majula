@@ -116,7 +116,7 @@ Some data is stored without decoding:
 
 - `jags: HashMap<&'static str, Arc<[u8]>>` -- raw JAG archives served to the client (Arc-shared, zero-copy for game
   protocol)
-- `mapsquares: HashMap<(char, u8, u8), Arc<[u8]>>` -- compressed map tiles (Arc-shared, zero-copy for game protocol)
+- `mapsquares: MapSquares` -- compressed map tiles (Arc-shared, zero-copy for game protocol)
 - `scripts: HashMap<&'static str, Vec<u8>>` -- compiled RuneScript bytecode
 
 ---
@@ -2793,7 +2793,7 @@ CRC32 is computed on the compressed output for each file.
 
 #### Output Keys
 
-Maps are stored in a `HashMap<(char, u8, u8), Vec<u8>>` where:
+Maps are stored in a `HashMap<MapSquare, Vec<u8>>` where:
 
 - char: `'m'` (terrain), `'l'` (locs), `'n'` (npcs), `'o'` (objs)
 - u8: map_x coordinate

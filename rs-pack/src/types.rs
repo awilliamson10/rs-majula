@@ -1,4 +1,15 @@
 use num_enum::TryFromPrimitive;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+// --- Example: ('m', 50, 50) ---
+pub type MapSquare = (char, u8, u8);
+// --- Packed zone keys ---
+pub type MapSquareCsv = HashSet<u32>;
+// --- Mapsquare raw bytes ---
+pub type MapSquares = HashMap<MapSquare, Arc<[u8]>>;
+// --- Mapsquare crc ---
+pub type MapSquareCrcs = HashMap<MapSquare, i32>;
 
 // --- bone type ---
 

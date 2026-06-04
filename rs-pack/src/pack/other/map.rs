@@ -1,3 +1,4 @@
+use crate::types::{MapSquareCrcs, MapSquareCsv, MapSquares};
 use rs_io::Packet;
 use rs_io::bz2::bz2_compress_with_size;
 use rs_io::crc;
@@ -5,6 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+type PackedMapSquare = (MapSquares, MapSquareCrcs, MapSquareCsv, MapSquareCsv);
 
 #[derive(Clone, Copy)]
 struct TileData {
@@ -404,7 +407,7 @@ pub fn encode_objs(map: &ParsedMap, out: &mut Packet) {
     out.psmart1or2(0);
 }
 
-fn load_csv_zones(path: &Path) -> HashSet<u32> {
+fn load_csv_zones(path: &Path) -> MapSquareCsv {
     let mut set = HashSet::default();
     let Ok(content) = std::fs::read_to_string(path) else {
         return set;
@@ -446,17 +449,10 @@ fn load_csv_zones(path: &Path) -> HashSet<u32> {
     set
 }
 
-pub fn pack_maps(
-    content_dir: &Path,
-) -> (
-    HashMap<(char, u8, u8), Arc<[u8]>>,
-    HashMap<(char, u8, u8), i32>,
-    HashSet<u32>,
-    HashSet<u32>,
-) {
+pub fn pack_maps(content_dir: &Path) -> PackedMapSquare {
     let maps_dir = content_dir.join("maps");
-    let mut mapsquares = HashMap::new();
-    let mut mapcrcs = HashMap::new();
+    let mut mapsquares = MapSquares::new();
+    let mut mapcrcs = MapSquareCrcs::new();
 
     let multimap = load_csv_zones(&maps_dir.join("multiway.csv"));
     let freemap = load_csv_zones(&maps_dir.join("free2play.csv"));
