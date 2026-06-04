@@ -1,10 +1,9 @@
 use crate::player_save::{
     PlayerProfile, PlayerProfileInv, delete_save_file, load_binary, load_from_file, save_to_file,
 };
-use argon2::Argon2;
 use argon2::password_hash::{self, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::{Algorithm, Argon2, Params, Version};
 use ddl::Type;
-use rs_crypto::whirlpool;
 use rs_util::base37::{to_raw_username, to_userhash};
 use std::path::Path;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -564,25 +563,6 @@ async fn run_requests(
     Ok(())
 }
 
-/// Computes the peppered Whirlpool hash of a password.
-///
-/// Concatenates the pepper and password, then hashes the result with
-/// Whirlpool. The output is used as the input to Argon2 for the final
-/// password hash.
-///
-/// # Arguments
-/// * `pepper` - The server-side secret pepper.
-/// * `password` - The player's plaintext password.
-///
-/// # Returns
-/// The Whirlpool digest as a byte vector.
-fn peppered(pepper: &str, password: &str) -> Vec<u8> {
-    let mut input = Vec::with_capacity(pepper.len() + password.len());
-    input.extend_from_slice(pepper.as_bytes());
-    input.extend_from_slice(password.as_bytes());
-    whirlpool(&input).to_vec()
-}
-
 /// Authenticates a player against the database using Argon2 password hashing.
 ///
 /// If the player already exists, verifies the password against the stored
@@ -614,7 +594,6 @@ async fn authenticate(
     password: &str,
 ) -> Result<bool, Error> {
     let hash = user37 as i64;
-    let derived = peppered(pepper, password);
 
     let row = client
         .query_opt(
@@ -630,11 +609,35 @@ async fn authenticate(
                 Ok(h) => h,
                 Err(_) => return Ok(false),
             };
-            Ok(Argon2::default().verify_password(&derived, &parsed).is_ok())
+            let argon2 = match Argon2::new_with_secret(
+                pepper.as_bytes(),
+                Algorithm::default(),
+                Version::default(),
+                Params::default(),
+            ) {
+                Ok(a) => a,
+                Err(e) => {
+                    error!("Failed to hash password for user37={user37}: {e}");
+                    return Ok(false);
+                }
+            };
+            Ok(argon2.verify_password(password.as_bytes(), &parsed).is_ok())
         }
         None => {
+            let argon2 = match Argon2::new_with_secret(
+                pepper.as_bytes(),
+                Algorithm::default(),
+                Version::default(),
+                Params::default(),
+            ) {
+                Ok(a) => a,
+                Err(e) => {
+                    error!("Failed to hash password for user37={user37}: {e}");
+                    return Ok(false);
+                }
+            };
             let salt = SaltString::generate(password_hash::rand_core::OsRng);
-            let Ok(hashed) = Argon2::default().hash_password(&derived, &salt) else {
+            let Ok(hashed) = argon2.hash_password(password.as_bytes(), &salt) else {
                 error!("Failed to hash password for user37={}", user37);
                 return Ok(false);
             };
