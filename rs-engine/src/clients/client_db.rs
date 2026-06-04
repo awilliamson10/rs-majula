@@ -341,19 +341,19 @@ const PLAYER_SAVES: &[ddl::Column] = &[
     ddl::Column::new(col::LAST_DATE, Type::BigInt)
         .not_null()
         .default("0"),
-    ddl::Column::new(col::VARP_IDS, Type::SmallIntArray)
+    ddl::Column::new(col::VARP_IDS, Type::IntArray)
         .not_null()
         .default("'{}'"),
     ddl::Column::new(col::VARP_VALUES, Type::IntArray)
         .not_null()
         .default("'{}'"),
-    ddl::Column::new(col::INV_TYPES, Type::SmallIntArray)
+    ddl::Column::new(col::INV_TYPES, Type::IntArray)
         .not_null()
         .default("'{}'"),
     ddl::Column::new(col::INV_SLOTS, Type::SmallIntArray)
         .not_null()
         .default("'{}'"),
-    ddl::Column::new(col::INV_OBJS, Type::SmallIntArray)
+    ddl::Column::new(col::INV_OBJS, Type::IntArray)
         .not_null()
         .default("'{}'"),
     ddl::Column::new(col::INV_COUNTS, Type::IntArray)
@@ -882,7 +882,7 @@ async fn load_profile(client: &Client, user37: u64) -> Result<Option<PlayerProfi
         afk_zones[i] = v as u32;
     }
 
-    let varp_ids: Vec<i16> = row.get(col::VARP_IDS);
+    let varp_ids: Vec<i32> = row.get(col::VARP_IDS);
     let varp_values: Vec<i32> = row.get(col::VARP_VALUES);
     let varps: Vec<(u16, i32)> = varp_ids
         .iter()
@@ -893,9 +893,9 @@ async fn load_profile(client: &Client, user37: u64) -> Result<Option<PlayerProfi
     // Inventory items are stored flattened across four index-aligned arrays
     // (grouped by inv_type at save time); regroup them back into per-inventory
     // lists. The find() tolerates any ordering of the flattened entries.
-    let inv_types: Vec<i16> = row.get(col::INV_TYPES);
+    let inv_types: Vec<i32> = row.get(col::INV_TYPES);
     let inv_slots: Vec<i16> = row.get(col::INV_SLOTS);
-    let inv_objs: Vec<i16> = row.get(col::INV_OBJS);
+    let inv_objs: Vec<i32> = row.get(col::INV_OBJS);
     let inv_counts: Vec<i32> = row.get(col::INV_COUNTS);
     let staff_mod_level: i16 = row.get(col::STAFF_MOD_LEVEL);
 
