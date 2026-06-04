@@ -586,7 +586,7 @@ async fn run_requests(
 ///
 /// # Call Stack
 /// **Called by:** [`run_requests`]
-/// **Calls:** [`peppered`], [`save_profile`]
+/// **Calls:** [`new_argon2_with_secret`], [`save_profile`]
 async fn authenticate(
     client: &mut Client,
     pepper: &str,
@@ -609,32 +609,14 @@ async fn authenticate(
                 Ok(h) => h,
                 Err(_) => return Ok(false),
             };
-            let argon2 = match Argon2::new_with_secret(
-                pepper.as_bytes(),
-                Algorithm::default(),
-                Version::default(),
-                Params::default(),
-            ) {
-                Ok(a) => a,
-                Err(e) => {
-                    error!("Failed to hash password for user37={user37}: {e}");
-                    return Ok(false);
-                }
+            let Some(argon2) = new_argon2_with_secret(pepper, user37) else {
+                return Ok(false);
             };
             Ok(argon2.verify_password(password.as_bytes(), &parsed).is_ok())
         }
         None => {
-            let argon2 = match Argon2::new_with_secret(
-                pepper.as_bytes(),
-                Algorithm::default(),
-                Version::default(),
-                Params::default(),
-            ) {
-                Ok(a) => a,
-                Err(e) => {
-                    error!("Failed to hash password for user37={user37}: {e}");
-                    return Ok(false);
-                }
+            let Some(argon2) = new_argon2_with_secret(pepper, user37) else {
+                return Ok(false);
             };
             let salt = SaltString::generate(password_hash::rand_core::OsRng);
             let Ok(hashed) = argon2.hash_password(password.as_bytes(), &salt) else {
@@ -658,6 +640,21 @@ async fn authenticate(
             }
 
             Ok(true)
+        }
+    }
+}
+
+fn new_argon2_with_secret(pepper: &str, user37: u64) -> Option<Argon2<'_>> {
+    match Argon2::new_with_secret(
+        pepper.as_bytes(),
+        Algorithm::default(),
+        Version::default(),
+        Params::default(),
+    ) {
+        Ok(argon2) => Some(argon2),
+        Err(e) => {
+            error!("Failed to hash password for user37={user37}: {e}");
+            None
         }
     }
 }
