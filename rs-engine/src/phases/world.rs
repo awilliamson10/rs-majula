@@ -134,10 +134,15 @@ impl Engine {
     /// sees a consistent snapshot of player positions before individual NPC
     /// processing begins.
     ///
+    /// Returns early if no players are online.
+    ///
     /// # Side Effects
     ///
     /// * Sets `hunt_target` on NPCs that successfully find a player target.
     fn process_npc_hunt_players(&mut self) {
+        if self.player_list.count() == 0 {
+            return;
+        }
         for &nid in self.npc_list.processing.iter() {
             let Some(active) = self.npc_list.npcs[nid as usize].as_mut() else {
                 continue;
@@ -154,9 +159,10 @@ impl Engine {
             let Some(hunt) = self.cache.hunts.get_by_id(hunt_id) else {
                 continue;
             };
-            if hunt.hunt_type == HuntModeType::Player {
-                Self::npc_hunt_all(active, hunt);
+            if hunt.hunt_type != HuntModeType::Player {
+                continue;
             }
+            Self::npc_hunt_all(active, hunt);
         }
     }
 }

@@ -13,6 +13,8 @@ impl Engine {
     /// Computes and stores per-entity info update masks for both players
     /// and NPCs, which the output phase will encode into client packets.
     ///
+    /// Returns early if no players are online.
+    ///
     /// # Side Effects
     ///
     /// * Rebuilds player appearance data when the appearance mask is set.
@@ -24,6 +26,9 @@ impl Engine {
     /// **Called by:** `Engine::cycle`
     /// **Calls:** `process_player_info`, `process_npc_info`
     pub(crate) fn infos(&mut self) {
+        if self.player_list.count() == 0 {
+            return;
+        }
         self.player_snapshots.fill(PlayerSnapshot::ABSENT);
         self.npc_snapshots.fill(NpcSnapshot::ABSENT);
         self.process_player_info();
