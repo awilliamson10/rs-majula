@@ -2265,8 +2265,8 @@ impl EnginePlayer for ActivePlayer {
         let look_z = (coord.z() as i32 + dz as i32) as u16;
         self.player.info.focus(
             FocusKind::Player,
-            CoordGrid::fine(look_x, 1),
-            CoordGrid::fine(look_z, 1),
+            CoordGrid::fine(look_x, self.player.pathing.size),
+            CoordGrid::fine(look_z, self.player.pathing.size),
             false,
         );
 
