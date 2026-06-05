@@ -234,6 +234,7 @@
 2545=npc_walktrigger
 2546=projanim_npc
 2547=spotanim_npc
+2548=npc_destination
 3000=loc_add
 3001=loc_angle
 3002=loc_anim

@@ -620,5 +620,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let id = s.pop_int();
             npc.spotanim(id as u16, height as u16, delay as u16);
         });
+
+        // 2548
+        active_npc!(m, NPC_DESTINATION => |s, npc| {
+            s.push_int(npc.destination() as i32);
+        });
     }
 }

@@ -20,7 +20,7 @@ use rs_pack::cache::script::{Script, ScriptProvider};
 use rs_pack::cache::{CacheStore, VarValue};
 use rs_pack::types::{BlockWalk, LocAngle, LocLayer, LocShape, NpcMode, PlayerStat};
 use rs_protocol::LoginResponse;
-use rs_protocol::network::game::info_prot::PlayerInfoProt;
+use rs_protocol::network::game::info_prot::{NpcInfoProt, PlayerInfoProt};
 use rs_protocol::network::game::server::obj_count::ObjCount;
 use rs_util::random::JavaRandom;
 use rs_var::VarSet;
@@ -5085,11 +5085,22 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     fn spotanim(&mut self, id: u16, height: u16, delay: u16) {
-        use rs_protocol::network::game::info_prot::NpcInfoProt;
         self.npc.info.spotanim = Some(id);
         self.npc.info.spotanim_height = Some(height);
         self.npc.info.spotanim_delay = Some(delay);
         self.npc.info.masks |= NpcInfoProt::SpotAnim as u16;
+    }
+
+    /// Returns the NPC's current coord destination.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptNpc` trait
+    fn destination(&self) -> u32 {
+        if !self.npc.pathing.has_waypoints() {
+            return self.coord();
+        }
+        self.npc.pathing.waypoints[0]
     }
 }
 

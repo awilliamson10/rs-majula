@@ -481,6 +481,7 @@ pub const NPC_WALK: u16 = 2544;
 pub const NPC_WALKTRIGGER: u16 = 2545;
 pub const PROJANIM_NPC: u16 = 2546;
 pub const SPOTANIM_NPC: u16 = 2547;
+pub const NPC_DESTINATION: u16 = 2548;
 
 // ── Loc ops (3000-3499) ─────────────────────────────────────────────────────
 

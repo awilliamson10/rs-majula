@@ -1613,6 +1613,9 @@ pub trait ScriptNpc {
 
     /// Plays a spot animation (graphic) on the NPC.
     fn spotanim(&mut self, id: u16, height: u16, delay: u16);
+
+    /// Returns the NPC's current coord destination.
+    fn destination(&self) -> u32;
 }
 
 // ── Thread-local engine accessor ─────────────────────────────────────────
