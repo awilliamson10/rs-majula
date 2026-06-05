@@ -3,8 +3,9 @@ use crate::engine::{engine, engine_mut};
 use crate::handlers::ClientGameHandler;
 use rs_cam::CamKind;
 use rs_entity::player::*;
-use rs_entity::{EntityLifeTime, Player};
+use rs_entity::{EntityLifeTime, Player, dir_delta, face_dir};
 use rs_grid::CoordGrid;
+use rs_info::FocusKind;
 use rs_inv::Inventory;
 use rs_io::{Packet, PacketFrame};
 use rs_pack::cache::inv::InvScope;
@@ -2250,10 +2251,34 @@ impl EnginePlayer for ActivePlayer {
             self.message_game("Invalid teleport!");
             return;
         }
+
+        // Focus player direction in the correct way when teleporting.
+        let current = CoordGrid::from(self.coord());
+        let dir = face_dir(
+            current.x() as i32,
+            current.z() as i32,
+            coord.x() as i32,
+            coord.z() as i32,
+        );
+        let (dx, dz) = dir_delta(dir);
+        let look_x = (coord.x() as i32 + dx as i32) as u16;
+        let look_z = (coord.z() as i32 + dz as i32) as u16;
+        self.player.info.focus(
+            FocusKind::Player,
+            CoordGrid::fine(look_x, 1),
+            CoordGrid::fine(look_z, 1),
+            false,
+        );
+
+        // Actually change the coord of the player and the last stepped coord when teleporting.
+        self.player.pathing.coord = coord;
+        self.player.pathing.last_step_coord =
+            CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
+        self.player.pathing.tele = true;
+
+        // If the player changes on Y then we have to jump.
         if coord.y() != self.player.pathing.coord.y() {
             self.player.pathing.jump = true;
         }
-        self.player.pathing.coord = coord;
-        self.player.pathing.tele = true;
     }
 }
