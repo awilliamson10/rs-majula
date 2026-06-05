@@ -951,7 +951,7 @@ mod ddl_tests {
         assert!(sql.contains("password_hash TEXT NOT NULL"));
         assert!(sql.contains("x SMALLINT NOT NULL DEFAULT 3094"));
         assert!(sql.contains("body SMALLINT[] NOT NULL DEFAULT '{0,10,18,26,33,36,42}'"));
-        assert!(sql.contains("varp_ids SMALLINT[] NOT NULL DEFAULT '{}'"));
+        assert!(sql.contains("varp_ids INT[] NOT NULL DEFAULT '{}'"));
         assert!(sql.contains("updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"));
         assert!(sql.trim_end().ends_with(");"));
     }
