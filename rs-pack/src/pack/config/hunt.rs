@@ -229,7 +229,7 @@ pub fn pack_hunts(
                     let Some(condition) = last.chars().next() else {
                         panic!("Invalid check_inv value: {key}={value}");
                     };
-                    if !matches!(condition, '=' | '>' | '<' | '!') {
+                    if !matches!(condition, '=' | '>' | '<' | '!' | '&' | '|') {
                         panic!("Invalid check_inv value: {key}={value}");
                     }
                     server.p1(16);
@@ -260,7 +260,7 @@ pub fn pack_hunts(
                     let Some(condition) = last.chars().next() else {
                         panic!("Invalid check_invparam value: {key}={value}");
                     };
-                    if !matches!(condition, '=' | '>' | '<' | '!') {
+                    if !matches!(condition, '=' | '>' | '<' | '!' | '&' | '|') {
                         panic!("Invalid check_invparam value: {key}={value}");
                     }
                     server.p1(17);
@@ -286,7 +286,7 @@ pub fn pack_hunts(
                     let Some(condition) = last.chars().next() else {
                         panic!("Invalid extracheck_var value: {key}={value}");
                     };
-                    if !matches!(condition, '=' | '>' | '<' | '!') {
+                    if !matches!(condition, '=' | '>' | '<' | '!' | '&' | '|') {
                         panic!("Invalid extracheck_var value: {key}={value}");
                     }
                     server.p1(18 + extracheck_var);

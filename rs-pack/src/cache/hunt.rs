@@ -149,6 +149,8 @@ pub fn check_hunt_condition(value: i32, condition: &str, target: i32) -> bool {
         "<" => value < target,
         "=" => value == target,
         "!" => value != target,
+        "&" => (value & target) == 0,
+        "|" => (value | target) != 0,
         _ => false,
     }
 }
