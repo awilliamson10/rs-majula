@@ -5,6 +5,7 @@ use crate::trigger::ServerTriggerType;
 use crate::{NpcUid, PlayerUid, ScriptError};
 use num_enum::TryFromPrimitive;
 use rs_pack::cache::script::Script;
+use std::any::type_name;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -723,6 +724,44 @@ impl ScriptState {
             format!("int stack underflow, script: {}", self.script.info.name)
         );
         unsafe { *self.int_stack.as_ptr().add(self.isp as usize) }
+    }
+
+    /// Pops a 32-bit integer from the stack and narrows it to `T`, range-checking the value.
+    ///
+    /// Returns [`ScriptError::Runtime`] if the popped value doesn't fit in `T`
+    /// (e.g. a negative or >255 value popped as `u8`).
+    ///
+    /// # Returns
+    ///
+    /// The `T` value at the top of the integer stack.
+    ///
+    /// # Safety
+    ///
+    /// Uses `unsafe` pointer read from `int_stack`. If the stack is empty,
+    /// `isp` wraps negative and release builds will exhibit undefined behavior.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics with a stack underflow message including the
+    /// script name if `isp` goes below `0`.
+    ///
+    /// # Side Effects
+    ///
+    /// Decrements `isp`.
+    ///
+    /// **Called by:** Opcode handlers that consume integer operands.
+    #[inline]
+    pub fn pop_int_as<T>(&mut self) -> Result<T, ScriptError>
+    where
+        T: TryFrom<i32>,
+    {
+        let value = self.pop_int();
+        T::try_from(value).map_err(|_| {
+            ScriptError::Runtime(format!(
+                "value: {value} out of range for {}",
+                type_name::<T>()
+            ))
+        })
     }
 
     /// Reads the string operand at the current program counter position.

@@ -62,9 +62,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2002
         active_player_mut!(m, ANIM => |s, player| {
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u8>()?;
             let seq = s.pop_int();
-            player.anim((seq != -1).then_some(seq as u16), delay as u8);
+            player.anim((seq != -1).then_some(seq as u16), delay);
         });
 
         // 2003
@@ -105,20 +105,20 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2007
         active_player_mut!(m, CAM_LOOKAT => |s, player| {
-            let rate2 = s.pop_int();
-            let rate = s.pop_int();
-            let height = s.pop_int();
+            let rate2 = s.pop_int_as::<u8>()?;
+            let rate = s.pop_int_as::<u8>()?;
+            let height = s.pop_int_as::<u16>()?;
             let coord = CoordGrid::from(s.pop_int() as u32);
-            player.cam_lookat(coord.x(), coord.z(), height as u16, rate as u8, rate2 as u8)?;
+            player.cam_lookat(coord.x(), coord.z(), height, rate, rate2)?;
         });
 
         // 2008
         active_player_mut!(m, CAM_MOVETO => |s, player| {
-            let rate2 = s.pop_int();
-            let rate = s.pop_int();
-            let height = s.pop_int();
+            let rate2 = s.pop_int_as::<u8>()?;
+            let rate = s.pop_int_as::<u8>()?;
+            let height = s.pop_int_as::<u16>()?;
             let coord = CoordGrid::from(s.pop_int() as u32);
-            player.cam_moveto(coord.x(), coord.z(), height as u16, rate as u8, rate2 as u8)?;
+            player.cam_moveto(coord.x(), coord.z(), height, rate, rate2)?;
         });
 
         // 2009
@@ -128,11 +128,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2010
         active_player_mut!(m, CAM_SHAKE => |s, player| {
-            let frequency = s.pop_int();
-            let amplitude = s.pop_int();
-            let jitter = s.pop_int();
-            let direction = s.pop_int();
-            player.cam_shake(direction as u8, jitter as u8, amplitude as u8, frequency as u8);
+            let frequency = s.pop_int_as::<u8>()?;
+            let amplitude = s.pop_int_as::<u8>()?;
+            let jitter = s.pop_int_as::<u8>()?;
+            let direction = s.pop_int_as::<u8>()?;
+            player.cam_shake(direction, jitter, amplitude, frequency);
         });
 
         // 2011
@@ -244,7 +244,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2025
         active_player_mut!(m, HEADICONS_SET => |s, player| {
-            player.headicons_set(s.pop_int() as u8);
+            player.headicons_set(s.pop_int_as::<u8>()?);
         });
 
         // 2026
@@ -256,10 +256,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2027
         active_player_mut!(m, HINT_COORD => |s, player| {
-            let height = s.pop_int();
+            let height = s.pop_int_as::<u8>()?;
             let coord = CoordGrid::from(s.pop_int() as u32);
-            let offset = s.pop_int();
-            player.hint_tile(offset as u8, coord.x(), coord.z(), height as u8);
+            let offset = s.pop_int_as::<u8>()?;
+            player.hint_tile(offset, coord.x(), coord.z(), height);
         });
 
         // 2028
@@ -330,33 +330,30 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2034
         active_player_mut!(m, IF_OPENCHAT => |s, player| {
-            let com = s.pop_int();
-            player.if_openchat(com as u16);
+            player.if_openchat(s.pop_int_as::<u16>()?);
         });
 
         // 2035
         active_player_mut!(m, IF_OPENMAIN_SIDE => |s, player| {
-            let side = s.pop_int();
-            let com = s.pop_int();
-            player.if_openmain_side(com as u16, side as u16);
+            let side = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_openmain_side(com, side);
         });
 
         // 2036
         active_player_mut!(m, IF_OPENMAIN => |s, player| {
-            let com = s.pop_int();
-            player.if_openmain(com as u16);
+            player.if_openmain(s.pop_int_as::<u16>()?);
         });
 
         // 2037
         active_player_mut!(m, IF_OPENSIDE => |s, player| {
-            let com = s.pop_int();
-            player.if_openside(com as u16);
+            player.if_openside(s.pop_int_as::<u16>()?);
         });
 
         // 2038
         active_player_mut!(m, IF_SETANIM => |s, player| {
             let seq = s.pop_int();
-            let com = s.pop_int();
+            let com = s.pop_int_as::<u16>()?;
             if seq == -1 {
                 return Ok(());
             }
@@ -364,65 +361,64 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 .seqs
                 .get_by_id(seq as u16)
                 .ok_or(ScriptError::SeqNotFound(seq))?;
-            player.if_setanim(com as u16, seq.id);
+            player.if_setanim(com, seq.id);
         });
 
         // 2039
         active_player_mut!(m, IF_SETCOLOUR => |s, player| {
             let colour = s.pop_int();
-            let com = s.pop_int();
-            player.if_setcolour(com as u16, rgb24_to_15(colour));
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setcolour(com, rgb24_to_15(colour));
         });
 
         // 2040
         active_player_mut!(m, IF_SETHIDE => |s, player| {
             let hide = s.pop_int();
-            let com = s.pop_int();
-            player.if_sethide(com as u16, hide == 1);
+            let com = s.pop_int_as::<u16>()?;
+            player.if_sethide(com, hide == 1);
         });
 
         // 2041
         active_player_mut!(m, IF_SETMODEL => |s, player| {
-            let model = s.pop_int();
-            let com = s.pop_int();
-            player.if_setmodel(com as u16, model as u16);
+            let model = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setmodel(com, model);
         });
 
         // 2042
         active_player_mut!(m, IF_SETNPCHEAD => |s, player| {
-            let npc = s.pop_int();
-            let com = s.pop_int();
-            player.if_setnpchead(com as u16, npc as u16);
+            let npc = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setnpchead(com, npc);
         });
 
         // 2043
         active_player_mut!(m, IF_SETOBJECT => |s, player| {
-            let scale = s.pop_int();
-            let obj = s.pop_int();
-            let com = s.pop_int();
-            player.if_setobject(com as u16, obj as u16, scale as u16);
+            let scale = s.pop_int_as::<u16>()?;
+            let obj = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setobject(com, obj, scale);
         });
 
         // 2044
         active_player_mut!(m, IF_SETPLAYERHEAD => |s, player| {
-            let com = s.pop_int();
-            player.if_setplayerhead(com as u16);
+            player.if_setplayerhead(s.pop_int_as::<u16>()?);
         });
 
         // 2045
         active_player_mut!(m, IF_SETPOSITION => |s, player| {
-            let y = s.pop_int();
-            let x = s.pop_int();
-            let com = s.pop_int();
-            player.if_setposition(com as u16, x as u16, y as u16);
+            let y = s.pop_int_as::<u16>()?;
+            let x = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setposition(com, x, y);
         });
 
         // 2046
         active_player_mut!(m, IF_SETRECOL => |s, player| {
-            let dst = s.pop_int();
-            let src = s.pop_int();
-            let com = s.pop_int();
-            player.if_setrecol(com as u16, src as u16, dst as u16);
+            let dst = s.pop_int_as::<u16>()?;
+            let src = s.pop_int_as::<u16>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_setrecol(com, src, dst);
         });
 
         // 2047
@@ -437,22 +433,21 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2048
         active_player_mut!(m, IF_SETTAB => |s, player| {
-            let tab = s.pop_int();
-            let com = s.pop_int();
-            player.if_settab(com as u16, tab as u8);
+            let tab = s.pop_int_as::<u8>()?;
+            let com = s.pop_int_as::<u16>()?;
+            player.if_settab(com, tab);
         });
 
         // 2049
         active_player_mut!(m, IF_SETTABACTIVE => |s, player| {
-            let tab = s.pop_int();
-            player.if_settabactive(tab as u8);
+            player.if_settabactive(s.pop_int_as::<u8>()?);
         });
 
         // 2050
         active_player_mut!(m, IF_SETTEXT => |s, player| {
             let text = s.pop_string();
-            let com = s.pop_int();
-            player.if_settext(com as u16, &text);
+            let com = s.pop_int_as::<u16>()?;
+            player.if_settext(com, &text);
         });
 
         // 2051
@@ -673,8 +668,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         protected_active_player_mut!(m, P_LOCMERGE => |s, player| {
             let nw = CoordGrid::from(s.pop_int() as u32);
             let se = CoordGrid::from(s.pop_int() as u32);
-            let end = s.pop_int();
-            let start = s.pop_int();
+            let end = s.pop_int_as::<u16>()?;
+            let start = s.pop_int_as::<u16>()?;
 
             let loc = get_active_loc(s, s.int_operand() != 0)?;
             let pid = player.uid().pid();
@@ -684,8 +679,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 loc.shape,
                 loc.angle,
                 loc.id,
-                start as u16,
-                end as u16,
+                start,
+                end,
                 pid,
                 se.z(),
                 se.x(),
@@ -883,7 +878,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2085
         protected_active_player_mut!(m, P_RUN => |s, player| {
-            player.run(s.pop_int() as u8);
+            player.run(s.pop_int_as::<u8>()?);
         });
 
         // 2086
@@ -922,12 +917,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2091
         active_player!(m, PROJANIM_PL => |s, player| {
-            let arc = s.pop_int();
-            let peak = s.pop_int();
-            let duration = s.pop_int();
-            let delay = s.pop_int();
-            let dst_height = s.pop_int();
-            let src_height = s.pop_int();
+            let arc = s.pop_int_as::<u8>()?;
+            let peak = s.pop_int_as::<u8>()?;
+            let duration = s.pop_int_as::<u16>()?;
+            let delay = s.pop_int_as::<u16>()?;
+            let dst_height = s.pop_int_as::<u8>()?;
+            let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
             let uid = s.pop_int();
             let src = CoordGrid::from(s.pop_int() as u32);
@@ -945,39 +940,39 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 dst.z(),
                 target,
                 spotanim.id,
-                (src_height << 2) as u8,
-                (dst_height << 2) as u8,
-                delay as u16,
-                duration as u16,
-                peak as u8,
-                arc as u8
+                src_height << 2,
+                dst_height << 2,
+                delay,
+                duration,
+                peak,
+                arc
             );
         });
 
         // 2092
         active_player_mut!(m, QUEUE => |s, player| {
             let arg = s.pop_int();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Normal, delay as u16, Some(vec![ScriptArgument::Int(arg)]))?;
+            player.queue(script.id, QueuePriority::Normal, delay, Some(vec![ScriptArgument::Int(arg)]))?;
         });
 
         // 2093
         active_player_mut!(m, QUEUEVARARG => |s, player| {
             let args = s.pop_script_args();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Normal, delay as u16, Some(args))?;
+            player.queue(script.id, QueuePriority::Normal, delay, Some(args))?;
         });
 
         // 2094
         active_player_mut!(m, READYANIM => |s, player| {
-            player.readyanim(s.pop_int() as u16);
+            player.readyanim(s.pop_int_as::<u16>()?);
         });
 
         // 2095
         active_player_mut!(m, RUNANIM => |s, player| {
-            player.runanim(s.pop_int() as u16);
+            player.runanim(s.pop_int_as::<u16>()?);
         });
 
         // 2096
@@ -1000,60 +995,58 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2099
         active_player_mut!(m, SETGENDER => |s, player| {
-            let gender = s.pop_int();
-            player.setgender(gender as u8);
+            player.setgender(s.pop_int_as::<u8>()?);
         });
 
         // 2100
         active_player_mut!(m, SETIDKIT => |s, player| {
-            let colour = s.pop_int();
+            let colour = s.pop_int_as::<u8>()?;
             let idk = pop_idk(s)?;
             let body_type = idk.body_type as u8;
             let idk_id = idk.id;
-            player.setidkit(body_type, idk_id, colour as u8);
+            player.setidkit(body_type, idk_id, colour);
         });
 
         // 2101
         active_player_mut!(m, SETSKINCOLOUR => |s, player| {
-            let skin = s.pop_int();
-            player.setskincolour(skin as u8);
+            player.setskincolour(s.pop_int_as::<u8>()?);
         });
 
         // 2102
         active_player_mut!(m, SETTIMER => |s, player| {
             let args = s.pop_script_args();
-            let interval = s.pop_int();
+            let interval = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
             let clock = engine::<E>().clock();
-            player.settimer(script.id, TimerPriority::Normal, interval as u16, clock, Some(args));
+            player.settimer(script.id, TimerPriority::Normal, interval, clock, Some(args));
         });
 
         // 2103
         active_player_mut!(m, SOFTTIMER => |s, player| {
             let args = s.pop_script_args();
-            let interval = s.pop_int();
+            let interval = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
             let clock = engine::<E>().clock();
-            player.settimer(script.id, TimerPriority::Soft, interval as u16, clock, Some(args));
+            player.settimer(script.id, TimerPriority::Soft, interval, clock, Some(args));
         });
 
         // 2104
         active_player_mut!(m, SOUND_SYNTH => |s, player| {
-            let delay = s.pop_int();
-            let loops = s.pop_int();
-            let synth = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
+            let loops = s.pop_int_as::<u8>()?;
+            let synth = s.pop_int_as::<u16>()?;
             if player.lowmem() {
                 return Ok(());
             }
-            player.sound_synth(synth as u16, loops as u8, delay as u16);
+            player.sound_synth(synth, loops, delay);
         });
 
         // 2105
         active_player_mut!(m, SPOTANIM_PL => |s, player| {
-            let delay = s.pop_int();
-            let height = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
+            let height = s.pop_int_as::<u16>()?;
             let spotanim = pop_spotanim(s)?;
-            player.spotanim(spotanim.id, height as u16, delay as u16);
+            player.spotanim(spotanim.id, height, delay);
         });
 
         // 2106
@@ -1141,23 +1134,23 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // https://x.com/JagexAsh/status/1698973910048403797
         active_player_mut!(m, STRONGQUEUE => |s, player| {
             let arg = s.pop_int();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Strong, delay as u16, Some(vec![ScriptArgument::Int(arg)]))?;
+            player.queue(script.id, QueuePriority::Strong, delay, Some(vec![ScriptArgument::Int(arg)]))?;
         });
 
         // 2118
         // https://x.com/JagexAsh/status/1698973910048403797
         active_player_mut!(m, STRONGQUEUEVARARG => |s, player| {
             let args = s.pop_script_args();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Strong, delay as u16, Some(args))?;
+            player.queue(script.id, QueuePriority::Strong, delay, Some(args))?;
         });
 
         // 2119
         active_player_mut!(m, TURNANIM => |s, player| {
-            player.turnanim(s.pop_int() as u16);
+            player.turnanim(s.pop_int_as::<u16>()?);
         });
 
         // 2120
@@ -1167,14 +1160,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2121
         active_player_mut!(m, TUT_FLASH => |s, player| {
-            let tab = s.pop_int();
-            player.tut_flash(tab as u8);
+            player.tut_flash(s.pop_int_as::<u8>()?);
         });
 
         // 2122
         active_player_mut!(m, TUT_OPEN => |s, player| {
-            let com = s.pop_int();
-            player.tut_open(com as u16);
+            player.tut_open(s.pop_int_as::<u16>()?);
         });
 
         // 2123
@@ -1184,22 +1175,22 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2124
         active_player_mut!(m, WALKANIM_B => |s, player| {
-            player.walkanim_b(s.pop_int() as u16);
+            player.walkanim_b(s.pop_int_as::<u16>()?);
         });
 
         // 2125
         active_player_mut!(m, WALKANIM_L => |s, player| {
-            player.walkanim_l(s.pop_int() as u16);
+            player.walkanim_l(s.pop_int_as::<u16>()?);
         });
 
         // 2126
         active_player_mut!(m, WALKANIM_R => |s, player| {
-            player.walkanim_r(s.pop_int() as u16);
+            player.walkanim_r(s.pop_int_as::<u16>()?);
         });
 
         // 2127
         active_player_mut!(m, WALKANIM => |s, player| {
-            player.walkanim(s.pop_int() as u16);
+            player.walkanim(s.pop_int_as::<u16>()?);
         });
 
         // 2128
@@ -1212,18 +1203,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // https://x.com/JagexAsh/status/1698973910048403797
         active_player_mut!(m, WEAKQUEUE => |s, player| {
             let arg = s.pop_int();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Weak, delay as u16, Some(vec![ScriptArgument::Int(arg)]))?;
+            player.queue(script.id, QueuePriority::Weak, delay, Some(vec![ScriptArgument::Int(arg)]))?;
         });
 
         // 2130
         // https://x.com/JagexAsh/status/1698973910048403797
         active_player_mut!(m, WEAKQUEUEVARARG => |s, player| {
             let args = s.pop_script_args();
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let script = pop_script::<E>(s)?;
-            player.queue(script.id, QueuePriority::Weak, delay as u16, Some(args))?;
+            player.queue(script.id, QueuePriority::Weak, delay, Some(args))?;
         });
 
         // 2131
@@ -1242,15 +1233,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2133
         active_player_mut!(m, SETIDKCOLOUR => |s, player| {
-            let colour = s.pop_int();
-            let slot = s.pop_int();
-            if !(0..=255).contains(&colour) {
-                return Err(ScriptError::Runtime(format!("Invalid idk colour: {}", colour)))
-            }
-            if !(0..=255).contains(&slot) {
-                return Err(ScriptError::Runtime(format!("Invalid idk slot: {}", slot)))
-            }
-            player.setidkcolour(slot as u8, colour as u8)?;
+            let colour = s.pop_int_as::<u8>()?;
+            let slot = s.pop_int_as::<u8>()?;
+            player.setidkcolour(slot, colour)?;
         });
     }
 }

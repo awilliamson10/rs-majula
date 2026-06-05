@@ -40,18 +40,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2500
         none!(m, NPC_ADD => |s| {
             let duration = s.pop_int();
-            let id = s.pop_int();
+            let id = s.pop_int_as::<u16>()?;
             let coord = s.pop_int();
-            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord as u32, id as u16, duration as u64) {
+            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord as u32, id, duration as u64) {
                 set_active_npc(s, uid, s.int_operand() != 0);
             }
         });
 
         // 2501
         active_npc_mut!(m, NPC_ANIM => |s, npc| {
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u8>()?;
             let seq = s.pop_int();
-            npc.anim((seq != -1).then_some(seq as u16), delay as u8);
+            npc.anim((seq != -1).then_some(seq as u16), delay);
         });
 
         // 2502
@@ -116,9 +116,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2509
         active_npc_mut!(m, NPC_DAMAGE => |s, npc| {
-            let amount = s.pop_int();
-            let damage_type = s.pop_int();
-            npc.damage(amount as u8, damage_type as u8);
+            let amount = s.pop_int_as::<u8>()?;
+            let damage_type = s.pop_int_as::<u8>()?;
+            npc.damage(amount, damage_type);
         });
 
         // 2510
@@ -446,8 +446,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2533
         active_npc_mut!(m, NPC_SETHUNT => |s, npc| {
-            let range = s.pop_int();
-            npc.set_hunt_range(range as u8);
+            npc.set_hunt_range(s.pop_int_as::<u8>()?);
         });
 
         // 2534
@@ -583,12 +582,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2546
         active_npc!(m, PROJANIM_NPC => |s, npc| {
-            let arc = s.pop_int();
-            let peak = s.pop_int();
-            let duration = s.pop_int();
-            let delay = s.pop_int();
-            let dst_height = s.pop_int();
-            let src_height = s.pop_int();
+            let arc = s.pop_int_as::<u8>()?;
+            let peak = s.pop_int_as::<u8>()?;
+            let duration = s.pop_int_as::<u16>()?;
+            let delay = s.pop_int_as::<u16>()?;
+            let dst_height = s.pop_int_as::<u8>()?;
+            let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
             let uid = s.pop_int();
             let src = CoordGrid::from(s.pop_int() as u32);
@@ -604,21 +603,21 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 dst.z(),
                 ((uid & 0xFFFF) as u16).wrapping_add(1) as i16,
                 spotanim.id,
-                (src_height << 2) as u8,
-                (dst_height << 2) as u8,
-                delay as u16,
-                duration as u16,
-                peak as u8,
-                arc as u8
+                src_height << 2,
+                dst_height << 2,
+                delay,
+                duration,
+                peak,
+                arc
             );
         });
 
         // 2547
         active_npc_mut!(m, SPOTANIM_NPC => |s, npc| {
-            let delay = s.pop_int();
-            let height = s.pop_int();
-            let id = s.pop_int();
-            npc.spotanim(id as u16, height as u16, delay as u16);
+            let delay = s.pop_int_as::<u16>()?;
+            let height = s.pop_int_as::<u16>()?;
+            let id = s.pop_int_as::<u16>()?;
+            npc.spotanim(id, height, delay);
         });
 
         // 2548
