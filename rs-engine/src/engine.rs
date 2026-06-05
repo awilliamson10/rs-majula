@@ -4206,6 +4206,7 @@ impl ScriptPlayer for ActivePlayer {
         finish: u16,
         direction: u8,
     ) {
+        self.teleport(CoordGrid::new(end_x, self.player.pathing.coord.y(), end_z).packed());
         self.player.info.exactmove_start_x = Some(start_x);
         self.player.info.exactmove_start_z = Some(start_z);
         self.player.info.exactmove_end_x = Some(end_x);
@@ -4214,8 +4215,6 @@ impl ScriptPlayer for ActivePlayer {
         self.player.info.exactmove_finish = Some(finish);
         self.player.info.exactmove_dir = Some(direction);
         self.player.info.masks |= PlayerInfoProt::ExactMove as u16;
-        self.player.pathing.coord = CoordGrid::new(end_x, self.player.pathing.coord.y(), end_z);
-        self.player.pathing.tele = true;
     }
 
     /// Displays a spot animation (graphic) attached to the player.
