@@ -3644,9 +3644,23 @@ impl ScriptPlayer for ActivePlayer {
     /// # Call Stack
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
-    /// **Calls:** writes `self.player.colors[4]`
+    /// **Calls:** writes `self.player.colours[4]`
     fn setskincolour(&mut self, colour: u8) {
         self.player.colours[4] = colour;
+    }
+
+    /// Sets the player's color for a specified idk slot.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptPlayer` trait
+    /// **Calls:** writes `self.player.colours[slot] = colour;`
+    fn setidkcolour(&mut self, slot: u8, colour: u8) -> rs_vm::Result<()> {
+        if slot as usize >= self.player.colours.len() {
+            return Err(ScriptError::Runtime(format!("Invalid idk slot: {}", slot)));
+        }
+        self.player.colours[slot as usize] = colour;
+        Ok(())
     }
 
     /// Sets an identity-kit body part and its color from the character design.

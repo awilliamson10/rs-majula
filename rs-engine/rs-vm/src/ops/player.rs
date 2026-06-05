@@ -1239,5 +1239,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         protected_active_player!(m, WEIGHT => |s, player| {
             s.push_int(player.weight());
         });
+
+        // 2133
+        active_player_mut!(m, SETIDKCOLOUR => |s, player| {
+            let colour = s.pop_int();
+            let slot = s.pop_int();
+            if !(0..=255).contains(&colour) {
+                return Err(ScriptError::Runtime(format!("Invalid idk colour: {}", colour)))
+            }
+            if !(0..=255).contains(&slot) {
+                return Err(ScriptError::Runtime(format!("Invalid idk slot: {}", slot)))
+            }
+            player.setidkcolour(slot as u8, colour as u8)?;
+        });
     }
 }

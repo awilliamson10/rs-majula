@@ -764,6 +764,15 @@ pub trait ScriptPlayer {
     /// * `skin` - The skin color index.
     fn setskincolour(&mut self, skin: u8);
 
+    /// Sets the player's color for a specified idk slot.
+    ///
+    /// The change is not visible until the appearance is rebuilt.
+    ///
+    /// # Arguments
+    /// * `slot` - The idk index.
+    /// * `colour` - The color to set.
+    fn setidkcolour(&mut self, slot: u8, colour: u8) -> crate::Result<()>;
+
     /// Sets an identity-kit (idk) body part and its color from the player's
     /// character design.
     ///
