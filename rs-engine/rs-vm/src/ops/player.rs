@@ -161,14 +161,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2015
         none!(m, DAMAGE => |s| {
-            let amount = s.pop_int();
-            let damage_type = s.pop_int();
+            let amount = s.pop_int_as::<u8>()?;
+            let damage_type = s.pop_int_as::<u8>()?;
             let uid = s.pop_int();
             let pid = (uid & 0x7FF) as u16;
             if let Some(target) = engine_mut::<E>().get_player_mut(pid)
                 && target.uid().packed() as i32 == uid
             {
-                target.damage(amount as u8, damage_type as u8);
+                target.damage(amount, damage_type);
             }
         });
 

@@ -1,4 +1,5 @@
 use crate::engine::{ScriptEngine, ScriptPlayer, cache, engine_mut};
+use crate::macros::active_obj_ref;
 use crate::register::OpsRegistry;
 use crate::state::ObjRef;
 use crate::util::*;
@@ -120,7 +121,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3505
         none!(m, OBJ_FIND => |s| {
-            let id = s.pop_int() as u16;
+            let id = s.pop_int_as::<u16>()?;
             let coord = s.pop_int() as u32;
             let receiver37 = s.active_player.map(|uid| uid.username37());
 
@@ -191,16 +192,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 3510
         // https://x.com/JagexAsh/status/1679942100249464833
         none!(m, OBJ_TAKEITEM => |s| {
-            let inv_id = s.pop_int() as u16;
-
             require_active_obj(s)?;
-            let obj = crate::macros::active_obj_ref(s)?;
+            let inv_type = pop_inv(s)?;
 
-            let inv_type = cache()
-                .invs
-                .get_by_id(inv_id)
-                .ok_or(ScriptError::InvNotFound(inv_id as i32))?;
-
+            let obj = active_obj_ref(s)?;
             if obj.count == 0 {
                 return Ok(());
             }

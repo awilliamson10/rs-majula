@@ -33,9 +33,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 3000
         none!(m, LOC_ADD => |s| {
             let duration = s.pop_int();
-            let shape = s.pop_int() as u8;
-            let angle = s.pop_int() as u8;
-            let id = s.pop_int() as u16;
+            let shape = s.pop_int_as::<u8>()?;
+            let angle = s.pop_int_as::<u8>()?;
+            let id = s.pop_int_as::<u16>()?;
             let coord = s.pop_int() as u32;
 
             let layer = LocShape::try_from(shape)

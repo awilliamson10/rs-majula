@@ -214,9 +214,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let to_zx = (to.x() + 7) >> 3;
             let to_zz = (to.z() + 7) >> 3;
 
+            let engine = engine::<E>();
+
             for zx in from_zx..=to_zx {
                 for zz in from_zz..=to_zz {
-                    let coords = engine::<E>().get_zone_player_coords(zx << 3, from.y(), zz << 3);
+                    let coords = engine.get_zone_player_coords(zx << 3, from.y(), zz << 3);
                     for packed in coords {
                         let c = CoordGrid::from(packed);
                         if c.x() >= from.x() && c.x() <= to.x() && c.z() >= from.z() && c.z() <= to.z() {
@@ -250,12 +252,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1018
         none!(m, PROJANIM_MAP => |s| {
-            let arc = s.pop_int();
-            let peak = s.pop_int();
-            let duration = s.pop_int();
-            let delay = s.pop_int();
-            let dst_height = s.pop_int();
-            let src_height = s.pop_int();
+            let arc = s.pop_int_as::<u8>()?;
+            let peak = s.pop_int_as::<u8>()?;
+            let duration = s.pop_int_as::<u16>()?;
+            let delay = s.pop_int_as::<u16>()?;
+            let dst_height = s.pop_int_as::<u8>()?;
+            let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
             let dst = CoordGrid::from(s.pop_int() as u32);
             let src = CoordGrid::from(s.pop_int() as u32);
@@ -267,12 +269,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 dst.z(),
                 0,
                 spotanim.id,
-                (src_height << 2) as u8,
-                (dst_height << 2) as u8,
-                delay as u16,
-                duration as u16,
-                peak as u8,
-                arc as u8
+                src_height << 2,
+                dst_height << 2,
+                delay,
+                duration,
+                peak,
+                arc
             );
         });
 
@@ -284,11 +286,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1020
         none!(m, SPOTANIM_MAP => |s| {
-            let delay = s.pop_int();
-            let height = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
+            let height = s.pop_int_as::<u8>()?;
             let coord = CoordGrid::from(s.pop_int() as u32);
             let spotanim = pop_spotanim(s)?;
-            engine_mut::<E>().anim_map(coord.y(), coord.x(), coord.z(), spotanim.id, height as u8, delay as u16);
+            engine_mut::<E>().anim_map(coord.y(), coord.x(), coord.z(), spotanim.id, height, delay);
         });
 
         // 1021

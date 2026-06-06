@@ -410,11 +410,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2530
         // https://x.com/JagexAsh/status/1570357528172859392
         active_npc_mut!(m, NPC_QUEUE => |s, npc| {
-            let delay = s.pop_int();
+            let delay = s.pop_int_as::<u16>()?;
             let arg = s.pop_int();
             let queue_id = s.pop_int();
             let trigger = ServerTriggerType::AiQueue1 as i32 + queue_id - 1;
-            npc.queue(trigger, delay as u16, Some(vec![ScriptArgument::Int(arg)]))?;
+            npc.queue(trigger, delay, Some(vec![ScriptArgument::Int(arg)]))?;
         });
 
         // 2531
