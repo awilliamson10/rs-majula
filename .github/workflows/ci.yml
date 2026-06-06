@@ -6,6 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-C target-cpu=x86-64-v3"
 
 # Cancel a previous in-progress run on the same branch/PR when new commits land.
 concurrency:
