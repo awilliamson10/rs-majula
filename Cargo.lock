@@ -2363,7 +2363,7 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "rs-cam"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-datastruct",
  "rs-vm",
@@ -2383,11 +2383,11 @@ dependencies = [
 
 [[package]]
 name = "rs-datastruct"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "num_enum",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "rs-entity"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-cam",
  "rs-grid",
@@ -2433,15 +2433,15 @@ dependencies = [
 
 [[package]]
 name = "rs-grid"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-hero"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-info"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-io",
  "rs-protocol",
@@ -2449,7 +2449,7 @@ dependencies = [
 
 [[package]]
 name = "rs-inv"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-io"
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "rs-pack"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "rs-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-io",
  "rs-protocol-macros",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "rs-protocol-macros"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "rs-queue"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-datastruct",
  "rs-vm",
@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "rs-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2551,11 +2551,11 @@ dependencies = [
 
 [[package]]
 name = "rs-stat"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-timer"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-vm",
  "rustc-hash",
@@ -2563,18 +2563,18 @@ dependencies = [
 
 [[package]]
 name = "rs-util"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rs-var"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rs-pack",
 ]
 
 [[package]]
 name = "rs-vm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "itoa",
  "num_enum",
@@ -2589,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "rs-zone"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "log",
  "rs-entity",
