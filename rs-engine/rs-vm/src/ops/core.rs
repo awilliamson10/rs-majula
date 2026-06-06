@@ -72,8 +72,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3
         none!(m, PUSH_CONSTANT_STRING => |s| {
-            let operand = s.string_operand().to_string();
-            s.push_string(&operand);
+            let operand = s.string_operand() as *const str;
+            s.push_string(unsafe { &*operand });
         });
 
         // 4
