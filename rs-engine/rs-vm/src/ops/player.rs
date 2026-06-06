@@ -1034,11 +1034,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, SOUND_SYNTH => |s, player| {
             let delay = s.pop_int_as::<u16>()?;
             let loops = s.pop_int_as::<u8>()?;
-            let synth = s.pop_int_as::<u16>()?;
-            if player.lowmem() {
+            let synth = s.pop_int();
+            if player.lowmem() || synth == -1 {
                 return Ok(());
             }
-            player.sound_synth(synth, loops, delay);
+            player.sound_synth(synth as u16, loops, delay);
         });
 
         // 2105
