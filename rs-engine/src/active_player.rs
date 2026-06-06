@@ -2270,15 +2270,15 @@ impl EnginePlayer for ActivePlayer {
             false,
         );
 
-        // Actually change the coord of the player and the last stepped coord when teleporting.
-        self.player.pathing.coord = coord;
-        self.player.pathing.last_step_coord =
-            CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
         self.player.pathing.tele = true;
-
         // If the player changes on Y then we have to jump.
         if coord.y() != self.player.pathing.coord.y() {
             self.player.pathing.jump = true;
         }
+
+        // Actually change the coord of the player and the last stepped coord when teleporting.
+        self.player.pathing.coord = coord;
+        self.player.pathing.last_step_coord =
+            CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
     }
 }
