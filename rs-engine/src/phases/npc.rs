@@ -560,7 +560,7 @@ impl Engine {
         let cache = cache();
         let clock = engine.clock as i32;
 
-        let npc_type = rs_vm::engine::cache().npcs.get_by_id(active.npc.uid.id());
+        let npc_type = cache.npcs.get_by_id(active.npc.uid.id());
 
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
             for zz in ((center_zz - radius)..=(center_zz + radius)).rev() {
