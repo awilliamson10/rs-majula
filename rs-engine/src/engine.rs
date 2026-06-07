@@ -1758,6 +1758,7 @@ impl Engine {
             self.zones
                 .zone_mut(coord.x(), coord.y(), coord.z())
                 .remove_player(pid);
+
             for nid in nids {
                 if let Some(npc) = self
                     .npc_list
@@ -1767,6 +1768,19 @@ impl Engine {
                 {
                     npc.npc.observers = npc.npc.observers.saturating_sub(1);
                 }
+            }
+
+            let block_walk = active.player.block_walk;
+            let size = active.player.pathing.size;
+            match block_walk {
+                BlockWalk::Npc => {
+                    rsmod::change_npc(coord.x(), coord.z(), coord.y(), size, false);
+                }
+                BlockWalk::All => {
+                    rsmod::change_npc(coord.x(), coord.z(), coord.y(), size, false);
+                    rsmod::change_player(coord.x(), coord.z(), coord.y(), size, false);
+                }
+                _ => {}
             }
         }
         self.player_list.remove(pid)
