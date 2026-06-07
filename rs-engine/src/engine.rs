@@ -373,6 +373,7 @@ impl NpcList {
 pub struct Engine {
     pub clock: u64,
     pub members: bool,
+    pub multi_xp: u8,
     pub client_pathfinder: bool,
     pub player_list: PlayerList,
     pub npc_list: NpcList,
@@ -426,6 +427,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `members` -- Whether this world runs in members mode.
+    /// * `multi_xp` -- Stat experience multiplier.
     /// * `client_pathfinder` -- Whether to use the client-side pathfinder.
     /// * `new_player_rx` -- Channel receiver for incoming [`LoginRequest`]s.
     /// * `scripts` -- Pre-loaded script provider (RuneScript bytecode).
@@ -458,6 +460,7 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         members: bool,
+        multi_xp: u8,
         client_pathfinder: bool,
         new_player_rx: UnboundedReceiver<LoginRequest>,
         scripts: ScriptProvider,
@@ -481,6 +484,7 @@ impl Engine {
         let mut engine = Self {
             clock: 0,
             members,
+            multi_xp,
             client_pathfinder,
             player_list: PlayerList::new(),
             npc_list: NpcList::new(),
@@ -2316,6 +2320,16 @@ impl ScriptEngine for Engine {
     /// **Calls:** reads `self.clock`
     fn clock(&self) -> u64 {
         self.clock
+    }
+
+    /// Returns the experience multiplier of the engine.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptEngine` trait
+    /// **Calls:** reads `self.multi_xp`
+    fn multi_experience(&self) -> u8 {
+        self.multi_xp
     }
 
     /// Returns a reference to the global cache store.

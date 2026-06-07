@@ -124,6 +124,8 @@ struct Args {
     private_key: PathBuf,
     #[arg(long, default_value = "true")]
     members: bool,
+    #[arg(long, default_value = "1")]
+    multi_xp: u8,
     #[arg(long, default_value = "true")]
     client_pathfinder: bool,
     /// Disable the TUI dashboard and run with classic stdout logging.
@@ -249,7 +251,7 @@ async fn run_with_tui(args: Args, log_buf: LogBuffer) -> Result<()> {
     // the first tick lands, then "RUNNING".
     let bootstrap_task = tokio::spawn(async move {
         if let Err(e) = bootstrap(args, stats_tx, trigger_rx).await {
-            tracing::error!("server bootstrap failed: {e:#}");
+            error!("server bootstrap failed: {e:#}");
         }
     });
 
@@ -357,6 +359,7 @@ async fn bootstrap(
 
     let (engine, clock_rate_rx) = Engine::new(
         args.members,
+        args.multi_xp,
         args.client_pathfinder,
         new_player_rx,
         scripts,
@@ -677,8 +680,8 @@ async fn reload_coordinator(
                 );
                 let _ = result_tx.send((store, scripts));
             }
-            Ok(Err(e)) => tracing::error!("Hot-reload pack failed: {e:#}"),
-            Err(e) => tracing::error!("Hot-reload task panicked: {e}"),
+            Ok(Err(e)) => error!("Hot-reload pack failed: {e:#}"),
+            Err(e) => error!("Hot-reload task panicked: {e}"),
         }
     }
 }

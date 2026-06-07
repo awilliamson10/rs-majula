@@ -23,6 +23,12 @@ pub trait ScriptEngine {
     /// The monotonically increasing tick counter (`u64`).
     fn clock(&self) -> u64;
 
+    /// Returns the experience multiplier of the engine.
+    ///
+    /// # Returns
+    /// The experience multiplier as defined in the environment args on the engine.
+    fn multi_experience(&self) -> u8;
+
     /// Returns a reference to the global cache store.
     ///
     /// # Returns

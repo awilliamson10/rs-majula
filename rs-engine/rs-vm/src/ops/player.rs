@@ -1066,7 +1066,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, STAT_ADVANCE => |s, player| {
             let xp = s.pop_int();
             let stat = s.pop_int() as usize;
-            player.add_xp(stat, xp);
+            player.add_xp(stat, xp.saturating_mul(engine::<E>().multi_experience() as i32));
         });
 
         // 2109
