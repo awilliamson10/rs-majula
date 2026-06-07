@@ -35,6 +35,7 @@ use rs_vm::{ScriptError, ops, vm};
 use rs_zone::zone_map::ZoneMap;
 use rs_zone::{ZoneEventType, ZoneMessage, pack_zone_coord};
 use rsmod::rsmod::collision::collision_strategy::CollisionType;
+use rsmod::rsmod::flag::collision_flag::CollisionFlag;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -3008,6 +3009,47 @@ impl ScriptEngine for Engine {
     /// **Calls:** reads `self.members`
     fn members(&self) -> bool {
         self.members
+    }
+
+    /// Indicates if there is "line of sight" between these coords.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::has_line_of_sight()`
+    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+        rsmod::has_line_of_sight(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
+    }
+
+    /// Indicates if there is "line of walk" between these coords.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::has_line_of_walk()`
+    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+        rsmod::has_line_of_walk(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
+    }
+
+    /// Indicates if this coord has a `CollisionFlag::WalkBlocked` on it.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::is_flagged()`
+    fn map_blocked(&self, coord: CoordGrid) -> bool {
+        rsmod::is_flagged(
+            coord.x(),
+            coord.z(),
+            coord.y(),
+            CollisionFlag::WalkBlocked as u32,
+        )
+    }
+
+    /// Indicates if this coord has a `CollisionFlag::Roof` collision flag on it.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::is_flagged()`
+    fn map_indoors(&self, coord: CoordGrid) -> bool {
+        rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::Roof as u32)
     }
 }
 

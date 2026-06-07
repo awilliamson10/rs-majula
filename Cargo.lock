@@ -2581,7 +2581,6 @@ dependencies = [
  "rs-grid",
  "rs-inv",
  "rs-pack",
- "rs-pathfinder",
  "rs-util",
  "thiserror 2.0.18",
  "tracing",

@@ -553,12 +553,14 @@ impl Engine {
         let center_zx = CoordGrid::zone(coord.x()) as i32;
         let center_zz = CoordGrid::zone(coord.z()) as i32;
         let radius = 1 + (distance >> 3);
-        let npc_type = cache().npcs.get_by_id(active.npc.uid.id());
         let mut chosen: Option<u16> = None;
         let mut count: u32 = 0;
 
         let engine = engine();
+        let cache = cache();
         let clock = engine.clock as i32;
+
+        let npc_type = rs_vm::engine::cache().npcs.get_by_id(active.npc.uid.id());
 
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
             for zz in ((center_zz - radius)..=(center_zz + radius)).rev() {
@@ -575,40 +577,18 @@ impl Engine {
                     let Some(player) = engine.get_player(pid) else {
                         continue;
                     };
-                    let pc = player.player.pathing.coord;
-                    if coord.distance(pc) > distance {
+                    let player_coord = player.player.pathing.coord;
+                    if coord.distance(player_coord) > distance {
                         continue;
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !rsmod::has_line_of_sight(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                pc.x(),
-                                pc.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofsight(coord, player_coord) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !rsmod::has_line_of_walk(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                pc.x(),
-                                pc.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofwalk(coord, player_coord) {
                                 continue;
                             }
                         }
@@ -626,7 +606,7 @@ impl Engine {
                     if hunt.check_nottoostrong == HuntCheckNotTooStrong::OutsideWilderness {
                         if let Some(nt) = npc_type {
                             let vislevel = nt.vislevel.unwrap_or(0);
-                            if !pc.is_in_wilderness()
+                            if !player_coord.is_in_wilderness()
                                 && player.player.combat_level as u16 > vislevel * 2
                             {
                                 continue;
@@ -639,7 +619,9 @@ impl Engine {
                         Some(InteractionTarget::Player { pid: tp }) if tp == pid
                     );
 
-                    if !is_current_target && !cache().is_multi(pc.x(), pc.z(), pc.y()) {
+                    if !is_current_target
+                        && !cache.is_multi(player_coord.x(), player_coord.z(), player_coord.y())
+                    {
                         if let Some(varp_id) = hunt.check_notcombat {
                             if player.player.varps.len() > varp_id as usize {
                                 let last_combat = player.player.varps.get(varp_id).as_int();
@@ -693,22 +675,22 @@ impl Engine {
                             .invs
                             .get(&param_check.inv)
                             .map(|inv| {
-                                let c = cache();
-                                let param = c.params.get_by_id(param_check.param);
+                                let param = cache.params.get_by_id(param_check.param);
                                 inv.slots
                                     .iter()
                                     .filter_map(|s| s.as_ref())
                                     .map(|item| {
                                         let value = param
                                             .and_then(|p| {
-                                                c.objs
+                                                cache
+                                                    .objs
                                                     .get_by_id(item.obj)
                                                     .and_then(|o| o.params.as_ref())
                                                     .and_then(|ps| {
                                                         ps.get(&(param_check.param as i32))
                                                     })
                                                     .map(|v| match v {
-                                                        rs_pack::ParamValue::Int(i) => *i,
+                                                        ParamValue::Int(i) => *i,
                                                         _ => p.default_int,
                                                     })
                                             })
@@ -763,6 +745,7 @@ impl Engine {
         let mut count: u32 = 0;
 
         let engine = engine();
+        let cache = cache();
 
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
             for zz in ((center_zz - radius)..=(center_zz + radius)).rev() {
@@ -793,41 +776,19 @@ impl Engine {
                         continue;
                     }
                     if let Some(cat) = check_category {
-                        let npc_cat = cache().npcs.get_by_id(npc_type_id).and_then(|t| t.category);
+                        let npc_cat = cache.npcs.get_by_id(npc_type_id).and_then(|t| t.category);
                         if npc_cat != Some(cat) {
                             continue;
                         }
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !rsmod::has_line_of_sight(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                npc_coord.x(),
-                                npc_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofsight(coord, npc_coord) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !rsmod::has_line_of_walk(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                npc_coord.x(),
-                                npc_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofwalk(coord, npc_coord) {
                                 continue;
                             }
                         }
@@ -870,6 +831,7 @@ impl Engine {
         let mut count: u32 = 0;
 
         let engine = engine();
+        let cache = cache();
         let clock = engine.clock();
 
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
@@ -896,41 +858,19 @@ impl Engine {
                         continue;
                     }
                     if let Some(cat) = check_category {
-                        let obj_cat = cache().objs.get_by_id(obj.id()).and_then(|t| t.category);
+                        let obj_cat = cache.objs.get_by_id(obj.id()).and_then(|t| t.category);
                         if obj_cat != Some(cat) {
                             continue;
                         }
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !rsmod::has_line_of_sight(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                obj_coord.x(),
-                                obj_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofsight(coord, obj_coord) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !rsmod::has_line_of_walk(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                obj_coord.x(),
-                                obj_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofwalk(coord, obj_coord) {
                                 continue;
                             }
                         }
@@ -978,6 +918,7 @@ impl Engine {
         let mut count: u32 = 0;
 
         let engine = engine();
+        let cache = cache();
 
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
             for zz in ((center_zz - radius)..=(center_zz + radius)).rev() {
@@ -995,7 +936,7 @@ impl Engine {
                     if coord.distance(loc_coord) > distance {
                         continue;
                     }
-                    let loc_type = cache().locs.get_by_id(loc_ref.id);
+                    let loc_type = cache.locs.get_by_id(loc_ref.id);
                     if let Some(cat) = check_category {
                         let loc_cat = loc_type.and_then(|t| t.category);
                         if loc_cat != Some(cat) {
@@ -1004,34 +945,12 @@ impl Engine {
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !rsmod::has_line_of_sight(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                loc_coord.x(),
-                                loc_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofsight(coord, loc_coord) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !rsmod::has_line_of_walk(
-                                coord.y(),
-                                coord.x(),
-                                coord.z(),
-                                loc_coord.x(),
-                                loc_coord.z(),
-                                1,
-                                1,
-                                1,
-                                1,
-                                0,
-                            ) {
+                            if !engine.lineofwalk(coord, loc_coord) {
                                 continue;
                             }
                         }

@@ -377,6 +377,34 @@ pub trait ScriptEngine {
     /// # Returns
     /// `true` if the server is a members world, `false` for free-to-play.
     fn members(&self) -> bool;
+
+    /// Indicates if there is "line of sight" between these two coords.
+    ///
+    /// # Returns
+    /// `true` if there is "line of sight" from the "src" coord to the "dst" coord.
+    /// `false` if there is not "line of sight" from the "src" coord to the "dst" coord.
+    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> bool;
+
+    /// Indicates if there is "line of walk" between these two coords.
+    ///
+    /// # Returns
+    /// `true` if there is "line of walk" from the "src" coord to the "dst" coord.
+    /// `false` if there is not "line of walk" from the "src" coord to the "dst" coord.
+    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> bool;
+
+    /// Indicates if this coord has a `CollisionFlag::WalkBlocked` on it.
+    ///
+    /// # Returns
+    /// `true` if there is `CollisionFlag::WalkBlocked` on it.
+    /// `false` if there is not `CollisionFlag::WalkBlocked` on it.
+    fn map_blocked(&self, coord: CoordGrid) -> bool;
+
+    /// Indicates if this coord has a `CollisionFlag::Roof` collision flag on it.
+    ///
+    /// # Returns
+    /// `true` if there is `CollisionFlag::Roof` on it.
+    /// `false` if there is not `CollisionFlag::Roof` on it.
+    fn map_indoors(&self, coord: CoordGrid) -> bool;
 }
 
 /// Player-level operations available to the script VM.

@@ -138,34 +138,12 @@ fn npc_distance_inner<E: ScriptEngine + 'static>(
                 }
                 match vis {
                     HuntCheckVis::LineOfSight => {
-                        if !rsmod::has_line_of_sight(
-                            coord.y(),
-                            coord.x(),
-                            coord.z(),
-                            npc_coord.x(),
-                            npc_coord.z(),
-                            1,
-                            1,
-                            1,
-                            1,
-                            0,
-                        ) {
+                        if !engine.lineofsight(coord, npc_coord) {
                             continue;
                         }
                     }
                     HuntCheckVis::LineOfWalk => {
-                        if !rsmod::has_line_of_walk(
-                            coord.y(),
-                            coord.x(),
-                            coord.z(),
-                            npc_coord.x(),
-                            npc_coord.z(),
-                            1,
-                            1,
-                            1,
-                            1,
-                            0,
-                        ) {
+                        if !engine.lineofwalk(coord, npc_coord) {
                             continue;
                         }
                     }
@@ -270,40 +248,18 @@ pub fn hunt_players<E: ScriptEngine + 'static>(
             let pids = engine.get_zone_player_pids(zone_x, coord.y(), zone_z);
             let coords = engine.get_zone_player_coords(zone_x, coord.y(), zone_z);
             for (i, &pid) in pids.iter().enumerate() {
-                let pc = CoordGrid::from(coords[i]);
-                if coord.distance(pc) > distance {
+                let player_coord = CoordGrid::from(coords[i]);
+                if coord.distance(player_coord) > distance {
                     continue;
                 }
                 match vis {
                     HuntCheckVis::LineOfSight => {
-                        if !rsmod::has_line_of_sight(
-                            coord.y(),
-                            coord.x(),
-                            coord.z(),
-                            pc.x(),
-                            pc.z(),
-                            1,
-                            1,
-                            1,
-                            1,
-                            0,
-                        ) {
+                        if !engine.lineofsight(coord, player_coord) {
                             continue;
                         }
                     }
                     HuntCheckVis::LineOfWalk => {
-                        if !rsmod::has_line_of_walk(
-                            coord.y(),
-                            coord.x(),
-                            coord.z(),
-                            pc.x(),
-                            pc.z(),
-                            1,
-                            1,
-                            1,
-                            1,
-                            0,
-                        ) {
+                        if !engine.lineofwalk(coord, player_coord) {
                             continue;
                         }
                     }
