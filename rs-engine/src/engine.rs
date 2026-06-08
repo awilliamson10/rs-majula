@@ -702,19 +702,23 @@ impl Engine {
     ///
     /// # Returns
     ///
-    /// The `i32` lookup key that can be passed to `ScriptProvider::get_by_lookup`.
-    pub fn trigger_lookup_key(
+    /// The bound [`Script`] for the most specific matching key (type id, then
+    /// category, then the bare trigger ordinal), or `None` if no script is
+    /// bound. Resolving the script here lets callers skip a redundant
+    /// `get_by_lookup` probe -- the helper would otherwise probe the map up to
+    /// twice just to choose a key the caller then re-probed a third time.
+    pub fn script_by_key(
         &self,
         trigger: ServerTriggerType,
         t: Option<u16>,
         c: Option<i32>,
-    ) -> i32 {
+    ) -> Option<Arc<Script>> {
         let base = trigger as i32;
 
         if let Some(t) = t {
             let key = base | (0x2 << 8) | ((t as i32) << 10);
-            if self.scripts.get_by_lookup(key).is_some() {
-                return key;
+            if let Some(script) = self.scripts.get_by_lookup(key) {
+                return Some(Arc::clone(script));
             }
         }
 
@@ -722,12 +726,12 @@ impl Engine {
             && c != -1
         {
             let key = base | (0x1 << 8) | (c << 10);
-            if self.scripts.get_by_lookup(key).is_some() {
-                return key;
+            if let Some(script) = self.scripts.get_by_lookup(key) {
+                return Some(Arc::clone(script));
             }
         }
 
-        base
+        self.scripts.get_by_lookup(base).cloned()
     }
 
     /// Hot-reloads the game cache and script provider in place.
@@ -871,7 +875,7 @@ impl Engine {
     /// Looks up a script by server trigger and executes it against a subject entity.
     ///
     /// Resolves the trigger triple `(type, entity_id, category)` into a lookup
-    /// key via [`Engine::trigger_lookup_key`], fetches the corresponding script
+    /// key via [`Engine::script_by_key`], fetches the corresponding script
     /// from the provider, builds a [`ScriptState`], and delegates to
     /// [`Engine::run_script_inner`].
     ///
@@ -902,8 +906,7 @@ impl Engine {
         force: Option<bool>,
         args: Option<Vec<ScriptArgument>>,
     ) -> Result<(), ScriptError> {
-        let lookup = self.trigger_lookup_key(trigger.0, trigger.1, trigger.2);
-        let Some(script) = self.scripts.get_by_lookup(lookup).cloned() else {
+        let Some(script) = self.script_by_key(trigger.0, trigger.1, trigger.2) else {
             return Err(ScriptError::TriggerNotFound(trigger.0));
         };
         self.run_script_inner(subject, target, protect, force, args, script)
@@ -1844,8 +1847,9 @@ impl Engine {
             .get_by_id(type_id)
             .and_then(|t| t.category)
             .map(|c| c as i32);
-        let key = self.trigger_lookup_key(ServerTriggerType::AiSpawn, Some(type_id), category);
-        if let Some(script) = self.scripts.get_by_lookup(key).cloned() {
+        if let Some(script) =
+            self.script_by_key(ServerTriggerType::AiSpawn, Some(type_id), category)
+        {
             let state = ScriptState::init(script, Some(ScriptSubject::Npc(uid)), None, None);
             if let Err(e) =
                 self.run_script_by_state(state, Some(ScriptSubject::Npc(uid)), None, None)
@@ -1880,8 +1884,9 @@ impl Engine {
             .get_by_id(type_id)
             .and_then(|t| t.category)
             .map(|c| c as i32);
-        let key = self.trigger_lookup_key(ServerTriggerType::AiDespawn, Some(type_id), category);
-        if let Some(script) = self.scripts.get_by_lookup(key).cloned() {
+        if let Some(script) =
+            self.script_by_key(ServerTriggerType::AiDespawn, Some(type_id), category)
+        {
             let state = ScriptState::init(script, Some(ScriptSubject::Npc(uid)), None, None);
             if let Err(e) =
                 self.run_script_by_state(state, Some(ScriptSubject::Npc(uid)), None, None)
@@ -3359,11 +3364,9 @@ impl ScriptPlayer for ActivePlayer {
             return;
         }
         self.change_stat(stat);
-        if let Some(script) = engine().scripts.get_by_lookup(engine().trigger_lookup_key(
-            ServerTriggerType::AdvanceStat,
-            Some(stat as u16),
-            None,
-        )) {
+        if let Some(script) =
+            engine().script_by_key(ServerTriggerType::AdvanceStat, Some(stat as u16), None)
+        {
             let _ = self
                 .player
                 .state
@@ -3488,9 +3491,9 @@ impl ScriptPlayer for ActivePlayer {
     /// **Called by:** `add_xp`, `stat_add`, `stat_boost`, `stat_heal`, `stat_sub`, `stat_drain`
     /// **Calls:** `engine().trigger_lookup_key`, `QueueSet::add`
     fn change_stat(&mut self, stat: usize) {
-        let key =
-            engine().trigger_lookup_key(ServerTriggerType::ChangeStat, Some(stat as u16), None);
-        if let Some(script) = engine().scripts.get_by_lookup(key) {
+        if let Some(script) =
+            engine().script_by_key(ServerTriggerType::ChangeStat, Some(stat as u16), None)
+        {
             let _ = self
                 .player
                 .state

@@ -8,7 +8,6 @@ use rs_vm::pointer::ScriptPointer;
 use rs_vm::state::{QueuePriority, ScriptArgument, ScriptState};
 use rs_vm::subject::ScriptSubject;
 use rs_vm::trigger::ServerTriggerType;
-use std::sync::Arc;
 use tracing::{error, info};
 
 impl Engine {
@@ -117,18 +116,10 @@ impl Engine {
             };
 
             if can_access && no_head && queue_discard {
-                match self.scripts.get_by_lookup(self.trigger_lookup_key(
-                    ServerTriggerType::Logout,
-                    None,
-                    None,
-                )) {
+                match self.script_by_key(ServerTriggerType::Logout, None, None) {
                     Some(script) => {
-                        let mut state = ScriptState::init(
-                            Arc::clone(script),
-                            Some(ScriptSubject::Player(uid)),
-                            None,
-                            None,
-                        );
+                        let mut state =
+                            ScriptState::init(script, Some(ScriptSubject::Player(uid)), None, None);
                         state.pointers.add(ScriptPointer::ProtectedActivePlayer);
                         self.runescript_vm_execute(&mut state);
 

@@ -783,8 +783,7 @@ impl Engine {
             None
         };
 
-        let key = engine().trigger_lookup_key(trigger, t, c);
-        if engine().scripts.get_by_lookup(key).is_some() {
+        if engine().script_by_key(trigger, t, c).is_some() {
             Some((trigger, t, c))
         } else {
             None

@@ -328,8 +328,10 @@ impl Engine {
             .and_then(|t| t.category)
             .map(|c| c as i32);
         let trigger = (ServerTriggerType::AiTimer, Some(type_id), category);
-        let has_script = engine().trigger_lookup_key(trigger.0, trigger.1, trigger.2);
-        if engine().scripts.get_by_lookup(has_script).is_some() {
+        if engine()
+            .script_by_key(trigger.0, trigger.1, trigger.2)
+            .is_some()
+        {
             if let Err(e) = engine_mut().run_script_by_trigger(
                 trigger,
                 Some(ScriptSubject::Npc(uid)),
@@ -391,9 +393,7 @@ impl Engine {
 
                 let trigger = ServerTriggerType::try_from(request.script_id as u8);
                 if let Ok(trigger) = trigger {
-                    let engine = engine();
-                    let key = engine.trigger_lookup_key(trigger, Some(type_id), category);
-                    if let Some(script) = engine.scripts.get_by_lookup(key).cloned() {
+                    if let Some(script) = engine().script_by_key(trigger, Some(type_id), category) {
                         let mut state = engine_mut().build_state(
                             script,
                             Some(ScriptSubject::Npc(uid)),
