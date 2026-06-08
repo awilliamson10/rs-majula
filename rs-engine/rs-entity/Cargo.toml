@@ -19,6 +19,7 @@ rs-timer = { workspace = true }
 rs-var = { workspace = true }
 rs-vm = { workspace = true }
 rs-stat = { workspace = true }
+rustc-hash = { workspace = true }
 
 [lints]
 workspace = true

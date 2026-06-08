@@ -2429,6 +2429,7 @@ dependencies = [
  "rs-timer",
  "rs-var",
  "rs-vm",
+ "rustc-hash",
 ]
 
 [[package]]

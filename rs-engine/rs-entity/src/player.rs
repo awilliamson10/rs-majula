@@ -14,7 +14,7 @@ use rs_stat::Stats;
 use rs_var::VarSet;
 pub use rs_vm::PlayerUid;
 use rs_vm::state::ExecutionState;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// No modal interface is open.
 pub const MODAL_NONE: u8 = 0;
@@ -175,10 +175,10 @@ pub struct Player {
     pub headicons: u8,
     pub body: [i32; 7],
     pub colours: [u8; 5],
-    pub invs: HashMap<u16, Inventory>,
-    pub inv_transmits: HashMap<u16, Vec<u16>>,
-    pub inv_other_transmits: HashMap<u16, (i32, u16)>,
-    pub inv_first_seen: HashSet<u16>,
+    pub invs: FxHashMap<u16, Inventory>,
+    pub inv_transmits: FxHashMap<u16, Vec<u16>>,
+    pub inv_other_transmits: FxHashMap<u16, (i32, u16)>,
+    pub inv_first_seen: FxHashSet<u16>,
     pub build_area: BuildArea,
     pub last_zone: CoordGrid,
     pub last_map_zone: CoordGrid,
@@ -274,10 +274,10 @@ impl Player {
             headicons: 0,
             body: [0, 10, 18, 26, 33, 36, 42],
             colours: [0; 5],
-            invs: HashMap::new(),
-            inv_transmits: HashMap::new(),
-            inv_other_transmits: HashMap::new(),
-            inv_first_seen: HashSet::new(),
+            invs: FxHashMap::default(),
+            inv_transmits: FxHashMap::default(),
+            inv_other_transmits: FxHashMap::default(),
+            inv_first_seen: FxHashSet::default(),
             build_area: BuildArea::new(),
             last_zone: CoordGrid::new(0, 0, 0),
             last_map_zone: CoordGrid::new(0, 0, 0),
