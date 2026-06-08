@@ -451,7 +451,7 @@ fn load_csv_zones(path: &Path) -> MapSquareCsv {
 
 pub fn pack_maps(content_dir: &Path) -> PackedMapSquare {
     let maps_dir = content_dir.join("maps");
-    let mut mapsquares = MapSquares::new();
+    let mut mapsquares = MapSquares::default();
     let mut mapcrcs = MapSquareCrcs::new();
 
     let multimap = load_csv_zones(&maps_dir.join("multiway.csv"));

@@ -2,7 +2,7 @@ use super::ScriptVarType;
 use super::provider::{CacheType, TypeProvider};
 use crate::ParamValue;
 use rs_io::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub type EnumTypeProvider = TypeProvider<EnumType>;
 
@@ -12,7 +12,7 @@ pub struct EnumType {
     pub outputtype: ScriptVarType,
     pub default_int: i32,
     pub default_str: Option<Box<str>>,
-    pub values: HashMap<i32, ParamValue>,
+    pub values: FxHashMap<i32, ParamValue>,
     debugname: Option<Box<str>>,
 }
 
@@ -26,7 +26,7 @@ impl CacheType for EnumType {
             outputtype: ScriptVarType::Int,
             default_int: 0,
             default_str: None,
-            values: HashMap::new(),
+            values: FxHashMap::default(),
             debugname: None,
         }
     }

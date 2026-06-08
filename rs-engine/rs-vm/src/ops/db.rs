@@ -6,6 +6,7 @@ use crate::{ScriptError, handlers, none};
 use rs_pack::cache::dbrow::DbRowValue;
 use rs_pack::cache::dbtable::{DbIndexKey, DbTableValue};
 use rs_pack::cache::script::*;
+use rustc_hash::FxHashSet;
 
 /// Registers database query opcodes for searching, iterating, and reading
 /// fields from cache-defined database tables and rows.
@@ -258,9 +259,13 @@ fn db_find_refine(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
     };
     let packed = s.pop_int() as u32;
     let found = cache().db_index.find(&query, packed);
+    let found_set: FxHashSet<u16> = found.iter().copied().collect();
     let prev = std::mem::take(&mut s.db_row_query);
     s.db_row = None;
-    s.db_row_query = prev.into_iter().filter(|id| found.contains(id)).collect();
+    s.db_row_query = prev
+        .into_iter()
+        .filter(|id| found_set.contains(id))
+        .collect();
     if with_count {
         let count = s.db_row_query.len() as i32;
         s.push_int(count);

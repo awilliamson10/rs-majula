@@ -1,5 +1,5 @@
 use rs_io::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub trait CacheType: Sized {
     type Context;
@@ -11,7 +11,7 @@ pub trait CacheType: Sized {
 }
 
 pub struct TypeProvider<T> {
-    pub debugnames: HashMap<Box<str>, u16>,
+    pub debugnames: FxHashMap<Box<str>, u16>,
     pub types: Box<[T]>,
 }
 
@@ -21,7 +21,7 @@ impl<T: CacheType> TypeProvider<T> {
 
         let count = dat.g2() as usize;
 
-        let mut debugnames = HashMap::with_capacity(count);
+        let mut debugnames = FxHashMap::with_capacity_and_hasher(count, Default::default());
         let mut types = Vec::with_capacity(count);
 
         for index in 0..count {

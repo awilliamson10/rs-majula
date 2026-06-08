@@ -2,6 +2,7 @@ use crate::pack::pack_registry::PackRegistry;
 use crate::types::{MapSquareCrcs, MapSquares};
 use crate::unpack;
 use rs_io::crc;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -198,7 +199,7 @@ fn check(name: &str, expected: i32, actual: i32, pass: &mut u32, fail: &mut u32)
 }
 
 fn load_expected_maps(maps_dir: &Path) -> ExpectedMapSquare {
-    let mut data_map = HashMap::new();
+    let mut data_map = FxHashMap::default();
     let mut crc_map = HashMap::new();
 
     let Ok(entries) = std::fs::read_dir(maps_dir) else {

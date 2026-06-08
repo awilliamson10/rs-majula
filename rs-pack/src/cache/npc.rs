@@ -3,7 +3,7 @@ use super::provider::{CacheType, TypeProvider};
 use crate::ParamValue;
 use crate::types::{BlockWalk, MoveRestrict, NpcMode};
 use rs_io::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub type NpcTypeProvider = TypeProvider<NpcType>;
 
@@ -56,7 +56,7 @@ pub struct NpcType {
     pub patrol: Option<Box<[NpcPatrol]>>,
     pub givechase: bool,
     pub regenrate: u16,
-    pub params: Option<Box<HashMap<i32, ParamValue>>>,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
     debugname: Option<Box<str>>,
 }
 
@@ -203,7 +203,8 @@ impl CacheType for NpcType {
                 214 => self.regenrate = buf.g2(),
                 249 => ParamType::decode_params(
                     buf,
-                    self.params.get_or_insert_with(|| Box::new(HashMap::new())),
+                    self.params
+                        .get_or_insert_with(|| Box::new(FxHashMap::default())),
                 ),
                 250 => self.debugname = Some(buf.gjstr(10).into_boxed_str()),
                 _ => panic!("Unrecognized npc config code: {code}"),

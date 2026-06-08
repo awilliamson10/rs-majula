@@ -3,7 +3,7 @@ use super::provider::{CacheType, TypeProvider};
 use crate::ParamValue;
 use crate::types::ForceApproach;
 use rs_io::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub type LocTypeProvider = TypeProvider<LocType>;
 
@@ -46,7 +46,7 @@ pub struct LocType {
     pub offsety: i16,
     pub offsetz: i16,
     pub forcedecor: bool,
-    pub params: Option<Box<HashMap<i32, ParamValue>>>,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
     debugname: Option<Box<str>>,
 }
 
@@ -154,7 +154,8 @@ impl CacheType for LocType {
                 73 => self.forcedecor = true,
                 249 => ParamType::decode_params(
                     buf,
-                    self.params.get_or_insert_with(|| Box::new(HashMap::new())),
+                    self.params
+                        .get_or_insert_with(|| Box::new(FxHashMap::default())),
                 ),
                 250 => self.debugname = Some(buf.gjstr(10).into_boxed_str()),
                 _ => panic!("Unrecognized loc config code: {code}"),

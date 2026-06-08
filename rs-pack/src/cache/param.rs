@@ -2,7 +2,7 @@ use super::ScriptVarType;
 use super::provider::{CacheType, TypeProvider};
 use crate::ParamValue;
 use rs_io::packet::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub type ParamTypeProvider = TypeProvider<ParamType>;
 
@@ -16,7 +16,7 @@ pub struct ParamType {
 }
 
 impl ParamType {
-    pub fn decode_params(buf: &mut Packet, params: &mut HashMap<i32, ParamValue>) {
+    pub fn decode_params(buf: &mut Packet, params: &mut FxHashMap<i32, ParamValue>) {
         let count: u8 = buf.g1();
         for _ in 0..count {
             let key = buf.g3();
@@ -30,7 +30,7 @@ impl ParamType {
 
     pub fn get_param_or_default(
         &self,
-        params: &'static HashMap<i32, ParamValue>,
+        params: &'static FxHashMap<i32, ParamValue>,
     ) -> Option<&'static ParamValue> {
         params.get(&(self.id as i32))
     }

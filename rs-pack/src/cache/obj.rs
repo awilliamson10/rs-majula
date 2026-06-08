@@ -3,7 +3,7 @@ use super::provider::{CacheType, TypeProvider};
 use crate::ParamValue;
 use crate::types::{DummyItem, WearPos};
 use rs_io::Packet;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub type ObjTypeProvider = TypeProvider<ObjType>;
 
@@ -55,7 +55,7 @@ pub struct ObjType {
     pub countco: Option<Box<[u16]>>,
     pub tradeable: bool,
     pub respawnrate: u16,
-    pub params: Option<Box<HashMap<i32, ParamValue>>>,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
     debugname: Option<Box<str>>,
 }
 
@@ -250,7 +250,8 @@ impl CacheType for ObjType {
                 201 => self.respawnrate = buf.g2(),
                 249 => ParamType::decode_params(
                     buf,
-                    self.params.get_or_insert_with(|| Box::new(HashMap::new())),
+                    self.params
+                        .get_or_insert_with(|| Box::new(FxHashMap::default())),
                 ),
                 250 => self.debugname = Some(buf.gjstr(10).into_boxed_str()),
                 _ => panic!("Unrecognised obj config code: {code}"),

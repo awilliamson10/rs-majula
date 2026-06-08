@@ -2583,6 +2583,7 @@ dependencies = [
  "rs-inv",
  "rs-pack",
  "rs-util",
+ "rustc-hash",
  "thiserror 2.0.18",
  "tracing",
 ]
