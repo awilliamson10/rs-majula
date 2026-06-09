@@ -547,6 +547,8 @@ impl Zone {
             id: loc.id(),
             shape_angle: loc.packed_shape_angle(),
         });
+        self.events
+            .retain(|e| e.id != Some(lid) || !matches!(e.message, ZoneMessage::LocAddChange(_)));
         self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
     }
 

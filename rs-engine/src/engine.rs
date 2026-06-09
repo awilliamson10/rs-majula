@@ -145,6 +145,7 @@ pub struct TickStats {
 /// - `ObjDelete` -- removes a ground object after its lifetime expires.
 /// - `ObjAdd` -- respawns a ground object after it was picked up or removed.
 /// - `LocDelete` -- reverts or removes a temporary location change after its duration.
+#[derive(PartialEq, Eq)]
 pub enum PendingZoneEvent {
     ObjReveal {
         coord: CoordGrid,
@@ -217,6 +218,35 @@ fn next_free_id(cursor: u16, upper: u16, lower: u16, is_free: impl Fn(u16) -> bo
 /// despawn); members objs are revealed only on a members world.
 const fn obj_revealable(tradeable: bool, members: bool, world_members: bool) -> bool {
     tradeable && (!members || world_members)
+}
+
+/// Cancels the earliest pending [`PendingZoneEvent::ObjReveal`] scheduled for the
+/// given `(coord, id, receiver37)`, if one exists.
+///
+/// Called when a privately-dropped obj is removed (e.g. picked up) before its
+/// reveal fires. Unlike `ObjDelete` -- which `remove_obj_by_clock` clock-guards
+/// so a stale event cannot delete a re-dropped obj -- `reveal_obj` matches only
+/// coord/id/receiver37, so a leftover reveal would reveal a later same-tile/id
+/// re-drop by the same receiver too early. Exactly ONE reveal is removed so a
+/// multi-drop (two identical non-stackable objs on one tile, each with its own
+/// scheduled reveal) keeps one reveal per remaining obj.
+fn cancel_one_pending_obj_reveal(
+    pending: &mut BTreeMap<u64, Vec<PendingZoneEvent>>,
+    coord: CoordGrid,
+    id: u16,
+    receiver37: u64,
+) {
+    let target = PendingZoneEvent::ObjReveal {
+        coord,
+        id,
+        receiver37,
+    };
+    for events in pending.values_mut() {
+        if let Some(pos) = events.iter().position(|e| *e == target) {
+            events.remove(pos);
+            return;
+        }
+    }
 }
 
 pub struct PlayerList {
@@ -1514,6 +1544,9 @@ impl Engine {
         self.zones
             .zone_mut(x, y, z)
             .remove_obj(x, z, id, receiver37, respawn_at);
+        if let Some(receiver) = receiver37 {
+            cancel_one_pending_obj_reveal(&mut self.pending_zone_events, coord, id, receiver);
+        }
         if let Some(clock) = respawn_at {
             self.schedule_zone_event(clock, PendingZoneEvent::ObjAdd { coord, id });
         }
@@ -3437,7 +3470,7 @@ impl ScriptPlayer for ActivePlayer {
     /// # Call Stack
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
-    /// **Calls:** `StatBlock::add`, `update_stat`, `change_stat`
+    /// **Calls:** `StatBlock::add`, `change_stat`
     fn stat_add(&mut self, stat: usize, constant: i32, percent: i32) {
         let prev = self.player.stats.level(stat);
         self.player.stats.add(stat, constant, percent);
@@ -3448,7 +3481,6 @@ impl ScriptPlayer for ActivePlayer {
             self.player.hero_points.clear();
         }
         if self.player.stats.level(stat) != prev {
-            self.update_stat(stat);
             self.change_stat(stat);
         }
     }
@@ -3460,7 +3492,7 @@ impl ScriptPlayer for ActivePlayer {
     /// # Call Stack
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
-    /// **Calls:** `StatBlock::boost`, `update_stat`, `change_stat`
+    /// **Calls:** `StatBlock::boost`, `change_stat`
     fn stat_boost(&mut self, stat: usize, constant: i32, percent: i32) {
         let prev = self.player.stats.level(stat);
         self.player.stats.boost(stat, constant, percent);
@@ -3471,7 +3503,6 @@ impl ScriptPlayer for ActivePlayer {
             self.player.hero_points.clear();
         }
         if self.player.stats.level(stat) != prev {
-            self.update_stat(stat);
             self.change_stat(stat);
         }
     }
@@ -3483,7 +3514,7 @@ impl ScriptPlayer for ActivePlayer {
     /// # Call Stack
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
-    /// **Calls:** `StatBlock::heal`, `update_stat`, `change_stat`
+    /// **Calls:** `StatBlock::heal`, `change_stat`
     fn stat_heal(&mut self, stat: usize, constant: i32, percent: i32) {
         let prev = self.player.stats.level(stat);
         self.player.stats.heal(stat, constant, percent);
@@ -3494,7 +3525,6 @@ impl ScriptPlayer for ActivePlayer {
             self.player.hero_points.clear();
         }
         if self.player.stats.level(stat) != prev {
-            self.update_stat(stat);
             self.change_stat(stat);
         }
     }
