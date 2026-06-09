@@ -3332,6 +3332,21 @@ impl ScriptPlayer for ActivePlayer {
         self.player.runweight
     }
 
+    /// Reports whether the buffered-packet queue has reached the 5000-byte soft
+    /// bandwidth limit.
+    ///
+    /// Each queued [`Packet`]'s backing buffer is exactly its on-wire size
+    /// (opcode byte + frame header + payload), so summing their lengths yields
+    /// the total bytes pending for this player.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptPlayer` trait
+    /// **Calls:** sums `Packet::len` over `self.buffered`
+    fn buffer_full(&self) -> bool {
+        self.buffered.iter().map(|p| p.len()).sum::<usize>() >= 5000
+    }
+
     /// Makes the player say a message as overhead forced chat.
     ///
     /// # Call Stack

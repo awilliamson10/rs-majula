@@ -1237,5 +1237,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let slot = s.pop_int_as::<u8>()?;
             player.setidkcolour(slot, colour)?;
         });
+
+        // 2134
+        // https://x.com/JagexAsh/status/1694990340669747261
+        active_player!(m, BUFFER_FULL => |s, player| {
+            s.push_int(player.buffer_full() as i32);
+        });
     }
 }

@@ -566,6 +566,17 @@ pub trait ScriptPlayer {
     /// items are equipped).
     fn weight(&self) -> i32;
 
+    /// Reports whether the player's outgoing buffered-packet queue has reached
+    /// the soft bandwidth limit.
+    ///
+    /// This is a developer-facing throttle so scripts can avoid degrading the
+    /// player experience by flooding bandwidth.
+    ///
+    /// # Returns
+    /// `true` if the combined size of all queued buffered packets is at least
+    /// 5000 bytes.
+    fn buffer_full(&self) -> bool;
+
     /// Makes the player say a message as overhead forced chat.
     ///
     /// # Arguments

@@ -431,6 +431,7 @@ pub const WEAKQUEUEVARARG: u16 = 2130;
 pub const WEALTH_EVENT: u16 = 2131;
 pub const WEIGHT: u16 = 2132;
 pub const SETIDKCOLOUR: u16 = 2133;
+pub const BUFFER_FULL: u16 = 2134;
 
 // ── Npc ops (2500-2999) ─────────────────────────────────────────────────────
 
