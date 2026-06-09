@@ -1377,7 +1377,6 @@ impl Engine {
         if let Some(r) = receiver37 {
             obj.receiver37 = r;
             let reveal_clock = self.clock + REVEAL_TICKS;
-            obj.reveal = reveal_clock;
 
             let revealable =
                 obj_type.is_some_and(|t| obj_revealable(t.tradeable, t.members, self.members));

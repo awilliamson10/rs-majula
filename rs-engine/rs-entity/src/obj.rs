@@ -39,8 +39,8 @@ const SLOT_MASK: u64 = 0xFF;
 /// offset within the owning 8x8 zone (`x & 0x7`, `z & 0x7`); the full world
 /// coordinate is reconstructed from the zone's base via
 /// [`world_coord`](Self::world_coord). The remaining fields track the player who
-/// can see it privately (receiver), the tick at which it becomes public
-/// (reveal), and the tick at which it was last modified or scheduled for removal.
+/// can see it privately (receiver) and the tick at which it was last modified
+/// or scheduled for removal.
 ///
 /// Packed layout (bit offsets):
 /// - `0..3`   local X (`x & 0x7`)
@@ -54,7 +54,6 @@ const SLOT_MASK: u64 = 0xFF;
 pub struct Obj {
     packed: u64,
     pub receiver37: u64,
-    pub reveal: u64,
     pub last_clock: u64,
 }
 
@@ -63,8 +62,8 @@ impl Obj {
     ///
     /// Only the object's position *within its 8x8 zone* is stored; the level and
     /// zone base are recovered from the owning zone. The object starts with no
-    /// receiver (visible to all), no reveal tick, and no last-clock, meaning it
-    /// has not yet been scheduled for any state transition.
+    /// receiver (visible to all) and no last-clock, meaning it has not yet been
+    /// scheduled for any state transition.
     ///
     /// # Arguments
     /// * `coord` - Grid coordinate where this object is placed (only the intra-zone offset is kept).
@@ -84,7 +83,6 @@ impl Obj {
         Self {
             packed,
             receiver37: NO_RECEIVER,
-            reveal: u64::MAX,
             last_clock: u64::MAX,
         }
     }

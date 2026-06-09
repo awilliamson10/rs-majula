@@ -905,8 +905,8 @@ impl Zone {
     /// Reveals a privately-owned obj to all players and queues an enclosed `ObjReveal` event.
     ///
     /// Transitions an obj from player-private visibility to public visibility by
-    /// clearing its receiver and setting its reveal timestamp. Any previously queued
-    /// events for this obj are cancelled before the reveal event is queued.
+    /// clearing its receiver. Any previously queued events for this obj are
+    /// canceled before the reveal event is queued.
     ///
     /// No-op if no matching obj is found.
     ///
@@ -922,7 +922,6 @@ impl Zone {
     /// # Side Effects
     ///
     /// - Sets the obj's `receiver37` to `NO_RECEIVER`.
-    /// - Sets the obj's `reveal` to `u64::MAX`.
     /// - Cancels prior events via [`clear_queued_events`](Self::clear_queued_events).
     /// - Queues an enclosed `ObjReveal` event.
     ///
@@ -942,7 +941,6 @@ impl Zone {
         self.clear_queued_events(oid);
         let count = self.objs[idx].count();
         self.objs[idx].receiver37 = NO_RECEIVER;
-        self.objs[idx].reveal = u64::MAX;
         self.queue_event(
             Some(oid),
             ZoneEventType::Enclosed,
@@ -1355,7 +1353,6 @@ mod tests {
         z.objs.push(obj);
         z.reveal_obj(3222, 3222, 100, 111, 1);
         assert_eq!(z.objs[0].receiver37, NO_RECEIVER);
-        assert_eq!(z.objs[0].reveal, u64::MAX);
     }
 
     #[test]
@@ -1586,7 +1583,6 @@ mod tests {
         let mut z = zone();
         let mut obj = despawn_obj(3222, 3222, 100, 5);
         obj.receiver37 = 111;
-        obj.reveal = 50;
         obj.last_clock = 200;
         z.add_obj(obj, Some(111));
         assert_eq!(z.objs.len(), 1);
