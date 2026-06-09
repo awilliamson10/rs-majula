@@ -853,7 +853,7 @@ impl Engine {
                     {
                         continue;
                     }
-                    let obj_coord = obj.coord();
+                    let obj_coord = obj.world_coord(zone.coord);
                     if coord.distance(obj_coord) > distance {
                         continue;
                     }
@@ -878,7 +878,7 @@ impl Engine {
                     }
                     count += 1;
                     if engine_mut().random.next_int_bound(count as i32) == 0 {
-                        chosen = Some((obj_coord, obj.id(), obj.count));
+                        chosen = Some((obj_coord, obj.id(), obj.count()));
                     }
                 }
             }

@@ -1,6 +1,6 @@
 use crate::zone_event::ZoneEvent;
 use crate::zone_event_type::ZoneEventType;
-use crate::zone_message::{ZoneMessage, pack_zone_coord};
+use crate::zone_message::ZoneMessage;
 use rs_entity::obj::NO_RECEIVER;
 use rs_entity::{EntityLifeTime, Loc, Obj};
 use rs_grid::ZoneCoordGrid;
@@ -49,6 +49,18 @@ pub struct Zone {
 }
 
 impl Zone {
+    /// Maximum number of objs (respawn + despawn) retained in a zone. Once this
+    /// total is reached, the next add evicts the oldest *despawn* obj to make room;
+    /// respawn (static) objs count toward the total but are never evicted.
+    /// `((8 * 8(<<3)) << 2) - 1 = 255`.
+    pub const MAX_OBJS: usize = ((8 << 3) << 2) - 1;
+
+    /// Maximum number of locs (respawn + despawn) retained in a zone. Once this
+    /// total is reached, the next add evicts the oldest *despawn* loc to make room;
+    /// respawn (static) locs count toward the total but are never evicted.
+    /// `((8 * 8(<<3)) << 1) - 1 = 127`
+    pub const MAX_LOCS: usize = ((8 << 3) << 1) - 1;
+
     /// Creates a new, empty zone at the given coordinate.
     ///
     /// # Arguments
@@ -187,11 +199,20 @@ impl Zone {
     ///
     /// # Side Effects
     ///
-    /// Appends `obj` to `self.objs`.
+    /// Assigns the obj an instance slot (so its [`oid`](Obj::oid) is zone-unique)
+    /// and appends it to `self.objs`.
+    ///
+    /// The obj is dropped if its `(tile, id)` slot space is already full (256 objs),
+    /// since admitting it would alias another obj's oid. This is unreachable with
+    /// legitimate map data (it would require 256 identical static objs on one tile).
     ///
     /// **Called by:** `GameMap::load` during server startup.
     #[inline]
-    pub fn add_static_obj(&mut self, obj: Obj) {
+    pub fn add_static_obj(&mut self, mut obj: Obj) {
+        let Some(slot) = self.assign_obj_slot(obj.local_x(), obj.local_z(), obj.id()) else {
+            return;
+        };
+        obj.set_slot(slot);
         self.objs.push(obj);
     }
 
@@ -428,37 +449,71 @@ impl Zone {
     /// Only locs with [`EntityLifeTime::Despawn`] are stored in `self.locs`; respawn
     /// locs are assumed to already exist in storage (as static locs loaded from the map).
     ///
+    /// If the zone already holds [`Self::MAX_LOCS`] locs in total (respawn +
+    /// despawn), the oldest despawn loc is evicted first (see
+    /// [`make_room_for_loc`](Self::make_room_for_loc)) and returned, so the caller
+    /// can drop its collision -- which is owned by the engine, not the zone.
+    ///
     /// # Arguments
     ///
-    /// * `loc` -- The loc to add. Consumed by this method.
+    /// * `loc` -- The loc to add.
+    ///
+    /// # Returns
+    ///
+    /// The evicted despawn loc when the zone was at the loc cap, otherwise `None`.
     ///
     /// # Side Effects
     ///
     /// - Calls `loc.revert()` and clears `loc.last_clock`.
+    /// - Evicts the oldest despawn loc (queuing its `LocDel`) if at [`Self::MAX_LOCS`].
     /// - Pushes the loc to `self.locs` if it has `Despawn` lifetime.
     /// - Queues an enclosed `LocAddChange` event.
     ///
     /// **Called by:** `Engine` methods when scripts or game logic place a loc.
     ///
-    /// **Calls:** [`queue_event`](Self::queue_event).
-    pub fn add_loc(&mut self, mut loc: Loc) {
-        let coord = loc.packed_zone_coord();
-        let lid = loc.lid();
+    /// **Calls:** [`make_room_for_loc`](Self::make_room_for_loc),
+    /// [`queue_event`](Self::queue_event).
+    pub fn add_loc(&mut self, mut loc: Loc) -> Option<Loc> {
         loc.revert();
-        loc.last_clock = None;
+        loc.last_clock = u64::MAX;
+        let mut evicted = None;
         if loc.lifetime() == EntityLifeTime::Despawn {
+            evicted = self.make_room_for_loc();
             self.locs.push(loc);
         }
         self.queue_event(
-            Some(lid),
+            Some(loc.lid()),
             ZoneEventType::Enclosed,
             None,
             ZoneMessage::LocAddChange(LocAddChange {
-                coord,
+                coord: loc.packed_zone_coord(),
                 id: loc.id(),
                 shape_angle: loc.packed_shape_angle(),
             }),
         );
+        evicted
+    }
+
+    /// Evicts the oldest despawn loc when the zone is at the loc cap.
+    ///
+    /// The cap counts *all* locs (respawn + despawn). Once the zone holds
+    /// [`Self::MAX_LOCS`] locs in total, the first (oldest) *despawn* loc is removed
+    /// via [`remove_loc`](Self::remove_loc) -- which queues a `LocDel` so clients
+    /// drop it -- and returned so the caller can clear its collision. Static
+    /// (respawn) locs count toward the cap but are never evicted, so a zone
+    /// saturated with respawn locs may exceed the cap. Returns `None` when there is
+    /// still room or no despawn loc is available to evict.
+    fn make_room_for_loc(&mut self) -> Option<Loc> {
+        if self.locs.len() < Self::MAX_LOCS {
+            return None;
+        }
+        let idx = self
+            .locs
+            .iter()
+            .position(|l| l.lifetime() == EntityLifeTime::Despawn)?;
+        let evicted = self.locs[idx];
+        self.remove_loc(idx);
+        Some(evicted)
     }
 
     /// Notifies clients that a loc at the given index has changed its type/shape/angle.
@@ -485,11 +540,10 @@ impl Zone {
     /// **Calls:** [`queue_event`](Self::queue_event).
     pub fn change_loc(&mut self, idx: usize) {
         let loc = &mut self.locs[idx];
-        loc.last_clock = None;
-        let coord = loc.packed_zone_coord();
+        loc.last_clock = u64::MAX;
         let lid = loc.lid();
         let message = ZoneMessage::LocAddChange(LocAddChange {
-            coord,
+            coord: loc.packed_zone_coord(),
             id: loc.id(),
             shape_angle: loc.packed_shape_angle(),
         });
@@ -529,9 +583,9 @@ impl Zone {
         let coord = loc.packed_zone_coord();
         let lid = loc.lid();
         let shape_angle = loc.packed_shape_angle();
-        let lifecycle = loc.lifetime();
+        let lifetime = loc.lifetime();
         self.clear_queued_events(lid);
-        if lifecycle == EntityLifeTime::Despawn {
+        if lifetime == EntityLifeTime::Despawn {
             self.locs.swap_remove(idx);
         } else {
             self.locs[idx].revert();
@@ -564,7 +618,7 @@ impl Zone {
     pub fn get_loc(&self, x: u16, z: u16, id: u16) -> Option<usize> {
         self.locs
             .iter()
-            .position(|l| l.coord().x() == x && l.coord().z() == z && l.id() == id && l.visible())
+            .position(|loc| loc.is_at(x, z) && loc.id() == id && loc.visible())
     }
 
     /// Finds the index of a visible loc at the given position on the given layer.
@@ -584,9 +638,9 @@ impl Zone {
     ///
     /// **Called by:** `Engine` shared phase for loc collision checks.
     pub fn get_loc_by_layer(&self, x: u16, z: u16, layer: LocLayer) -> Option<usize> {
-        self.locs.iter().position(|l| {
-            l.coord().x() == x && l.coord().z() == z && l.layer() == layer && l.visible()
-        })
+        self.locs
+            .iter()
+            .position(|loc| loc.is_at(x, z) && loc.layer() == layer && loc.visible())
     }
 
     /// Respawns a previously removed loc, restoring it to its base state.
@@ -613,11 +667,10 @@ impl Zone {
     pub fn respawn_loc(&mut self, idx: usize) {
         let loc = &mut self.locs[idx];
         loc.revert();
-        loc.last_clock = None;
-        let coord = loc.packed_zone_coord();
+        loc.last_clock = u64::MAX;
         let lid = loc.lid();
         let message = ZoneMessage::LocAddChange(LocAddChange {
-            coord,
+            coord: loc.packed_zone_coord(),
             id: loc.id(),
             shape_angle: loc.packed_shape_angle(),
         });
@@ -644,14 +697,12 @@ impl Zone {
     /// **Calls:** [`queue_event`](Self::queue_event).
     pub fn anim_loc(&mut self, idx: usize, seq: u16) {
         let loc = &self.locs[idx];
-        let coord = loc.packed_zone_coord();
-        let lid = loc.lid();
         self.queue_event(
-            Some(lid),
+            Some(loc.lid()),
             ZoneEventType::Enclosed,
             None,
             ZoneMessage::LocAnim(LocAnim {
-                coord,
+                coord: loc.packed_zone_coord(),
                 shape_angle: loc.packed_shape_angle(),
                 seq,
             }),
@@ -682,8 +733,7 @@ impl Zone {
     /// **Calls:** [`queue_event`](Self::queue_event).
     pub fn merge_loc(&mut self, idx: usize, message: ZoneMessage) {
         let loc = &self.locs[idx];
-        let lid = loc.lid();
-        self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
+        self.queue_event(Some(loc.lid()), ZoneEventType::Enclosed, None, message);
     }
 
     // ---- obj management ----
@@ -703,34 +753,98 @@ impl Zone {
     /// * `receiver37` -- The player UID (lower 37 bits) who should see the obj
     ///   privately, or `None` for a publicly visible obj.
     ///
+    /// If the zone already holds [`Self::MAX_OBJS`] objs in total (respawn +
+    /// despawn), the oldest despawn obj is evicted first (see
+    /// [`make_room_for_obj`](Self::make_room_for_obj)). Unlike locs, objs carry no
+    /// collision, so eviction is fully handled here.
+    ///
+    /// The obj is then stamped with an instance slot (see
+    /// [`assign_obj_slot`](Self::assign_obj_slot)) so its [`oid`](Obj::oid) is
+    /// unique within the zone before the `ObjAdd` event is queued.
+    ///
     /// # Side Effects
     ///
+    /// - Evicts the oldest despawn obj (queuing its `ObjDel`) if at [`Self::MAX_OBJS`].
+    /// - Stamps the obj with a zone-unique instance slot.
     /// - Pushes the obj to `self.objs` if it has `Despawn` lifetime.
     /// - Queues an `ObjAdd` event (enclosed or follows depending on receiver).
     ///
     /// **Called by:** `Engine::add_obj` when scripts or game logic drop a ground item.
     ///
-    /// **Calls:** [`queue_event`](Self::queue_event).
-    pub fn add_obj(&mut self, obj: Obj, receiver37: Option<u64>) {
-        let coord = pack_zone_coord(obj.coord().x(), obj.coord().z());
+    /// **Calls:** [`make_room_for_obj`](Self::make_room_for_obj),
+    /// [`queue_event`](Self::queue_event).
+    pub fn add_obj(&mut self, mut obj: Obj, receiver37: Option<u64>) {
+        let despawn = obj.lifetime() == EntityLifeTime::Despawn;
+        if despawn {
+            self.make_room_for_obj();
+        }
+        let Some(slot) = self.assign_obj_slot(obj.local_x(), obj.local_z(), obj.id()) else {
+            return;
+        };
+        obj.set_slot(slot);
         let oid = obj.oid();
         let message = ZoneMessage::ObjAdd(ObjAdd {
-            coord,
+            coord: obj.packed_zone_coord(),
             id: obj.id(),
-            count: obj.count.clamp(0, 65535) as u16,
+            count: obj.count().clamp(0, 65535) as u16,
         });
-
-        if obj.lifetime() == EntityLifeTime::Despawn {
+        if despawn {
             self.objs.push(obj);
         }
-
         let (event_type, event_receiver) = if receiver37.is_none() {
             (ZoneEventType::Enclosed, None)
         } else {
             (ZoneEventType::Follows, receiver37)
         };
-
         self.queue_event(Some(oid), event_type, event_receiver, message);
+    }
+
+    /// Evicts the oldest despawn obj when the zone is at the obj cap.
+    ///
+    /// The cap counts *all* objs (respawn + despawn). Once the zone holds
+    /// [`Self::MAX_OBJS`] objs in total, the first (oldest) *despawn* obj is removed
+    /// via [`remove_obj_at`](Self::remove_obj_at), which queues an `ObjDel` so
+    /// clients drop it. Static (respawn) objs count toward the cap but are never
+    /// evicted, so a zone saturated with respawn objs may exceed the cap. No-op
+    /// while there is still room.
+    fn make_room_for_obj(&mut self) {
+        if self.objs.len() < Self::MAX_OBJS {
+            return;
+        }
+        if let Some(idx) = self
+            .objs
+            .iter()
+            .position(|o| o.lifetime() == EntityLifeTime::Despawn)
+        {
+            self.remove_obj_at(idx, None);
+        }
+    }
+
+    /// Returns the lowest instance slot not already used by an obj at the same
+    /// local tile and type id (giving the new obj a zone-unique [`oid`](Obj::oid)),
+    /// or `None` if all 256 slots at that `(tile, id)` are taken.
+    ///
+    /// Objs that share a tile and id -- two identical non-stackable drops, or
+    /// different players' private stacks of the same item -- would otherwise share
+    /// an oid; the slot disambiguates them. Slots freed by removal are reused, so
+    /// values stay small. The dynamic add path is bounded by the per-zone obj cap
+    /// ([`Self::MAX_OBJS`] = 255), so it always finds a slot; the static path is
+    /// unbounded, so a caller that gets `None` must drop the obj rather than admit a
+    /// colliding oid.
+    fn assign_obj_slot(&self, local_x: u8, local_z: u8, id: u16) -> Option<u8> {
+        let mut used = [0; 4];
+        for obj in &self.objs {
+            if obj.local_x() == local_x && obj.local_z() == local_z && obj.id() == id {
+                let slot = obj.slot();
+                used[(slot >> 6) as usize] |= 1 << (slot & 0x3F);
+            }
+        }
+        for (slot, &bits) in used.iter().enumerate() {
+            if bits != u64::MAX {
+                return Some((((slot as u32) << 6) | (!bits).trailing_zeros()) as u8);
+            }
+        }
+        None
     }
 
     /// Finds the index of an obj matching exact coordinates, type id, and receiver.
@@ -752,9 +866,9 @@ impl Zone {
     /// **Called by:** `Engine` methods when checking for existing receiver-specific
     /// objs before merging or stacking.
     pub fn get_obj_of_receiver(&self, x: u16, z: u16, id: u16, receiver37: u64) -> Option<usize> {
-        self.objs.iter().position(|o| {
-            o.coord().x() == x && o.coord().z() == z && o.id() == id && o.receiver37 == receiver37
-        })
+        self.objs
+            .iter()
+            .position(|obj| obj.is_at(x, z) && obj.id() == id && obj.receiver37 == receiver37)
     }
 
     /// Finds the index of an obj matching coordinates, type id, and optional receiver.
@@ -778,13 +892,12 @@ impl Zone {
     /// **Called by:** `Engine` shared phase for obj interaction checks,
     /// op handlers (`opobj`).
     pub fn get_obj(&self, x: u16, z: u16, id: u16, receiver37: Option<u64>) -> Option<usize> {
-        self.objs.iter().position(|o| {
-            o.coord().x() == x
-                && o.coord().z() == z
-                && o.id() == id
+        self.objs.iter().position(|obj| {
+            obj.is_at(x, z)
+                && obj.id() == id
                 && match receiver37 {
-                    None => o.receiver37 == NO_RECEIVER,
-                    Some(r) => o.receiver37 == NO_RECEIVER || o.receiver37 == r,
+                    None => obj.receiver37 == NO_RECEIVER,
+                    Some(r) => obj.receiver37 == NO_RECEIVER || obj.receiver37 == r,
                 }
         })
     }
@@ -818,22 +931,24 @@ impl Zone {
     /// **Calls:** [`clear_queued_events`](Self::clear_queued_events),
     /// [`queue_event`](Self::queue_event).
     pub fn reveal_obj(&mut self, x: u16, z: u16, id: u16, receiver37: u64, receiver_pid: u16) {
-        let Some(idx) = self.objs.iter().position(|o| {
-            o.coord().x() == x && o.coord().z() == z && o.id() == id && o.receiver37 == receiver37
-        }) else {
+        let Some(idx) = self
+            .objs
+            .iter()
+            .position(|obj| obj.is_at(x, z) && obj.id() == id && obj.receiver37 == receiver37)
+        else {
             return;
         };
-        self.clear_queued_events(self.objs[idx].oid());
-        let count = self.objs[idx].count;
+        let oid = self.objs[idx].oid();
+        self.clear_queued_events(oid);
+        let count = self.objs[idx].count();
         self.objs[idx].receiver37 = NO_RECEIVER;
         self.objs[idx].reveal = u64::MAX;
-        let coord = pack_zone_coord(x, z);
         self.queue_event(
-            Some(self.objs[idx].oid()),
+            Some(oid),
             ZoneEventType::Enclosed,
             None,
             ZoneMessage::ObjReveal(ObjReveal {
-                coord,
+                coord: self.objs[idx].packed_zone_coord(),
                 id,
                 count: count.clamp(0, 65535) as u16,
                 receiver: receiver_pid,
@@ -862,12 +977,11 @@ impl Zone {
     ///
     /// **Calls:** [`remove_obj_at`](Self::remove_obj_at).
     pub fn remove_obj_by_clock(&mut self, x: u16, z: u16, id: u16, expected_clock: u64) {
-        let Some(idx) = self.objs.iter().position(|o| {
-            o.coord().x() == x
-                && o.coord().z() == z
-                && o.id() == id
-                && o.last_clock == expected_clock
-        }) else {
+        let Some(idx) = self
+            .objs
+            .iter()
+            .position(|obj| obj.is_at(x, z) && obj.id() == id && obj.last_clock == expected_clock)
+        else {
             return;
         };
         self.remove_obj_at(idx, None);
@@ -907,14 +1021,13 @@ impl Zone {
         receiver37: Option<u64>,
         respawn_at: Option<u64>,
     ) {
-        let Some(idx) = self.objs.iter().position(|o| {
-            o.coord().x() == x
-                && o.coord().z() == z
-                && o.id() == id
-                && (o.lifetime() == EntityLifeTime::Despawn || o.last_clock == u64::MAX)
+        let Some(idx) = self.objs.iter().position(|obj| {
+            obj.is_at(x, z)
+                && obj.id() == id
+                && (obj.lifetime() == EntityLifeTime::Despawn || obj.last_clock == u64::MAX)
                 && match receiver37 {
-                    None => o.receiver37 == NO_RECEIVER,
-                    Some(r) => o.receiver37 == NO_RECEIVER || o.receiver37 == r,
+                    None => obj.receiver37 == NO_RECEIVER,
+                    Some(receiver) => obj.receiver37 == NO_RECEIVER || obj.receiver37 == receiver,
                 }
         }) else {
             return;
@@ -955,7 +1068,7 @@ impl Zone {
     fn remove_obj_at(&mut self, idx: usize, respawn_at: Option<u64>) {
         let obj = &self.objs[idx];
         let oid = obj.oid();
-        let coord = pack_zone_coord(obj.coord().x(), obj.coord().z());
+        let coord = obj.packed_zone_coord();
         let id = obj.id();
         let (event_type, event_receiver) = if obj.receiver37 != NO_RECEIVER {
             (ZoneEventType::Follows, Some(obj.receiver37))
@@ -999,25 +1112,23 @@ impl Zone {
     ///
     /// **Calls:** [`queue_event`](Self::queue_event).
     pub fn respawn_obj(&mut self, x: u16, z: u16, id: u16) {
-        let Some(idx) = self.objs.iter().position(|o| {
-            o.coord().x() == x
-                && o.coord().z() == z
-                && o.id() == id
-                && o.lifetime() == EntityLifeTime::Respawn
-                && o.last_clock != u64::MAX
+        let Some(idx) = self.objs.iter().position(|obj| {
+            obj.is_at(x, z)
+                && obj.id() == id
+                && obj.lifetime() == EntityLifeTime::Respawn
+                && obj.last_clock != u64::MAX
         }) else {
             return;
         };
         self.objs[idx].last_clock = u64::MAX;
-        let coord = pack_zone_coord(x, z);
-        let count = self.objs[idx].count;
+        let count = self.objs[idx].count();
         let oid = self.objs[idx].oid();
         self.queue_event(
             Some(oid),
             ZoneEventType::Enclosed,
             None,
             ZoneMessage::ObjAdd(ObjAdd {
-                coord,
+                coord: self.objs[idx].packed_zone_coord(),
                 id,
                 count: count.clamp(0, 65535) as u16,
             }),
@@ -1098,7 +1209,8 @@ mod tests {
             id,
             LocShape::CentrepieceStraight,
             LocAngle::North,
-            LocLayer::Ground,
+            true,
+            true,
         )
     }
 
@@ -1111,7 +1223,8 @@ mod tests {
             id,
             LocShape::CentrepieceStraight,
             LocAngle::North,
-            LocLayer::Ground,
+            true,
+            true,
         )
     }
 
@@ -1449,11 +1562,11 @@ mod tests {
         let mut obj = despawn_obj(3222, 3222, 100, 5);
         obj.last_clock = 100;
         z.objs.push(obj);
-        z.objs[0].count = 10;
+        z.objs[0].set_count(10);
         z.objs[0].last_clock = 200;
         z.remove_obj_by_clock(3222, 3222, 100, 100);
         assert_eq!(z.objs.len(), 1);
-        assert_eq!(z.objs[0].count, 10);
+        assert_eq!(z.objs[0].count(), 10);
     }
 
     #[test]
@@ -1535,16 +1648,11 @@ mod tests {
     fn add_loc_reverts_and_clears_clock() {
         let mut z = zone();
         let mut loc = despawn_loc(3222, 3222, 100);
-        loc.change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
-        loc.last_clock = Some(999);
+        loc.change(200, LocAngle::North, true, true);
+        loc.last_clock = 999;
         z.add_loc(loc);
         assert!(!z.locs[0].is_changed());
-        assert_eq!(z.locs[0].last_clock, None);
+        assert_eq!(z.locs[0].last_clock, u64::MAX);
     }
 
     // ---- loc: active() derived state ----
@@ -1558,41 +1666,31 @@ mod tests {
     #[test]
     fn loc_active_despawn_always() {
         let mut loc = despawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(999);
+        loc.last_clock = 999;
         assert!(loc.visible());
     }
 
     #[test]
     fn loc_active_changed_respawn() {
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
-        loc.last_clock = Some(999);
+        loc.change(200, LocAngle::North, true, true);
+        loc.last_clock = 999;
         assert!(loc.visible());
     }
 
     #[test]
     fn loc_inactive_removed_respawn() {
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(999);
+        loc.last_clock = 999;
         assert!(!loc.visible());
     }
 
     #[test]
     fn loc_inactive_reverted_with_clock() {
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
+        loc.change(200, LocAngle::North, true, true);
         loc.revert();
-        loc.last_clock = Some(999);
+        loc.last_clock = 999;
         assert!(!loc.visible());
     }
 
@@ -1602,12 +1700,7 @@ mod tests {
     fn change_loc_updates_type() {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
+        z.locs[0].change(200, LocAngle::North, true, true);
         z.change_loc(0);
         assert!(z.locs[0].is_changed());
         assert_eq!(z.locs[0].id(), 200);
@@ -1617,12 +1710,7 @@ mod tests {
     fn change_loc_queues_add_change_event() {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
+        z.locs[0].change(200, LocAngle::North, true, true);
         z.change_loc(0);
         assert!(
             z.enclosed_events()
@@ -1634,9 +1722,9 @@ mod tests {
     fn change_loc_clears_last_clock() {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
-        z.locs[0].last_clock = Some(999);
+        z.locs[0].last_clock = 999;
         z.change_loc(0);
-        assert_eq!(z.locs[0].last_clock, None);
+        assert_eq!(z.locs[0].last_clock, u64::MAX);
     }
 
     // ---- loc: remove ----
@@ -1661,12 +1749,7 @@ mod tests {
     fn remove_respawn_loc_reverts() {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
+        z.locs[0].change(200, LocAngle::North, true, true);
         z.remove_loc(0);
         assert!(!z.locs[0].is_changed());
         assert_eq!(z.locs[0].id(), 100);
@@ -1687,12 +1770,7 @@ mod tests {
     fn remove_loc_cancels_previous_events() {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
+        z.locs[0].change(200, LocAngle::North, true, true);
         z.change_loc(0);
         assert_eq!(count_enclosed(&z), 1);
         z.remove_loc(0);
@@ -1717,7 +1795,7 @@ mod tests {
     fn get_loc_skips_inactive() {
         let mut z = zone();
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(50);
+        loc.last_clock = 50;
         z.locs.push(loc);
         assert!(z.get_loc(3222, 3222, 100).is_none());
     }
@@ -1733,13 +1811,8 @@ mod tests {
     fn get_loc_by_layer_finds_changed() {
         let mut z = zone();
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
-        loc.last_clock = Some(999);
+        loc.change(200, LocAngle::North, true, true);
+        loc.last_clock = 999;
         z.locs.push(loc);
         assert!(z.get_loc_by_layer(3222, 3222, LocLayer::Ground).is_some());
     }
@@ -1750,12 +1823,12 @@ mod tests {
     fn respawn_loc_reverts_and_clears_clock() {
         let mut z = zone();
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(50);
+        loc.last_clock = 50;
         z.locs.push(loc);
         assert!(!z.locs[0].visible());
         z.respawn_loc(0);
         assert!(z.locs[0].visible());
-        assert_eq!(z.locs[0].last_clock, None);
+        assert_eq!(z.locs[0].last_clock, u64::MAX);
         assert!(!z.locs[0].is_changed());
     }
 
@@ -1763,7 +1836,7 @@ mod tests {
     fn respawn_loc_queues_add_change_event() {
         let mut z = zone();
         let mut loc = respawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(50);
+        loc.last_clock = 50;
         z.locs.push(loc);
         z.respawn_loc(0);
         assert!(
@@ -1781,13 +1854,8 @@ mod tests {
         assert_eq!(z.locs[0].id(), 100);
         assert!(z.locs[0].visible());
 
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
-        z.locs[0].last_clock = Some(50);
+        z.locs[0].change(200, LocAngle::North, true, true);
+        z.locs[0].last_clock = 50;
         z.change_loc(0);
         assert_eq!(z.locs[0].id(), 200);
         assert!(z.locs[0].visible());
@@ -1795,7 +1863,7 @@ mod tests {
 
         z.reset();
         z.locs[0].revert();
-        z.locs[0].last_clock = None;
+        z.locs[0].last_clock = u64::MAX;
         z.change_loc(0);
         assert_eq!(z.locs[0].id(), 100);
         assert!(z.locs[0].visible());
@@ -1809,7 +1877,7 @@ mod tests {
         assert!(z.locs[0].visible());
 
         z.remove_loc(0);
-        z.locs[0].last_clock = Some(50);
+        z.locs[0].last_clock = 50;
         assert!(!z.locs[0].visible());
 
         z.reset();
@@ -1823,20 +1891,15 @@ mod tests {
         let mut z = zone();
         z.locs.push(respawn_loc(3222, 3222, 100));
 
-        z.locs[0].change(
-            200,
-            LocShape::CentrepieceStraight,
-            LocAngle::North,
-            LocLayer::Ground,
-        );
-        z.locs[0].last_clock = Some(50);
+        z.locs[0].change(200, LocAngle::North, true, true);
+        z.locs[0].last_clock = 50;
         z.change_loc(0);
         assert_eq!(z.locs[0].id(), 200);
         assert!(z.locs[0].visible());
 
         z.reset();
         z.remove_loc(0);
-        z.locs[0].last_clock = Some(100);
+        z.locs[0].last_clock = 100;
         assert!(!z.locs[0].visible());
         assert!(!z.locs[0].is_changed());
         assert_eq!(z.locs[0].id(), 100);
@@ -1851,7 +1914,7 @@ mod tests {
     fn despawn_loc_add_then_expire() {
         let mut z = zone();
         let mut loc = despawn_loc(3222, 3222, 100);
-        loc.last_clock = Some(50);
+        loc.last_clock = 50;
         z.add_loc(loc);
         assert_eq!(z.locs.len(), 1);
         assert!(z.locs[0].visible());
@@ -1893,11 +1956,12 @@ mod tests {
     // ---- entity keys ----
 
     #[test]
-    fn obj_entity_key_differs_by_receiver() {
-        let o1 = despawn_obj(3222, 3222, 100, 1);
-        let mut o2 = despawn_obj(3222, 3222, 100, 1);
-        o2.receiver37 = 111;
-        assert_ne!(o1.oid(), o2.oid());
+    fn obj_entity_key_differs_by_slot() {
+        let mut z = zone();
+        z.add_obj(despawn_obj(3222, 3222, 100, 1), Some(111));
+        z.add_obj(despawn_obj(3222, 3222, 100, 1), Some(222));
+        assert_eq!((z.objs[0].slot(), z.objs[1].slot()), (0, 1));
+        assert_ne!(z.objs[0].oid(), z.objs[1].oid());
     }
 
     #[test]
@@ -1916,9 +1980,10 @@ mod tests {
             1,
             EntityLifeTime::Respawn,
             100,
-            LocShape::CentrepieceStraight,
+            LocShape::WallDecorStraightNoOffset,
             LocAngle::North,
-            LocLayer::WallDecor,
+            true,
+            true,
         );
         assert_ne!(l1.lid(), l2.lid());
     }

@@ -92,11 +92,8 @@ impl Engine {
                     } => {
                         let (x, y, z) = (coord.x(), coord.y(), coord.z());
                         let zone = self.zones.zone_mut(x, y, z);
-                        let Some(idx) = zone.locs.iter().position(|l| {
-                            l.coord().x() == x
-                                && l.coord().z() == z
-                                && l.layer() == layer
-                                && l.last_clock == Some(clock)
+                        let Some(idx) = zone.locs.iter().position(|loc| {
+                            loc.is_at(x, z) && loc.layer() == layer && loc.last_clock == clock
                         }) else {
                             continue;
                         };
@@ -106,7 +103,7 @@ impl Engine {
                         } else if !loc.visible() {
                             zone.respawn_loc(idx);
                             let reverted = zone.locs[idx];
-                            apply_loc_collision(self.cache, &reverted, coord, true);
+                            apply_loc_collision(&reverted, coord, true);
                             self.track_zone(x, y, z);
                         } else if loc.is_changed() {
                             self.revert_loc(coord, layer);

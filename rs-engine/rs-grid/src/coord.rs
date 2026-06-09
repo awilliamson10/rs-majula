@@ -443,6 +443,27 @@ impl CoordGrid {
         pos * 2 + size as u16
     }
 
+    /// Packs two zone-local offsets (each `0..=7`) into a single protocol byte:
+    /// the upper nibble holds `x`, the lower nibble holds `z`.
+    ///
+    /// This is the single source of truth for the zone-coord byte layout --
+    /// [`packed_zone_coord`](Self::packed_zone_coord) and the `Loc`/`Obj`
+    /// `packed_zone_coord` helpers all delegate here.
+    #[inline(always)]
+    pub const fn packed_zone_coord(x: u16, z: u16) -> u8 {
+        (((x & 0x7) << 4) as u8) | ((z & 0x7) as u8)
+    }
+
+    /// Returns `true` if the zone-local offsets (`local_x`, `local_z`, each
+    /// `0..=7`) match the low 3 bits of the world coordinate (`x`, `z`) -- i.e.
+    /// they reference the same tile within a single zone.
+    ///
+    /// The single source of truth for `Loc::is_at` / `Obj::is_at`.
+    #[inline(always)]
+    pub const fn local_eq(local_x: u8, local_z: u8, x: u16, z: u16) -> bool {
+        local_x == (x & 0x7) as u8 && local_z == (z & 0x7) as u8
+    }
+
     /// Checks whether another coordinate is within a given Chebyshev distance
     /// on the X-Z plane.
     ///

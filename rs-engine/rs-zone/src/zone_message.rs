@@ -1,5 +1,4 @@
 use rs_io::Packet;
-use rs_pack::types::{LocAngle, LocShape};
 use rs_protocol::network::game::server::ServerProtMessage;
 use rs_protocol::network::game::server::loc_add_change::LocAddChange;
 use rs_protocol::network::game::server::loc_anim::LocAnim;
@@ -99,45 +98,4 @@ impl ZoneMessage {
 fn encode<M: ServerProtMessage>(message: &M, buf: &mut Packet) {
     buf.p1(M::PROT as u8);
     message.encode(buf);
-}
-
-/// Packs tile-local x and z coordinates into a single byte for zone protocol messages.
-///
-/// The zone-local coordinate uses the lower 3 bits of each axis (range 0..7),
-/// packing x into the upper nibble and z into the lower nibble.
-///
-/// # Arguments
-///
-/// * `x` -- The absolute x coordinate; only the lower 3 bits (`x & 7`) are used.
-/// * `z` -- The absolute z coordinate; only the lower 3 bits (`z & 7`) are used.
-///
-/// # Returns
-///
-/// A packed byte: `(x & 7) << 4 | (z & 7)`.
-///
-/// **Called by:** `Zone::add_obj`, `Zone::reveal_obj`, `Zone::remove_obj_at`,
-/// `Zone::respawn_obj`, `Engine` methods for obj/loc/map operations,
-/// `ActivePlayer::update_zones`.
-#[inline]
-pub fn pack_zone_coord(x: u16, z: u16) -> u8 {
-    ((x & 7) << 4) as u8 | (z & 7) as u8
-}
-
-/// Packs a loc shape and angle into a single byte for zone protocol messages.
-///
-/// The shape occupies the upper 6 bits and the angle the lower 2 bits.
-///
-/// # Arguments
-///
-/// * `shape` -- The loc's shape variant (e.g., wall, centrepiece).
-/// * `angle` -- The loc's rotation angle (North, East, South, West).
-///
-/// # Returns
-///
-/// A packed byte: `(shape << 2) | (angle & 3)`.
-///
-/// **Called by:** `Engine` methods for loc merge operations.
-#[inline]
-pub fn pack_shape_angle(shape: LocShape, angle: LocAngle) -> u8 {
-    ((shape as u8) << 2) | (angle as u8 & 3)
 }

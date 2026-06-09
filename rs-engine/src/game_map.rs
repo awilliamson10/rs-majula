@@ -358,7 +358,8 @@ impl GameMap {
                         id as u16,
                         shape,
                         angle,
-                        layer,
+                        loc_type.blockwalk,
+                        loc_type.blockrange,
                     );
 
                     zones
@@ -505,77 +506,36 @@ impl GameMap {
     }
 }
 
-/// Applies or removes collision for a location entity based on its type
-/// definition in the cache.
+/// Applies or removes collision for a location entity based on the collision
+/// flags stored on the loc itself.
 ///
-/// Only modifies collision if the loc type has `blockwalk` set to `true`.
+/// Only modifies collision if the loc has `blockwalk` set. The `blockwalk` and
+/// `blockrange` flags are bit-packed into the loc (see [`Loc`]), so no cache
+/// lookup is needed -- a [`revert`](Loc::revert) restores them along with the
+/// rest of the base state.
 ///
 /// # Arguments
-/// * `cache` - The game cache for loc type lookups.
 /// * `loc` - The location entity whose collision is being changed.
 /// * `coord` - The tile coordinate of the location.
 /// * `add` - `true` to add collision, `false` to remove it.
 ///
 /// # Call Stack
 /// **Calls:** [`change_loc_collision`]
-pub fn apply_loc_collision(cache: &CacheStore, loc: &Loc, coord: CoordGrid, add: bool) {
-    if let Some(lt) = cache.locs.get_by_id(loc.id())
-        && lt.blockwalk
-    {
-        change_loc_collision(
-            loc.shape(),
-            loc.layer(),
-            loc.angle(),
-            lt.blockrange,
-            lt.length,
-            lt.width,
-            lt.active,
-            coord,
-            add,
-        );
+pub fn apply_loc_collision(loc: &Loc, coord: CoordGrid, add: bool) {
+    if !loc.blockwalk() {
+        return;
     }
-}
-
-/// Applies or removes collision for a location by its type ID and
-/// shape/angle/layer parameters, looking up the type definition in the cache.
-///
-/// Only modifies collision if the loc type has `blockwalk` set to `true`.
-///
-/// # Arguments
-/// * `cache` - The game cache for loc type lookups.
-/// * `id` - The loc type ID.
-/// * `shape` - The loc shape (e.g. wall, ground decor).
-/// * `layer` - The loc layer derived from the shape.
-/// * `angle` - The rotation angle of the loc.
-/// * `coord` - The tile coordinate of the location.
-/// * `add` - `true` to add collision, `false` to remove it.
-///
-/// # Call Stack
-/// **Calls:** [`change_loc_collision`]
-pub fn apply_collision_by_id(
-    cache: &CacheStore,
-    id: u16,
-    shape: LocShape,
-    layer: LocLayer,
-    angle: LocAngle,
-    coord: CoordGrid,
-    add: bool,
-) {
-    if let Some(lt) = cache.locs.get_by_id(id)
-        && lt.blockwalk
-    {
-        change_loc_collision(
-            shape,
-            layer,
-            angle,
-            lt.blockrange,
-            lt.length,
-            lt.width,
-            lt.active,
-            coord,
-            add,
-        );
-    }
+    change_loc_collision(
+        loc.shape(),
+        loc.layer(),
+        loc.angle(),
+        loc.blockrange(),
+        loc.length(),
+        loc.width(),
+        Some(true),
+        coord,
+        add,
+    );
 }
 
 /// Adds or removes collision flags for a single location on the collision
@@ -599,8 +559,7 @@ pub fn apply_collision_by_id(
 ///   `rsmod::change_floor` depending on the layer.
 ///
 /// # Call Stack
-/// **Called by:** [`GameMap::load_locations`], [`apply_loc_collision`],
-/// [`apply_collision_by_id`]
+/// **Called by:** [`GameMap::load_locations`], [`apply_loc_collision`]
 #[allow(clippy::too_many_arguments)]
 pub fn change_loc_collision(
     shape: LocShape,

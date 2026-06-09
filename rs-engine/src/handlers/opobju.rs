@@ -67,13 +67,11 @@ impl ClientGameHandler for OpObjU {
             active.unset_map_flag();
             return Ok(());
         };
-        let count = zone.objs[idx].count;
 
-        let coord = CoordGrid::new(self.x, y, self.z);
         let target = InteractionTarget::Obj {
-            coord,
+            coord: CoordGrid::new(self.x, y, self.z),
             id: self.obj,
-            count,
+            count: zone.objs[idx].count(),
         };
 
         let Some(use_interface) = cache().interfaces.get_by_id(self.com) else {

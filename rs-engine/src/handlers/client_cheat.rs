@@ -272,31 +272,6 @@ fn cheat_developer(
             Ok(())
         }
         "bots" => cheat_spawn_bots(active),
-        "pickup" => {
-            let coord = active.player.pathing.coord;
-            let user37 = active.uid().username37();
-            let zone = engine_mut().zones.zone_mut(coord.x(), coord.y(), coord.z());
-            let objs: Vec<(CoordGrid, u16, u64)> = zone
-                .objs
-                .iter()
-                .filter(|o| {
-                    o.coord().in_distance(coord, 1)
-                        && (o.receiver37 == rs_entity::obj::NO_RECEIVER || o.receiver37 == user37)
-                })
-                .map(|o| (o.coord(), o.id(), o.receiver37))
-                .collect();
-            let count = objs.len();
-            for (obj_coord, id, receiver37) in objs {
-                let r = if receiver37 == rs_entity::obj::NO_RECEIVER {
-                    None
-                } else {
-                    Some(receiver37)
-                };
-                engine_mut().remove_obj(obj_coord, id, r, 100);
-            }
-            active.message_game(&format!("Picked up {} objs.", count));
-            Ok(())
-        }
         _ => Ok(()),
     }
 }

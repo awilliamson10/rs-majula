@@ -116,13 +116,9 @@ impl Engine {
 
             h = self.obj_delayed_queue.next();
             let request = self.obj_delayed_queue.unlink(idx);
-            let obj = Obj::new(
-                CoordGrid::from(request.coord),
-                EntityLifeTime::Despawn,
-                request.id,
-                request.count,
-            );
-            engine_mut().add_obj(obj, request.receiver37, request.duration);
+            let coord = CoordGrid::from(request.coord);
+            let obj = Obj::new(coord, EntityLifeTime::Despawn, request.id, request.count);
+            engine_mut().add_obj(coord, obj, request.receiver37, request.duration);
         }
     }
 

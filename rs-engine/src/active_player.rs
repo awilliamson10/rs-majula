@@ -105,8 +105,8 @@ use rs_vm::engine::{ScriptEngine, ScriptPlayer, cache};
 use rs_vm::state::ScriptState;
 use rs_vm::subject::ScriptSubject;
 use rs_vm::trigger::ServerTriggerType;
+use rs_zone::ZoneMessage;
 use rs_zone::zone_map::ZoneMap;
-use rs_zone::{ZoneMessage, pack_zone_coord};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use tracing::{error, warn};
@@ -2032,9 +2032,9 @@ impl EnginePlayer for ActivePlayer {
                                 wrote_follows = true;
                             }
                             self.write(ObjAdd {
-                                coord: pack_zone_coord(obj.coord().x(), obj.coord().z()),
+                                coord: obj.packed_zone_coord(),
                                 id: obj.id(),
-                                count: obj.count as u16,
+                                count: obj.count() as u16,
                             });
                         }
 

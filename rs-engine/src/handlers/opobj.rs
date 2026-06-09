@@ -179,11 +179,10 @@ fn handle(
         _ => ServerTriggerType::ApObj5,
     };
 
-    let coord = CoordGrid::new(x, y, z);
     let target = InteractionTarget::Obj {
-        coord,
+        coord: CoordGrid::new(x, y, z),
         id: obj_id,
-        count: obj.count,
+        count: obj.count(),
     };
 
     active.clear_pending_action()?;

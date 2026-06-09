@@ -7,4 +7,4 @@ pub mod zone_message;
 pub use zone::Zone;
 pub use zone_event::ZoneEvent;
 pub use zone_event_type::ZoneEventType;
-pub use zone_message::{ZoneMessage, pack_shape_angle, pack_zone_coord};
+pub use zone_message::ZoneMessage;

@@ -3,7 +3,7 @@ use crate::active_player::{ActivePlayer, EnginePlayer};
 use crate::clients::client_db::{DbRequest, DbResponse};
 use crate::clients::client_ether::{EtherInbound, EtherOutbound};
 use crate::clients::client_game::ClientHandle;
-use crate::game_map::{GameMap, apply_collision_by_id, apply_loc_collision};
+use crate::game_map::{GameMap, apply_loc_collision};
 use crate::info::{NpcInfo, NpcSnapshot, PlayerInfo, PlayerSnapshot};
 use crate::phases::shared::panic_message;
 use crate::player_save::*;
@@ -33,7 +33,7 @@ use rs_vm::subject::ScriptSubject;
 use rs_vm::trigger::ServerTriggerType;
 use rs_vm::{ScriptError, ops, vm};
 use rs_zone::zone_map::ZoneMap;
-use rs_zone::{ZoneEventType, ZoneMessage, pack_zone_coord};
+use rs_zone::{ZoneEventType, ZoneMessage};
 use rsmod::rsmod::collision::collision_strategy::CollisionType;
 use rsmod::rsmod::flag::collision_flag::CollisionFlag;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1345,7 +1345,13 @@ impl Engine {
     ///
     /// **Called by:** `ScriptEngine::add_obj`, world phase obj-delayed processing.
     /// **Calls:** `merge_obj`, `schedule_zone_event`, `track_zone`.
-    pub fn add_obj(&mut self, mut obj: Obj, receiver37: Option<u64>, duration: u64) {
+    pub fn add_obj(
+        &mut self,
+        coord: CoordGrid,
+        mut obj: Obj,
+        receiver37: Option<u64>,
+        duration: u64,
+    ) {
         let stackable = self
             .cache
             .objs
@@ -1355,7 +1361,7 @@ impl Engine {
         if stackable
             && obj.lifetime() == EntityLifeTime::Despawn
             && let Some(r) = receiver37
-            && self.merge_obj(&obj, r, duration)
+            && self.merge_obj(coord, &obj, r, duration)
         {
             return;
         }
@@ -1370,7 +1376,7 @@ impl Engine {
                 self.schedule_zone_event(
                     reveal_clock,
                     PendingZoneEvent::ObjReveal {
-                        coord: obj.coord(),
+                        coord,
                         id: obj.id(),
                         receiver37: r,
                     },
@@ -1381,13 +1387,13 @@ impl Engine {
         self.schedule_zone_event(
             clock,
             PendingZoneEvent::ObjDelete {
-                coord: obj.coord(),
+                coord,
                 id: obj.id(),
                 clock,
             },
         );
 
-        let (ox, oy, oz) = (obj.coord().x(), obj.coord().y(), obj.coord().z());
+        let (ox, oy, oz) = (coord.x(), coord.y(), coord.z());
         let zone = self.zones.zone_mut(ox, oy, oz);
         zone.add_obj(obj, receiver37);
         self.track_zone(ox, oy, oz);
@@ -1419,42 +1425,38 @@ impl Engine {
     /// - Queues an `ObjCount` zone event for client updates.
     /// - Schedules a new `ObjDelete` event for the merged stack.
     /// - Marks the zone as dirty.
-    fn merge_obj(&mut self, obj: &Obj, receiver: u64, duration: u64) -> bool {
-        let zone = self
-            .zones
-            .zone_mut(obj.coord().x(), obj.coord().y(), obj.coord().z());
-        let Some(idx) =
-            zone.get_obj_of_receiver(obj.coord().x(), obj.coord().z(), obj.id(), receiver)
-        else {
+    fn merge_obj(&mut self, coord: CoordGrid, obj: &Obj, receiver: u64, duration: u64) -> bool {
+        let zone = self.zones.zone_mut(coord.x(), coord.y(), coord.z());
+        let Some(idx) = zone.get_obj_of_receiver(coord.x(), coord.z(), obj.id(), receiver) else {
             return false;
         };
         if zone.objs[idx].lifetime() != EntityLifeTime::Despawn {
             return false;
         }
-        let next_count = obj.count + zone.objs[idx].count;
+        let next_count = obj.count() + zone.objs[idx].count();
         if next_count > STACK_LIMIT {
             return false;
         }
 
-        let old_count = zone.objs[idx].count;
-        zone.objs[idx].count = next_count;
+        let old_count = zone.objs[idx].count();
+        zone.objs[idx].set_count(next_count);
         let clock = self.clock + duration;
         zone.objs[idx].last_clock = clock;
 
         let oid = zone.objs[idx].oid();
         let message = ZoneMessage::ObjCount(ObjCount {
-            coord: pack_zone_coord(obj.coord().x(), obj.coord().z()),
+            coord: obj.packed_zone_coord(),
             id: obj.id(),
             old_count: old_count.clamp(0, 65535) as u16,
             new_count: next_count.clamp(0, 65535) as u16,
         });
         zone.queue_event(Some(oid), ZoneEventType::Follows, Some(receiver), message);
-        self.track_zone(obj.coord().x(), obj.coord().y(), obj.coord().z());
+        self.track_zone(coord.x(), coord.y(), coord.z());
 
         self.schedule_zone_event(
             clock,
             PendingZoneEvent::ObjDelete {
-                coord: obj.coord(),
+                coord,
                 id: obj.id(),
                 clock,
             },
@@ -1544,7 +1546,7 @@ impl Engine {
     /// # Call Stack
     ///
     /// **Called by:** `ScriptEngine::add_or_change_loc`, loc interaction scripts.
-    /// **Calls:** `apply_loc_collision`, `apply_collision_by_id`, `schedule_zone_event`,
+    /// **Calls:** `apply_loc_collision`, `schedule_zone_event`,
     /// `track_zone`.
     pub fn add_or_change_loc(
         &mut self,
@@ -1556,26 +1558,35 @@ impl Engine {
     ) {
         let layer = shape.layer();
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
+        let zone = self.zones.zone_mut(x, y, z);
 
-        let existing = self
-            .zones
-            .zone_mut(x, y, z)
+        let existing = zone
             .locs
             .iter()
-            .position(|l| l.coord().x() == x && l.coord().z() == z && l.layer() == layer);
+            .position(|loc| loc.is_at(x, z) && loc.layer() == layer);
 
-        let c = cache();
+        let cache = cache();
 
         if let Some(idx) = existing {
-            let old_loc = self.zones.zone_mut(x, y, z).locs[idx];
+            let old_loc = zone.locs[idx];
             if old_loc.visible() {
-                apply_loc_collision(c, &old_loc, coord, false);
+                apply_loc_collision(&old_loc, coord, false);
             }
 
-            let zone = self.zones.zone_mut(x, y, z);
-            zone.locs[idx].change(id, shape, angle, layer);
+            let (blockwalk, blockrange) = cache
+                .locs
+                .get_by_id(id)
+                .map(|lt| (lt.blockwalk, lt.blockrange))
+                .unwrap_or((false, false));
 
-            apply_collision_by_id(c, id, shape, layer, angle, coord, true);
+            zone.locs[idx].change(id, angle, blockwalk, blockrange);
+
+            // Apply collision from the *stored* loc. The change above stored the new
+            // id/angle/flags; only shape is shared (a change can't alter it). Reading
+            // the loc back keeps the footprint added here identical to the one a later
+            // revert/remove will remove from the same loc.
+            let updated = zone.locs[idx];
+            apply_loc_collision(&updated, coord, true);
 
             zone.change_loc(idx);
 
@@ -1583,7 +1594,7 @@ impl Engine {
             let is_despawn = zone.locs[idx].lifetime() == EntityLifeTime::Despawn;
             if is_changed || is_despawn {
                 let clock = self.clock + duration;
-                zone.locs[idx].last_clock = Some(clock);
+                zone.locs[idx].last_clock = clock;
                 self.schedule_zone_event(
                     clock,
                     PendingZoneEvent::LocDelete {
@@ -1593,16 +1604,17 @@ impl Engine {
                     },
                 );
             } else {
-                zone.locs[idx].last_clock = None;
+                zone.locs[idx].last_clock = u64::MAX;
             }
             self.track_zone(x, y, z);
         } else {
-            let (width, length) = self
+            let (width, length, blockwalk, blockrange) = self
                 .cache
                 .locs
                 .get_by_id(id)
-                .map(|lt| (lt.width, lt.length))
-                .unwrap_or((1, 1));
+                .map(|lt| (lt.width, lt.length, lt.blockwalk, lt.blockrange))
+                .unwrap_or((1, 1, false, false));
+
             let loc = Loc::new(
                 coord,
                 width,
@@ -1611,17 +1623,24 @@ impl Engine {
                 id,
                 shape,
                 angle,
-                layer,
+                blockwalk,
+                blockrange,
             );
-            apply_loc_collision(c, &loc, coord, true);
 
-            self.zones.zone_mut(x, y, z).add_loc(loc);
+            apply_loc_collision(&loc, coord, true);
+
+            // `add_loc` evicts the oldest despawn loc when the zone is at the loc
+            // cap; clear that evicted loc's collision (owned by the engine, not
+            // the zone) at its own tile.
+            if let Some(evicted) = zone.add_loc(loc) {
+                apply_loc_collision(&evicted, evicted.world_coord(zone.coord), false);
+            }
             self.track_zone(x, y, z);
 
             if duration > 0 {
                 let clock = self.clock + duration;
                 if let Some(l) = self.zones.zone_mut(x, y, z).locs.last_mut() {
-                    l.last_clock = Some(clock);
+                    l.last_clock = clock;
                 }
                 self.schedule_zone_event(
                     clock,
@@ -1661,22 +1680,25 @@ impl Engine {
     /// **Calls:** `apply_loc_collision`, `schedule_zone_event`, `track_zone`.
     pub fn remove_loc(&mut self, coord: CoordGrid, layer: LocLayer, duration: u64) {
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
-        let c = cache();
+        let zone = self.zones.zone_mut(x, y, z);
 
-        let Some(idx) = self.zones.zone_mut(x, y, z).locs.iter().position(|l| {
-            l.coord().x() == x && l.coord().z() == z && l.layer() == layer && l.visible()
-        }) else {
+        let Some(idx) = zone.get_loc_by_layer(x, z, layer) else {
             return;
         };
 
-        let loc = self.zones.zone_mut(x, y, z).locs[idx];
-        apply_loc_collision(c, &loc, coord, false);
+        // Copy the loc out before removal: `remove_loc` swap-removes despawn locs
+        // (shrinking `locs`), so `zone.locs[idx]` is invalid afterward. Respawn
+        // locs are reverted in place, so indexing `locs[idx]` stays valid in the
+        // respawn branch below.
+        let loc = zone.locs[idx];
 
-        self.zones.zone_mut(x, y, z).remove_loc(idx);
+        apply_loc_collision(&loc, coord, false);
+
+        zone.remove_loc(idx);
 
         if loc.lifetime() == EntityLifeTime::Respawn && duration > 0 {
             let clock = self.clock + duration;
-            self.zones.zone_mut(x, y, z).locs[idx].last_clock = Some(clock);
+            zone.locs[idx].last_clock = clock;
             self.schedule_zone_event(
                 clock,
                 PendingZoneEvent::LocDelete {
@@ -1710,24 +1732,21 @@ impl Engine {
     /// - Marks the zone as dirty.
     pub fn revert_loc(&mut self, coord: CoordGrid, layer: LocLayer) {
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
-        let c = cache();
         let zone = self.zones.zone_mut(x, y, z);
-        let Some(idx) = zone.locs.iter().position(|l| {
-            l.coord().x() == x && l.coord().z() == z && l.layer() == layer && l.visible()
-        }) else {
+
+        let Some(idx) = zone.get_loc_by_layer(x, z, layer) else {
             return;
         };
 
-        let loc = zone.locs[idx];
-        apply_loc_collision(c, &loc, coord, false);
+        apply_loc_collision(&zone.locs[idx], coord, false);
 
         zone.locs[idx].revert();
 
         let reverted = zone.locs[idx];
-        apply_loc_collision(c, &reverted, coord, true);
+        apply_loc_collision(&reverted, coord, true);
 
         zone.change_loc(idx);
-        zone.locs[idx].last_clock = None;
+        zone.locs[idx].last_clock = u64::MAX;
         self.track_zone(x, y, z);
     }
 }
@@ -2612,8 +2631,13 @@ impl ScriptEngine for Engine {
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Obj::new`, `Engine::add_obj` (inherent)
     fn add_obj(&mut self, coord: u32, id: u16, count: u32, receiver37: Option<u64>, duration: u64) {
-        let obj = Obj::new(CoordGrid::from(coord), EntityLifeTime::Despawn, id, count);
-        self.add_obj(obj, receiver37, duration);
+        let coord = CoordGrid::from(coord);
+        self.add_obj(
+            coord,
+            Obj::new(coord, EntityLifeTime::Despawn, id, count),
+            receiver37,
+            duration,
+        );
     }
 
     /// Enqueues a ground object to be spawned after a delay.
@@ -2666,9 +2690,9 @@ impl ScriptEngine for Engine {
         let idx = zone.get_obj(coord.x(), coord.z(), id, receiver37)?;
         let obj = &zone.objs[idx];
         Some(ObjRef {
-            coord: obj.coord().packed(),
+            coord: obj.world_coord(zone.coord).packed(),
             id: obj.id(),
-            count: obj.count,
+            count: obj.count(),
         })
     }
 
@@ -2684,10 +2708,10 @@ impl ScriptEngine for Engine {
         };
         zone.objs
             .iter()
-            .map(|o| ObjRef {
-                coord: o.coord().packed(),
-                id: o.id(),
-                count: o.count,
+            .map(|obj| ObjRef {
+                coord: obj.world_coord(zone.coord).packed(),
+                id: obj.id(),
+                count: obj.count(),
             })
             .collect()
     }
@@ -2717,13 +2741,13 @@ impl ScriptEngine for Engine {
         };
         zone.locs
             .iter()
-            .filter(|l| l.visible())
-            .map(|l| LocRef {
-                coord: l.coord().packed(),
-                id: l.id(),
-                shape: l.shape() as u8,
-                angle: l.angle() as u8,
-                layer: l.layer() as u8,
+            .filter(|loc| loc.visible())
+            .map(|loc| LocRef {
+                coord: loc.world_coord(zone.coord).packed(),
+                id: loc.id(),
+                shape: loc.shape() as u8,
+                angle: loc.angle() as u8,
+                layer: loc.layer() as u8,
             })
             .collect()
     }
@@ -2748,13 +2772,13 @@ impl ScriptEngine for Engine {
     fn find_loc(&self, x: u16, z: u16, y: u8, id: u16) -> Option<LocRef> {
         let zone = self.zones.zone(x, y, z)?;
         let idx = zone.get_loc(x, z, id)?;
-        let l = &zone.locs[idx];
+        let loc = &zone.locs[idx];
         Some(LocRef {
-            coord: l.coord().packed(),
-            id: l.id(),
-            shape: l.shape() as u8,
-            angle: l.angle() as u8,
-            layer: l.layer() as u8,
+            coord: loc.world_coord(zone.coord).packed(),
+            id: loc.id(),
+            shape: loc.shape() as u8,
+            angle: loc.angle() as u8,
+            layer: loc.layer() as u8,
         })
     }
 
@@ -2812,14 +2836,14 @@ impl ScriptEngine for Engine {
             .zone_mut(x, y, z)
             .locs
             .iter()
-            .position(|l| l.coord().x() == x && l.coord().z() == z && l.layer() == layer);
+            .position(|l| l.is_at(x, z) && l.layer() == layer);
 
         if let Some(idx) = existing {
-            let zone_coord = pack_zone_coord(x, z);
+            let coord = CoordGrid::packed_zone_coord(x, z);
             let shape_angle = ((shape as u8) << 2) | (angle as u8 & 3);
             let message =
                 ZoneMessage::LocMerge(rs_protocol::network::game::server::loc_merge::LocMerge {
-                    coord: zone_coord,
+                    coord,
                     shape_angle,
                     id,
                     start,
@@ -2889,7 +2913,7 @@ impl ScriptEngine for Engine {
         peak: u8,
         arc: u8,
     ) {
-        let coord = pack_zone_coord(x, z);
+        let coord = CoordGrid::packed_zone_coord(x, z);
         let dx = (dst_x as i32 - x as i32) as i8;
         let dz = (dst_z as i32 - z as i32) as i8;
         let message = ZoneMessage::MapProjAnim(
@@ -2918,7 +2942,7 @@ impl ScriptEngine for Engine {
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Zone::anim_map`, `Engine::track_zone`
     fn anim_map(&mut self, y: u8, x: u16, z: u16, spotanim: u16, height: u8, delay: u16) {
-        let coord = pack_zone_coord(x, z);
+        let coord = CoordGrid::packed_zone_coord(x, z);
         let message = ZoneMessage::MapAnim(rs_protocol::network::game::server::map_anim::MapAnim {
             coord,
             spotanim,
@@ -2977,7 +3001,7 @@ impl ScriptEngine for Engine {
                         continue;
                     }
 
-                    let loc_coord = loc.coord();
+                    let loc_coord = loc.world_coord(zone.coord);
                     let (width, length) = match loc.angle() {
                         LocAngle::North | LocAngle::South => (loc.length(), loc.width()),
                         _ => (loc.width(), loc.length()),
