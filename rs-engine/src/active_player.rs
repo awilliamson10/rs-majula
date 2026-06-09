@@ -1978,9 +1978,12 @@ impl EnginePlayer for ActivePlayer {
     /// Sends zone updates for all active zones in the player's build area.
     ///
     /// For newly loaded zones, sends a full zone clear followed by all
-    /// visible objects and changed/despawned locations. For all zones,
-    /// sends any shared (enclosed) byte events and follows-type events
-    /// visible to this player.
+    /// visible objects and changed/despawned locations -- a complete snapshot.
+    /// For already-loaded zones, sends only this tick's incremental shared
+    /// (enclosed) and follows-type events visible to this player. The two are
+    /// mutually exclusive per zone: a newly-loaded zone's snapshot already
+    /// reflects this tick's changes, so replaying its delta events too would
+    /// double-send them (a duplicate `ObjAdd`/loc update on the entry tick).
     ///
     /// # Arguments
     /// * `zones` - The zone map containing zone state and events.
@@ -2060,16 +2063,16 @@ impl EnginePlayer for ActivePlayer {
                                 });
                             }
                         }
-                    }
+                    } else {
+                        if let Some(bytes) = zone.shared_bytes() {
+                            self.write(UpdateZonePartialEnclosed { x, z, bytes });
+                        }
 
-                    if let Some(bytes) = zone.shared_bytes() {
-                        self.write(UpdateZonePartialEnclosed { x, z, bytes });
-                    }
-
-                    if zone.has_follows_events() {
-                        self.write(UpdateZonePartialFollows { x, z });
-                        for message in zone.visible_follows_events(user37) {
-                            self.write_zone_message(message);
+                        if zone.has_follows_events() {
+                            self.write(UpdateZonePartialFollows { x, z });
+                            for message in zone.visible_follows_events(user37) {
+                                self.write_zone_message(message);
+                            }
                         }
                     }
                 }
