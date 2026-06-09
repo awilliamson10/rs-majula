@@ -211,6 +211,14 @@ fn next_free_id(cursor: u16, upper: u16, lower: u16, is_free: impl Fn(u16) -> bo
     (lower..=cursor).find(|&i| is_free(i))
 }
 
+/// Whether a privately-dropped obj should ever be revealed to all players.
+///
+/// Untradeable objs are never revealed (they stay receiver-only until they
+/// despawn); members objs are revealed only on a members world.
+const fn obj_revealable(tradeable: bool, members: bool, world_members: bool) -> bool {
+    tradeable && (!members || world_members)
+}
+
 pub struct PlayerList {
     pub players: Vec<Option<ActivePlayer>>,
     pub processing: HashTable<u16>,
@@ -1352,11 +1360,9 @@ impl Engine {
         receiver37: Option<u64>,
         duration: u64,
     ) {
-        let stackable = self
-            .cache
-            .objs
-            .get_by_id(obj.id())
-            .is_some_and(|t| t.stackable);
+        let obj_type = self.cache.objs.get_by_id(obj.id());
+
+        let stackable = obj_type.is_some_and(|t| t.stackable);
 
         if stackable
             && obj.lifetime() == EntityLifeTime::Despawn
@@ -1372,7 +1378,11 @@ impl Engine {
             obj.receiver37 = r;
             let reveal_clock = self.clock + REVEAL_TICKS;
             obj.reveal = reveal_clock;
-            if reveal_clock < clock {
+
+            let revealable =
+                obj_type.is_some_and(|t| obj_revealable(t.tradeable, t.members, self.members));
+
+            if revealable && reveal_clock < clock {
                 self.schedule_zone_event(
                     reveal_clock,
                     PendingZoneEvent::ObjReveal {
