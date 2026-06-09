@@ -45,7 +45,7 @@ pub struct Zone {
     pub locs: Vec<Loc>,
     pub objs: Vec<Obj>,
     events: Vec<ZoneEvent>,
-    shared: Option<Vec<u8>>,
+    shared: Vec<u8>,
 }
 
 impl Zone {
@@ -82,7 +82,7 @@ impl Zone {
             locs: Vec::new(),
             objs: Vec::new(),
             events: Vec::new(),
-            shared: None,
+            shared: Vec::new(),
         }
     }
 
@@ -282,11 +282,12 @@ impl Zone {
     /// `self.shared`. This buffer can then be sent to every player observing
     /// the zone without re-serializing per player.
     ///
-    /// If there are no enclosed events, `self.shared` remains `None`.
+    /// If there are no enclosed events, `self.shared` is left empty.
     ///
     /// # Side Effects
     ///
-    /// Sets `self.shared` to `Some(bytes)` if there are enclosed events.
+    /// Fills `self.shared` with the serialized enclosed-event bytes (reusing its
+    /// allocation from previous ticks), or empties it if there are none.
     ///
     /// **Called by:** `Engine::compute_zone_shared` during the zone phase.
     ///
@@ -300,18 +301,20 @@ impl Zone {
             .sum();
 
         if len == 0 {
+            self.shared.clear();
             return;
         }
 
-        let mut buf = Packet::new(len);
+        let mut buf = std::mem::take(&mut self.shared);
+        buf.resize(len, 0);
+        let mut packet = Packet::from(buf);
         for event in &self.events {
             if event.event_type != ZoneEventType::Enclosed {
                 continue;
             }
-            event.message.encode_zone(&mut buf);
+            event.message.encode_zone(&mut packet);
         }
-
-        self.shared = Some(buf.data[..buf.pos].to_vec());
+        self.shared = packet.data;
     }
 
     /// Returns the pre-serialized enclosed event bytes, if any were computed.
@@ -325,7 +328,11 @@ impl Zone {
     /// **Called by:** `ActivePlayer::update_zones` to append shared zone data
     /// to each observing player's output buffer.
     pub fn shared_bytes(&self) -> Option<&[u8]> {
-        self.shared.as_deref()
+        if self.shared.is_empty() {
+            None
+        } else {
+            Some(&self.shared)
+        }
     }
 
     /// Returns `true` if this zone has any pending follows (player-targeted) events.
@@ -432,12 +439,12 @@ impl Zone {
     ///
     /// # Side Effects
     ///
-    /// - Sets `self.shared` to `None`.
+    /// - Clears `self.shared` (retaining its allocation for reuse).
     /// - Clears `self.events`.
     ///
     /// **Called by:** The engine's tick reset phase.
     pub fn reset(&mut self) {
-        self.shared = None;
+        self.shared.clear();
         self.events.clear();
     }
 
