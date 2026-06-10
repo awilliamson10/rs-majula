@@ -1,3 +1,5 @@
+include!(concat!(env!("OUT_DIR"), "/level_xp.rs"));
+
 /// A fixed-size collection of combat stats with current levels, base levels,
 /// experience points, and change-tracking snapshots.
 ///
@@ -6,6 +8,7 @@
 /// The `xp` array tracks cumulative experience per stat (used by players,
 /// zeroed for NPCs). The `last_xp` and `last_levels` arrays track the
 /// previous tick's values for client delta transmission.
+
 #[derive(Debug, Clone)]
 pub struct Stats<const N: usize> {
     pub levels: [u8; N],
@@ -159,41 +162,30 @@ impl<const N: usize> Stats<N> {
     }
 }
 
-/// Computes the level for a given experience total (stored at 10× real XP)
-/// using the RuneScape experience curve. Returns a value between 1 and 99.
+/// Returns the level for a given experience total (stored at 10× real XP).
+///
+/// Binary search over the precomputed [`LEVEL_XP`] thresholds: the
+/// level is the count of thresholds the experience has reached or passed
+/// (clamped to a minimum of 1).
 pub fn get_level_by_exp(exp: i32) -> u8 {
-    let mut acc: i32 = 0;
-    for lvl in 1..99 {
-        acc += ((lvl as f64) + 2.0_f64.powf(lvl as f64 / 7.0) * 300.0).floor() as i32;
-        if exp >= (acc / 4) * 10 {
-            if lvl + 1 >= 99 {
-                return 99;
-            }
-        } else {
-            return lvl as u8;
-        }
-    }
-    1
+    LEVEL_XP
+        .partition_point(|&threshold| threshold <= exp)
+        .max(1) as u8
 }
 
-/// Computes the minimum total experience required to reach the given level.
+/// Returns the minimum experience (stored at 10× real XP) required to reach the
+/// given level.
 ///
-/// Uses the standard RuneScape experience curve formula.
+/// O(1) lookup in [`LEVEL_XP`]. Levels at or below 1 require 0; levels above 99
+/// are clamped to the level-99 requirement.
 ///
 /// # Arguments
 /// * `level` - The target level (1..=99). Level 1 returns 0.
-///
-/// # Returns
-/// The cumulative experience needed to reach `level`, at 10× real XP.
 pub fn get_exp_by_level(level: u8) -> i32 {
     if level <= 1 {
         return 0;
     }
-    let mut acc: i32 = 0;
-    for lvl in 1..level as u32 {
-        acc += ((lvl as f64) + 2.0_f64.powf(lvl as f64 / 7.0) * 300.0).floor() as i32;
-    }
-    (acc / 4) * 10
+    LEVEL_XP[(level as usize - 1).min(LEVEL_XP.len() - 1)]
 }
 
 #[cfg(test)]
