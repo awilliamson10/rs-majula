@@ -951,7 +951,7 @@ impl ActivePlayer {
         self.write(
             rs_protocol::network::game::server::update_stat::UpdateStat {
                 stat: stat as u8,
-                exp: self.player.stats.xp[stat],
+                exp: self.player.stats.xp[stat] / 10,
                 lvl: self.player.stats.levels[stat],
             },
         );

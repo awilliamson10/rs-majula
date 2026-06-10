@@ -15,7 +15,7 @@ pub struct UpdateStat {
 impl ServerProtMessage for UpdateStat {
     fn encode(&self, buf: &mut Packet) {
         buf.p1(self.stat);
-        buf.p4(self.exp / 10);
+        buf.p4(self.exp);
         buf.p1(self.lvl);
     }
 
