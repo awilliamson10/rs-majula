@@ -434,8 +434,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2048
         active_player_mut!(m, IF_SETTAB => |s, player| {
             let tab = s.pop_int_as::<u8>()?;
-            let com = s.pop_int_as::<u16>()?;
-            player.if_settab(com, tab);
+            // com can be null for example: tutorial island purposes.
+            let com = s.pop_int();
+            player.if_settab(com as u16, tab);
         });
 
         // 2049
