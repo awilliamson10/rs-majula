@@ -444,6 +444,7 @@ pub struct Engine {
     pub db_ready: bool,
     pub pending_logins: Vec<PendingLogin>,
     pub random: JavaRandom,
+    pub vars: VarSet,
     /// A reusable [`ScriptState`] kept alive between script invocations to
     /// avoid repeated heap allocations for the fixed-size stacks (int_stack,
     /// string_stack) and frame stacks. Taken before each `run_script_inner`
@@ -518,6 +519,8 @@ impl Engine {
         let mut zones = ZoneMap::new();
         let spawned_npcs = GameMap::load(members, cache, &mut zones);
 
+        let vars = VarSet::new(cache.varss.types.iter().map(|v| v.var_type));
+
         let (clock_rate_tx, clock_rate_rx) = channel(600);
 
         let mut engine = Self {
@@ -555,6 +558,7 @@ impl Engine {
             db_ready: false,
             pending_logins: Vec::new(),
             random: JavaRandom::new(1084838400000),
+            vars,
             reusable_script: None,
         };
         for npc in spawned_npcs {
@@ -3122,6 +3126,26 @@ impl ScriptEngine for Engine {
     fn map_indoors(&self, coord: CoordGrid) -> bool {
         rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::Roof as u32)
     }
+
+    /// Reads a shared variable (vars) by its definition ID.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptEngine` trait
+    /// **Calls:** `VarSet::get`
+    fn get_var(&self, id: u16) -> VarValue {
+        self.vars.get(id).clone()
+    }
+
+    /// Writes a shared variable (vars).
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptEngine` trait
+    /// **Calls:** `VarSet::set`
+    fn set_var(&mut self, id: u16, value: VarValue) {
+        self.vars.set(id, value.clone());
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -3296,7 +3320,7 @@ impl ScriptPlayer for ActivePlayer {
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `VarSet::get`
     fn get_var(&self, id: u16) -> VarValue {
-        self.player.varps.get(id).clone()
+        self.player.vars.get(id).clone()
     }
 
     /// Writes a player variable (varp) and optionally transmits the change to the client.

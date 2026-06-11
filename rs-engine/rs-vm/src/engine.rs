@@ -405,6 +405,22 @@ pub trait ScriptEngine {
     /// `true` if there is `CollisionFlag::Roof` on it.
     /// `false` if there is not `CollisionFlag::Roof` on it.
     fn map_indoors(&self, coord: CoordGrid) -> bool;
+
+    /// Reads a shared variable (vars) by its definition ID.
+    ///
+    /// # Arguments
+    /// * `id` - The vars definition ID.
+    ///
+    /// # Returns
+    /// The current [`VarValue`] of the variable.
+    fn get_var(&self, id: u16) -> VarValue;
+
+    /// Writes a shared variable (vars).
+    ///
+    /// # Arguments
+    /// * `id` - The vars definition ID.
+    /// * `value` - The new value to set.
+    fn set_var(&mut self, id: u16, value: VarValue);
 }
 
 /// Player-level operations available to the script VM.

@@ -623,8 +623,8 @@ impl Engine {
                         && !cache.is_multi(player_coord.x(), player_coord.z(), player_coord.y())
                     {
                         if let Some(varp_id) = hunt.check_notcombat {
-                            if player.player.varps.len() > varp_id as usize {
-                                let last_combat = player.player.varps.get(varp_id).as_int();
+                            if player.player.vars.len() > varp_id as usize {
+                                let last_combat = player.player.vars.get(varp_id).as_int();
                                 if last_combat + 8 > clock {
                                     continue;
                                 }
@@ -643,8 +643,8 @@ impl Engine {
                     if !hunt.extracheck_vars.is_empty() {
                         let mut pass = true;
                         for check_var in &hunt.extracheck_vars {
-                            if player.player.varps.len() > check_var.varp as usize {
-                                let val = player.player.varps.get(check_var.varp).as_int();
+                            if player.player.vars.len() > check_var.varp as usize {
+                                let val = player.player.vars.get(check_var.varp).as_int();
                                 if !check_hunt_condition(val, &check_var.condition, check_var.value)
                                 {
                                     pass = false;

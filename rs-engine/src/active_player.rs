@@ -1233,14 +1233,14 @@ impl ActivePlayer {
     /// * Sends varp_small or varp_large packets for every transmittable varp.
     pub fn sync_varps(&mut self) {
         let varp_types = &cache().varps;
-        for id in 0..self.player.varps.len() {
+        for id in 0..self.player.vars.len() {
             let Some(varp) = varp_types.get_by_id(id as u16) else {
                 continue;
             };
             if !varp.transmit {
                 continue;
             }
-            let val = self.player.varps.get(id as u16).as_int();
+            let val = self.player.vars.get(id as u16).as_int();
             self.varp_transmit(id as u16, val);
         }
     }
@@ -1622,8 +1622,8 @@ impl ActivePlayer {
     /// # Side Effects
     /// * Updates the player's varp set.
     /// * If `transmit` is true, sends a varp packet to the client.
-    pub fn set_varp(&mut self, id: u16, value: rs_pack::cache::VarValue, transmit: bool) {
-        self.player.varps.set(id, value.clone());
+    pub fn set_varp(&mut self, id: u16, value: VarValue, transmit: bool) {
+        self.player.vars.set(id, value.clone());
         if transmit {
             self.varp_transmit(id, value.as_int());
         }

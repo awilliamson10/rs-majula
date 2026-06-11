@@ -71,7 +71,7 @@ pub struct PlayerProfile {
 /// A [`PlayerProfile`] containing all persistent player state.
 pub fn extract_profile(player: &Player, cache: &CacheStore) -> PlayerProfile {
     let mut varps = Vec::new();
-    for i in 0..player.varps.len() {
+    for i in 0..player.vars.len() {
         let id = i as u16;
         let scope = cache
             .varps
@@ -79,7 +79,7 @@ pub fn extract_profile(player: &Player, cache: &CacheStore) -> PlayerProfile {
             .map(|v| v.scope)
             .unwrap_or(VarPlayerScope::Temp);
         if scope == VarPlayerScope::Perm {
-            let value = player.varps.get(id).as_int();
+            let value = player.vars.get(id).as_int();
             if value != 0 {
                 varps.push((id, value));
             }
@@ -188,11 +188,11 @@ pub fn apply_profile(profile: &PlayerProfile, player: &mut Player, cache: &Cache
     };
 
     for &(id, value) in &profile.varps {
-        if (id as usize) < player.varps.len()
+        if (id as usize) < player.vars.len()
             && let Some(varp_type) = cache.varps.get_by_id(id)
         {
             player
-                .varps
+                .vars
                 .set(id, VarValue::from_int(varp_type.var_type, value));
         }
     }

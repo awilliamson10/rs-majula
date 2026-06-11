@@ -1,4 +1,4 @@
-use crate::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, cache, engine};
+use crate::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, cache, engine, engine_mut};
 use crate::register::OpsRegistry;
 use crate::state::{ExecutionState, ScriptState};
 use crate::util::*;
@@ -124,10 +124,32 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         m.insert(BRANCH_GREATER_THAN, |s| branch_if(s, |a, b| a > b));
 
         // 11
-        none!(m, PUSH_VARS => |_s| {});
+        none!(m, PUSH_VARS => |s| {
+            let operand = s.int_operand();
+            let id = (operand & 0xFFFF) as u16;
+            let value = engine::<E>().get_var(id);
+            if let VarValue::String(v) = value {
+                s.push_string(&v);
+            } else {
+                s.push_int(value.as_int());
+            }
+        });
 
         // 12
-        none!(m, POP_VARS => |_s| {});
+        none!(m, POP_VARS => |s| {
+            let operand = s.int_operand();
+            let id = (operand & 0xFFFF) as u16;
+            let varn = cache()
+                .varss
+                .get_by_id(id)
+                .ok_or(ScriptError::Runtime(format!("Vars with id: {id} not found!")))?;
+            let value = if varn.var_type == ScriptVarType::String {
+                VarValue::String(s.pop_string())
+            } else {
+                VarValue::from_int(varn.var_type, s.pop_int())
+            };
+            engine_mut::<E>().set_var(id, value);
+        });
 
         // 21
         none!(m, RETURN => |s| {
