@@ -139,14 +139,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, POP_VARS => |s| {
             let operand = s.int_operand();
             let id = (operand & 0xFFFF) as u16;
-            let varn = cache()
+            let vars = cache()
                 .varss
                 .get_by_id(id)
                 .ok_or(ScriptError::Runtime(format!("Vars with id: {id} not found!")))?;
-            let value = if varn.var_type == ScriptVarType::String {
+            let value = if vars.var_type == ScriptVarType::String {
                 VarValue::String(s.pop_string())
             } else {
-                VarValue::from_int(varn.var_type, s.pop_int())
+                VarValue::from_int(vars.var_type, s.pop_int())
             };
             engine_mut::<E>().set_var(id, value);
         });
