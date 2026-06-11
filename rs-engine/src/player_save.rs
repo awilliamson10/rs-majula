@@ -576,8 +576,8 @@ mod tests {
     #[test]
     fn new_player_defaults_hitpoints() {
         let uid = rs_vm::PlayerUid::new("test".into(), 1);
-        let varps = rs_var::VarSet::new(std::iter::empty());
-        let mut player = Player::new(uid, CoordGrid::new(3222, 0, 3222), varps, false);
+        let vars = rs_var::VarSet::new(std::iter::empty());
+        let mut player = Player::new(uid, CoordGrid::new(3222, 0, 3222), vars, false);
         apply_new_player_defaults(&mut player);
         assert_eq!(player.stats.levels[PlayerStat::Hitpoints as usize], 10);
         assert!(player.stats.xp[PlayerStat::Hitpoints as usize] > 0);

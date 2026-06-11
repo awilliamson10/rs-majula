@@ -209,7 +209,7 @@ impl Player {
     ///
     /// # Call Stack
     /// **Called by:** `Engine::add_player`
-    pub fn new(uid: PlayerUid, coord: CoordGrid, varps: VarSet, bot: bool) -> Self {
+    pub fn new(uid: PlayerUid, coord: CoordGrid, vars: VarSet, bot: bool) -> Self {
         let mut pathing = PathingEntity::new(coord, 1, MoveRestrict::Player, MoveStrategy::Smart);
         pathing.tele = true;
         Self {
@@ -225,7 +225,7 @@ impl Player {
             stats: Stats::new(1),
             combat_level: 3,
             hero_points: HeroPoints::new(),
-            vars: varps,
+            vars,
             state: EntityState::new(),
             info: EntityMasks::new(),
             interaction: InteractionState::new(),
@@ -930,8 +930,8 @@ mod interaction_tests {
 
     fn make_player() -> Player {
         let uid = PlayerUid::new("test".into(), 1);
-        let varps = VarSet::new(std::iter::empty());
-        Player::new(uid, CoordGrid::new(3222, 0, 3222), varps, false)
+        let vars = VarSet::new(std::iter::empty());
+        Player::new(uid, CoordGrid::new(3222, 0, 3222), vars, false)
     }
 
     fn obj_target() -> InteractionTarget {
@@ -1588,8 +1588,8 @@ mod energy_tests {
 
     fn make_player() -> Player {
         let uid = PlayerUid::new("test".into(), 1);
-        let varps = VarSet::new(std::iter::empty());
-        Player::new(uid, CoordGrid::new(3222, 0, 3222), varps, false)
+        let vars = VarSet::new(std::iter::empty());
+        Player::new(uid, CoordGrid::new(3222, 0, 3222), vars, false)
     }
 
     // ---- delayed players are frozen ----

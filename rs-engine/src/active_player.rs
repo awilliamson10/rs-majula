@@ -160,14 +160,14 @@ impl ActivePlayer {
         let coord = CoordGrid::new(3094, 0, 3106); // Tutorial island
 
         let c = cache();
-        let varps = VarSet::new((0..c.varps.count()).map(|id| {
+        let vars = VarSet::new((0..c.varps.count()).map(|id| {
             c.varps
                 .get_by_id(id as u16)
                 .map(|v| v.var_type)
                 .unwrap_or(ScriptVarType::Int)
         }));
 
-        let mut player = Player::new(uid, coord, varps, bot);
+        let mut player = Player::new(uid, coord, vars, bot);
         player.low_memory = low_memory;
 
         ActivePlayer {
