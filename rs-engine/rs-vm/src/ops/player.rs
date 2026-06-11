@@ -968,12 +968,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2094
         active_player_mut!(m, READYANIM => |s, player| {
-            player.readyanim(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.readyanim(s.pop_int() as u16);
         });
 
         // 2095
         active_player_mut!(m, RUNANIM => |s, player| {
-            player.runanim(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.runanim(s.pop_int() as u16);
         });
 
         // 2096
@@ -1151,7 +1153,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2119
         active_player_mut!(m, TURNANIM => |s, player| {
-            player.turnanim(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.turnanim(s.pop_int() as u16);
         });
 
         // 2120
@@ -1176,22 +1179,26 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2124
         active_player_mut!(m, WALKANIM_B => |s, player| {
-            player.walkanim_b(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.walkanim_b(s.pop_int() as u16);
         });
 
         // 2125
         active_player_mut!(m, WALKANIM_L => |s, player| {
-            player.walkanim_l(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.walkanim_l(s.pop_int() as u16);
         });
 
         // 2126
         active_player_mut!(m, WALKANIM_R => |s, player| {
-            player.walkanim_r(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.walkanim_r(s.pop_int() as u16);
         });
 
         // 2127
         active_player_mut!(m, WALKANIM => |s, player| {
-            player.walkanim(s.pop_int_as::<u16>()?);
+            // anim can be null for example: agility
+            player.walkanim(s.pop_int() as u16);
         });
 
         // 2128
