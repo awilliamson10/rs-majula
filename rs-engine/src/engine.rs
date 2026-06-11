@@ -11,7 +11,7 @@ use crate::{MAX_NPCS, MAX_PLAYERS};
 use mpsc::{UnboundedReceiver, UnboundedSender};
 use rs_cam::CamKind;
 use rs_datastruct::{HashTable, LinkList};
-use rs_entity::{EntityLifeTime, InteractionTarget, Loc, Obj, REVEAL_TICKS};
+use rs_entity::{EntityLifeTime, InteractionTarget, Loc, Obj, REVEAL_TICKS, StaffModLevel};
 use rs_entity::{MODAL_MAIN, MODAL_NONE, NpcUid, PlayerUid};
 use rs_grid::{CoordGrid, ZoneCoordGrid};
 use rs_info::{NpcRenderer, PlayerRenderer};
@@ -2242,11 +2242,6 @@ impl Engine {
             return;
         };
 
-        let _ = request
-            .handle
-            .outbox
-            .send(vec![LoginResponse::Success as u8]);
-
         let mut active = ActivePlayer::new(
             request.handle,
             pid,
@@ -2268,6 +2263,18 @@ impl Engine {
             .unwrap_or(0);
 
         let uid = active.player.uid;
+
+        if active.player.staff_mod_level == StaffModLevel::Normal {
+            let _ = active
+                .handle
+                .outbox
+                .send(vec![LoginResponse::Success as u8]);
+        } else {
+            let _ = active
+                .handle
+                .outbox
+                .send(vec![LoginResponse::SuccessModerator as u8]);
+        }
 
         info!(
             "Player '{}' joined at ({},{},{}) (uid={:?}, pid={})",

@@ -63,4 +63,5 @@ pub enum LoginResponse {
     ServerUpdating = 14,
     TooManyAttempts = 16,
     MembersArea = 17,
+    SuccessModerator = 18,
 }
