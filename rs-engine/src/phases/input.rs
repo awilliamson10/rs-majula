@@ -76,7 +76,9 @@ impl Engine {
         let prev_coord = active.player.pathing.coord;
 
         Self::check_afk(self.clock, active);
-        active.decode();
+        if active.decode() {
+            active.player.last_response = self.clock;
+        }
         Self::post_process(active, self.client_pathfinder);
 
         Engine::check_zones_and_collision(

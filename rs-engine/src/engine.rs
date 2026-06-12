@@ -38,7 +38,7 @@ use rsmod::rsmod::collision::collision_strategy::CollisionType;
 use rsmod::rsmod::flag::collision_flag::CollisionFlag;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
@@ -104,6 +104,7 @@ pub struct LoginRequest {
     pub password: Box<str>,
     pub low_memory: bool,
     pub remote_addr: SocketAddr,
+    pub reconnect: bool,
 }
 
 /// Per-tick performance statistics for the game engine cycle.
@@ -442,6 +443,7 @@ pub struct Engine {
     pub db_tx: Option<UnboundedSender<DbRequest>>,
     pub db_rx: UnboundedReceiver<DbResponse>,
     pub db_ready: bool,
+    pub ether_ready: bool,
     pub pending_logins: Vec<PendingLogin>,
     pub random: JavaRandom,
     pub vars: VarSet,
@@ -556,6 +558,7 @@ impl Engine {
             db_tx,
             db_rx,
             db_ready: false,
+            ether_ready: false,
             pending_logins: Vec::new(),
             random: JavaRandom::new(1084838400000),
             vars,
@@ -2261,6 +2264,10 @@ impl Engine {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        active.player.last_response = self.clock;
+
+        let remote_ip = request.remote_addr.ip();
+        active.remote_ip = Some(remote_ip);
 
         let uid = active.player.uid;
 
@@ -2286,9 +2293,9 @@ impl Engine {
             pid,
         );
 
-        let key = match request.remote_addr.ip() {
-            std::net::IpAddr::V4(ip) => u32::from(ip) as i64,
-            std::net::IpAddr::V6(ip) => {
+        let key = match remote_ip {
+            IpAddr::V4(ip) => u32::from(ip) as i64,
+            IpAddr::V6(ip) => {
                 let octets = ip.octets();
                 i32::from_be_bytes([octets[12], octets[13], octets[14], octets[15]]) as i64
             }
@@ -2303,7 +2310,11 @@ impl Engine {
         };
 
         if let (Some(user37), Some(tx)) = (user37, &self.ether_tx) {
-            let _ = tx.send(EtherOutbound::PlayerLogin { user37, pid });
+            let _ = tx.send(EtherOutbound::PlayerLogin {
+                user37,
+                pid,
+                ip: remote_ip.to_string(),
+            });
             let _ = tx.send(EtherOutbound::RequestLists { user37 });
         }
 
@@ -2318,6 +2329,132 @@ impl Engine {
         if result.is_err() {
             error!("{:?}", result);
         }
+    }
+
+    /// Attaches a reconnecting client to its still-in-world player session.
+    ///
+    /// Called when a validated reconnect login (correct password, ether
+    /// approved) finds its player still present on this node -- either
+    /// lingering after a disconnect or still nominally connected (in which
+    /// case the old socket is kicked and the new one takes over). The
+    /// existing player keeps its pid, uid, position, inventories, and all
+    /// in-flight gameplay state; nothing is saved or reloaded, so there is
+    /// no rollback and no save/load race.
+    ///
+    /// 1. Sends [`LoginResponse::Reconnect`] (15) on the new connection --
+    ///    the client resumes its session instead of resetting.
+    /// 2. Swaps the new [`ClientHandle`] onto the player. Dropping the old
+    ///    handle closes the old socket task's channels, which terminates the
+    ///    old connection (and frees its per-IP permit).
+    /// 3. Revives the session: clears the logout/disconnect flags so the
+    ///    logout phase stops counting the player down.
+    /// 4. Forgets the per-observer view state (tracked players/NPCs and
+    ///    appearance hashes), decrementing NPC observer counts exactly like
+    ///    [`remove_player`](Engine::remove_player) so the re-adds during the
+    ///    next info phase keep the counts balanced. The client rebuilds its
+    ///    own entity lists from each info packet, so a clean server-side
+    ///    slate is self-healing -- stale entities vanish, missed ones appear.
+    /// 5. Calls [`EnginePlayer::on_reconnect`] to re-send all volatile client
+    ///    state (varps, map rebuild, modal close, tabs, invs, stats, energy,
+    ///    anims) and flag an absolute local-player re-place.
+    /// 6. Re-announces the session to ether (`PlayerResync` is idempotent and
+    ///    re-sends friend/ignore lists), covering an ether restart during the
+    ///    disconnect gap.
+    ///
+    /// The `Login` script trigger is intentionally not re-run -- the session
+    /// never ended.
+    ///
+    /// # Arguments
+    ///
+    /// * `pid` -- The live player slot being reclaimed.
+    /// * `request` -- The validated reconnect login carrying the new handle.
+    ///
+    /// # Side Effects
+    ///
+    /// * Sends the reconnect response and full state refresh to the client.
+    /// * Drops the previous client connection.
+    /// * Decrements NPC observer counts for the player's old view set.
+    /// * Sends [`EtherOutbound::PlayerResync`] to the ether sidecar.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** [`try_complete_login`](Engine::try_complete_login)
+    /// **Calls:** `EnginePlayer::on_reconnect`
+    pub(crate) fn adopt_session(&mut self, pid: u16, request: LoginRequest) {
+        let clock = self.clock;
+
+        let Some(active) = self
+            .player_list
+            .players
+            .get_mut(pid as usize)
+            .and_then(|slot| slot.as_mut())
+        else {
+            // find_pid_by_user37 returned this pid in the same phase, so the
+            // slot cannot be empty; guard anyway rather than panic.
+            error!("adopt_session: pid {pid} vanished before adoption");
+            let _ = request
+                .handle
+                .outbox
+                .send(vec![LoginResponse::CouldNotComplete as u8]);
+            return;
+        };
+
+        let _ = request
+            .handle
+            .outbox
+            .send(vec![LoginResponse::Reconnect as u8]);
+
+        // Swapping the handle drops the old one: its channels close and the
+        // old socket task (dead or alive) shuts down. Buffered packets queued
+        // earlier this tick survive on `active.buffered` and flush through
+        // the new handle's ISAAC cipher at the output phase.
+        active.handle = Box::new(request.handle);
+        active.player.low_memory = request.low_memory;
+        active.remote_ip = Some(request.remote_addr.ip());
+
+        active.player.logout_requested = false;
+        active.player.logout_idle_requested = false;
+        active.player.logout_sent = false;
+        active.player.disconnected_at = None;
+        active.player.last_response = clock;
+
+        // Forget the per-observer view state (reference: cleanupPlayerBuildArea).
+        // NPC observer counts are decremented further down, outside this
+        // borrow; the info phase re-increments them as NPCs are re-tracked.
+        let nids: Vec<u16> = active.player.build_area.npcs.iter().to_vec();
+        active.player.build_area.players.clear();
+        active.player.build_area.npcs.clear();
+        active.player.build_area.appearances.fill(0);
+
+        if let Err(e) = active.on_reconnect() {
+            error!("error during reconnect for player {pid}: {e}");
+        }
+
+        let user37 = active.uid().username37();
+        let private_mode = active.player.private as u8;
+        let username = active.player.uid.username();
+
+        for nid in nids {
+            if let Some(npc) = self
+                .npc_list
+                .npcs
+                .get_mut(nid as usize)
+                .and_then(|n| n.as_mut())
+            {
+                npc.npc.observers = npc.npc.observers.saturating_sub(1);
+            }
+        }
+
+        if let Some(tx) = &self.ether_tx {
+            let _ = tx.send(EtherOutbound::PlayerResync {
+                user37,
+                pid,
+                private_mode,
+                ip: request.remote_addr.ip().to_string(),
+            });
+        }
+
+        info!("Player '{}' reconnected (pid={})", username, pid);
     }
 
     /// Attempts to complete a pending login if all async prerequisites are met.
@@ -2341,11 +2478,54 @@ impl Engine {
     ///
     /// **Called by:** logins phase, ether inbound handler, db response handler.
     /// **Calls:** `accept_login`.
+    /// Removes a pending login, sends the given response to its client, and
+    /// releases any cluster-wide login reservations the attempt holds.
+    ///
+    /// When a login check is granted, the ether sidecar registers account and
+    /// IP reservations (10-second TTL) that are normally consumed when the
+    /// session starts. A pending that dies after being granted -- failed
+    /// password, timeout, world full, database loss -- would otherwise leave
+    /// those reservations behind, making an immediate retry fail with
+    /// "already logged in" until the TTL expires. The abort is only sent when
+    /// `ether_allowed` is set: before that, this attempt owns no reservations
+    /// (and an unconditional abort could release a *concurrent* attempt's).
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` -- Index into `self.pending_logins` (removed via `swap_remove`).
+    /// * `response` -- The login response byte to send to the client.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** login timeout sweep, auth-failure handler,
+    /// db-disconnect drain, ether-reconnect sweep.
+    pub(crate) fn reject_pending_login(&mut self, idx: usize, response: LoginResponse) {
+        let pending = self.pending_logins.swap_remove(idx);
+        let _ = pending.request.handle.outbox.send(vec![response as u8]);
+        if pending.ether_allowed
+            && let Some(tx) = &self.ether_tx
+        {
+            let _ = tx.send(EtherOutbound::LoginAbort {
+                user37: pending.user37,
+                ip: pending.request.remote_addr.ip().to_string(),
+            });
+        }
+    }
+
     pub(crate) fn try_complete_login(&mut self, idx: usize) {
         let pending = &self.pending_logins[idx];
         if !pending.ether_allowed || !pending.auth_ok {
             return;
         }
+
+        if pending.request.reconnect
+            && let Some(pid) = self.find_pid_by_user37(pending.user37)
+        {
+            let pending = self.pending_logins.swap_remove(idx);
+            self.adopt_session(pid, pending.request);
+            return;
+        }
+
         if pending.profile.is_none() {
             if let Some(tx) = &self.db_tx {
                 let _ = tx.send(DbRequest::Load {

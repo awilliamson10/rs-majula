@@ -1688,8 +1688,6 @@ pub trait ScriptNpc {
     fn destination(&self) -> u32;
 }
 
-// ── Thread-local engine accessor ─────────────────────────────────────────
-
 thread_local! {
     static ENGINE_PTR: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
     static CACHE_PTR: Cell<*const CacheStore> = const { Cell::new(std::ptr::null()) };

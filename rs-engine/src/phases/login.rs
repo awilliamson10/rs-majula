@@ -9,6 +9,16 @@ use tracing::warn;
 /// discarded with a [`LoginResponse::CouldNotComplete`] error.
 const LOGIN_TIMEOUT_TICKS: u64 = 10;
 
+/// Maximum playing sessions (distinct accounts) allowed per IP across all
+/// nodes, enforced cluster-wide by the ether sidecar during the login check.
+/// Distinct from the transport socket cap in rs-server, which only limits
+/// concurrent TCP/WS connections (and is sized at twice this so a reconnect's
+/// old and new socket can briefly coexist per playing session).
+#[cfg(debug_assertions)]
+const MAX_PLAYING_PER_IP: u8 = 2;
+#[cfg(not(debug_assertions))]
+const MAX_PLAYING_PER_IP: u8 = 1;
+
 impl Engine {
     /// Processes the login phase of the engine tick cycle.
     ///
@@ -42,7 +52,7 @@ impl Engine {
         while let Ok(request) = self.new_player_rx.try_recv() {
             let user37 = to_userhash(&request.username);
 
-            if !self.db_ready {
+            if !self.db_ready || !self.ether_ready {
                 let _ = request
                     .handle
                     .outbox
@@ -50,7 +60,7 @@ impl Engine {
                 continue;
             }
 
-            if self.find_pid_by_user37(user37).is_some() {
+            if self.find_pid_by_user37(user37).is_some() && !request.reconnect {
                 let _ = request
                     .handle
                     .outbox
@@ -59,7 +69,11 @@ impl Engine {
             }
 
             if let Some(tx) = &self.ether_tx {
-                let _ = tx.send(EtherOutbound::LoginCheck { user37 });
+                let _ = tx.send(EtherOutbound::LoginCheck {
+                    user37,
+                    max_per_ip: MAX_PLAYING_PER_IP,
+                    ip: request.remote_addr.ip().to_string(),
+                });
                 if let Some(db_tx) = &self.db_tx {
                     let _ = db_tx.send(DbRequest::Authenticate {
                         user37,
@@ -87,13 +101,11 @@ impl Engine {
         while i > 0 {
             i -= 1;
             if clock - self.pending_logins[i].clock >= LOGIN_TIMEOUT_TICKS {
-                let pending = self.pending_logins.swap_remove(i);
-                warn!("Login timed out for '{}'", pending.request.username);
-                let _ = pending
-                    .request
-                    .handle
-                    .outbox
-                    .send(vec![LoginResponse::CouldNotComplete as u8]);
+                warn!(
+                    "Login timed out for '{}'",
+                    self.pending_logins[i].request.username
+                );
+                self.reject_pending_login(i, LoginResponse::CouldNotComplete);
             }
         }
     }

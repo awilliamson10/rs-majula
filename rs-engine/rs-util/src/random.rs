@@ -366,8 +366,6 @@ impl JavaRandom {
 mod tests {
     use super::*;
 
-    // ── next_int: verified against Java's new Random(seed).nextInt() ──
-
     #[test]
     fn seed_zero_next_int() {
         let mut rng = JavaRandom::new(0);
@@ -394,8 +392,6 @@ mod tests {
         assert_eq!(rng.next_int(), 1155099827);
     }
 
-    // ── next_long: verified against Java's new Random(0).nextLong() ──
-
     #[test]
     fn seed_zero_next_long() {
         let mut rng = JavaRandom::new(0);
@@ -403,8 +399,6 @@ mod tests {
         assert_eq!(rng.next_long(), 4437113781045784766);
         assert_eq!(rng.next_long(), -6688467811848818630);
     }
-
-    // ── next_int_bound: deterministic + range checks ──
 
     #[test]
     fn next_int_bound_deterministic() {
@@ -445,8 +439,6 @@ mod tests {
     fn next_int_bound_negative_panics() {
         JavaRandom::new(0).next_int_bound(-5);
     }
-
-    // ── next_boolean/float/double: deterministic ──
 
     #[test]
     fn next_boolean_deterministic() {
@@ -493,8 +485,6 @@ mod tests {
         }
     }
 
-    // ── next_bytes: deterministic ──
-
     #[test]
     fn next_bytes_deterministic() {
         let mut a = JavaRandom::new(0);
@@ -526,8 +516,6 @@ mod tests {
         assert_eq!(buf[7], (i2 >> 24) as u8);
     }
 
-    // ── next_gaussian: deterministic ──
-
     #[test]
     fn next_gaussian_deterministic() {
         let mut a = JavaRandom::new(0);
@@ -536,8 +524,6 @@ mod tests {
             assert_eq!(a.next_gaussian().to_bits(), b.next_gaussian().to_bits());
         }
     }
-
-    // ── set_seed resets state ──
 
     #[test]
     fn set_seed_resets_state() {
@@ -557,8 +543,6 @@ mod tests {
         rng.set_seed(0);
         assert!(!rng.have_next_next_gaussian);
     }
-
-    // ── same seed, identical sequence across all methods ──
 
     #[test]
     fn two_instances_same_seed_identical() {

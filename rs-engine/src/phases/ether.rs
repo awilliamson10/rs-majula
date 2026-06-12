@@ -6,6 +6,7 @@ use rs_protocol::network::game::server::message_private::MessagePrivate;
 use rs_protocol::network::game::server::update_friendlist::UpdateFriendList;
 use rs_protocol::network::game::server::update_ignorelist::UpdateIgnoreList;
 use rs_vm::engine::ScriptPlayer;
+use tracing::warn;
 
 impl Engine {
     /// Processes the ether phase of the engine tick cycle.
@@ -86,37 +87,44 @@ impl Engine {
                 }
                 EtherInbound::FriendListComplete { .. } => {}
                 EtherInbound::WorldReady => {}
-                EtherInbound::LoginCheckResponse { user37, allowed } => {
+                EtherInbound::LoginCheckResponse {
+                    user37,
+                    allowed,
+                    ip_limited,
+                } => {
                     if let Some(idx) = self
                         .pending_logins
                         .iter()
                         .position(|p| p.user37 == user37 && !p.ether_allowed)
                     {
-                        if allowed && self.find_pid_by_user37(user37).is_none() {
+                        let online_here = self.find_pid_by_user37(user37).is_some();
+                        let reconnect = self.pending_logins[idx].request.reconnect;
+                        if (allowed && !online_here) || (reconnect && online_here && !ip_limited) {
                             self.pending_logins[idx].ether_allowed = true;
                             self.try_complete_login(idx);
                         } else {
+                            let response = if ip_limited {
+                                LoginResponse::TooManyConnections
+                            } else {
+                                LoginResponse::AlreadyLoggedIn
+                            };
                             let pending = self.pending_logins.swap_remove(idx);
-                            let _ = pending
-                                .request
-                                .handle
-                                .outbox
-                                .send(vec![LoginResponse::AlreadyLoggedIn as u8]);
+                            let _ = pending.request.handle.outbox.send(vec![response as u8]);
                         }
                     }
                 }
+                EtherInbound::EtherDisconnected => {
+                    self.ether_ready = false;
+                    warn!("Ether disconnected - logins disabled");
+                }
                 EtherInbound::EtherReconnected => {
+                    self.ether_ready = true;
                     let clock = self.clock;
                     let mut i = self.pending_logins.len();
                     while i > 0 {
                         i -= 1;
                         if self.pending_logins[i].clock < clock {
-                            let pending = self.pending_logins.swap_remove(i);
-                            let _ = pending
-                                .request
-                                .handle
-                                .outbox
-                                .send(vec![LoginResponse::CouldNotComplete as u8]);
+                            self.reject_pending_login(i, LoginResponse::CouldNotComplete);
                         }
                     }
 
@@ -127,6 +135,10 @@ impl Engine {
                                     user37: active.uid().username37(),
                                     pid,
                                     private_mode: active.player.private as u8,
+                                    ip: active
+                                        .remote_ip
+                                        .map(|ip| ip.to_string())
+                                        .unwrap_or_default(),
                                 });
                             }
                         }

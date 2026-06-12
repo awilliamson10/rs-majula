@@ -109,6 +109,7 @@ use rs_zone::ZoneMessage;
 use rs_zone::zone_map::ZoneMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
+use std::net::IpAddr;
 use tracing::{error, warn};
 
 /// Maximum number of recycled outbound byte buffers kept per client in
@@ -133,6 +134,7 @@ pub struct ActivePlayer {
     pub client_limit: u8,
     pub user_limit: u8,
     pub restricted_limit: u8,
+    pub remote_ip: Option<IpAddr>,
 }
 
 impl ActivePlayer {
@@ -177,10 +179,9 @@ impl ActivePlayer {
             client_limit: 0,
             user_limit: 0,
             restricted_limit: 0,
+            remote_ip: None,
         }
     }
-
-    // ── Packet writing ──────────────────────────────────────────────
 
     /// Sends a server protocol message to the client, routing it through
     /// the appropriate priority channel.
@@ -308,8 +309,6 @@ impl ActivePlayer {
         let _ = handle.outbox.send(out);
     }
 
-    // ── Encode (flush) ──────────────────────────────────────────────
-
     /// Flushes pending modal UI state changes and all buffered packets for
     /// this tick.
     ///
@@ -368,49 +367,6 @@ impl ActivePlayer {
 
         self.write_buffered();
     }
-
-    // ── On login ────────────────────────────────────────────────────
-
-    /// Performs the initial login sequence for this player.
-    ///
-    /// Sends the map rebuild, chat filter settings, interface close, player
-    /// ID, var cache reset, all varps, all stats, run energy, and animation
-    /// reset packets.
-    ///
-    /// # Side Effects
-    /// * Sends multiple server protocol packets to the client.
-    ///
-    /// # Call Stack
-    /// **Calls:** [`rebuild_normal`](Self::rebuild_normal),
-    /// [`chat_filter_settings`](Self::chat_filter_settings),
-    /// [`if_close`](Self::if_close), [`update_pid`](Self::update_pid),
-    /// [`reset_client_varcache`](Self::reset_client_varcache),
-    /// [`sync_varps`](Self::sync_varps), [`update_stat`](Self::update_stat),
-    /// [`update_runenergy`](Self::update_runenergy),
-    /// [`reset_anims`](Self::reset_anims)
-    pub fn on_login(&mut self) {
-        self.rebuild_normal(false);
-        self.chat_filter_settings(
-            self.player.public as u8,
-            self.player.private as u8,
-            self.player.trade as u8,
-        );
-        self.if_close();
-        self.update_pid(self.player.uid.pid());
-        self.reset_client_varcache();
-        self.sync_varps();
-        for i in 0..21 {
-            self.update_stat(i);
-        }
-        self.update_runenergy(self.player.runenergy);
-        self.reset_anims();
-        let coord = self.player.pathing.coord;
-        let snapshot_coord = CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
-        self.player.pathing.last_step_coord = snapshot_coord;
-        self.player.pathing.follow_coord = snapshot_coord;
-    }
-
-    // ── Server protocol convenience wrappers ────────────────────────
 
     pub fn cam_moveto(&mut self, x: u8, z: u8, height: u16, rate: u8, rate2: u8) {
         self.write(rs_protocol::network::game::server::cam_move_to::CamMoveTo {
@@ -989,8 +945,6 @@ impl ActivePlayer {
     pub fn varp_small(&mut self, id: u16, val: u8) {
         self.write(rs_protocol::network::game::server::varp_small::VarpSmall { id, val });
     }
-
-    // ── Game logic methods ──────────────────────────────────────────
 
     /// Synchronizes dirty inventories to the client.
     ///
@@ -1673,8 +1627,6 @@ impl ActivePlayer {
     }
 }
 
-// ── EnginePlayer trait ─────────────────────────────────────────────
-
 /// Engine-level player operations that bridge client I/O, zone updates,
 /// modal UI management, and teleportation.
 ///
@@ -1682,11 +1634,14 @@ impl ActivePlayer {
 /// methods used by the game engine loop.
 pub trait EnginePlayer {
     /// Drains the client inbox and decodes inbound packets up to per-category
-    /// rate limits.
-    fn decode(&mut self);
+    /// rate limits. Returns `true` if any inbound data arrived this tick
+    /// (used to track connection liveness for the no-response timeout).
+    fn decode(&mut self) -> bool;
 
     /// Reads and dispatches a single client protocol message.
     fn read(&mut self) -> Option<()>;
+
+    fn on_login(&mut self);
 
     /// Re-sends all state needed after a client reconnection.
     fn on_reconnect(&mut self) -> Result<(), ScriptError>;
@@ -1723,17 +1678,26 @@ impl EnginePlayer for ActivePlayer {
     /// Messages that would exceed the 5000-byte read queue limit are held
     /// as pending for the next tick.
     ///
+    /// # Returns
+    /// `true` if at least one new message arrived from the network inbox
+    /// this tick (a held-over `pending_msg` does not count -- it was
+    /// received on an earlier tick).
+    ///
     /// # Side Effects
     /// * Resets rate-limit counters to 0.
     /// * Processes client messages via [`read`](Self::read).
-    fn decode(&mut self) {
+    fn decode(&mut self) -> bool {
         let handle = &mut self.handle;
+        let mut received = false;
         let mut next = handle.pending_msg.take();
         loop {
             let msg = match next.take() {
                 Some(m) => m,
                 None => match handle.inbox.try_recv() {
-                    Ok(m) => m,
+                    Ok(m) => {
+                        received = true;
+                        m
+                    }
                     Err(_) => break,
                 },
             };
@@ -1763,6 +1727,8 @@ impl EnginePlayer for ActivePlayer {
             }
             self.read();
         }
+
+        received
     }
 
     /// Reads a single client protocol message from the read queue, decodes
@@ -1924,22 +1890,73 @@ impl EnginePlayer for ActivePlayer {
         Some(())
     }
 
+    /// Performs the initial login sequence for this player.
+    ///
+    /// Sends the map rebuild, chat filter settings, interface close, player
+    /// ID, var cache reset, all varps, all stats, run energy, and animation
+    /// reset packets.
+    ///
+    /// # Side Effects
+    /// * Sends multiple server protocol packets to the client.
+    ///
+    /// # Call Stack
+    /// **Calls:** [`rebuild_normal`](Self::rebuild_normal),
+    /// [`chat_filter_settings`](Self::chat_filter_settings),
+    /// [`if_close`](Self::if_close), [`update_pid`](Self::update_pid),
+    /// [`reset_client_varcache`](Self::reset_client_varcache),
+    /// [`sync_varps`](Self::sync_varps), [`update_stat`](Self::update_stat),
+    /// [`update_runenergy`](Self::update_runenergy),
+    /// [`reset_anims`](Self::reset_anims)
+    fn on_login(&mut self) {
+        self.rebuild_normal(false);
+        self.chat_filter_settings(
+            self.player.public as u8,
+            self.player.private as u8,
+            self.player.trade as u8,
+        );
+        self.if_close();
+        self.update_pid(self.player.uid.pid());
+        self.reset_client_varcache();
+        self.sync_varps();
+        for i in 0..self.player.stats.len() {
+            self.update_stat(i);
+        }
+        self.update_runenergy(self.player.runenergy);
+        self.reset_anims();
+        let coord = self.player.pathing.coord;
+        let snapshot_coord = CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
+        self.player.pathing.last_step_coord = snapshot_coord;
+        self.player.pathing.follow_coord = snapshot_coord;
+    }
+
     /// Handles a client reconnection by re-sending all volatile state.
     ///
-    /// Resets the client's var cache, re-syncs all varps, clears and
-    /// rebuilds the build area with a forced map rebuild, closes any
-    /// open modals, re-sends tab assignments, run energy, and resets
-    /// entity animations.
+    /// On a reconnect (login response 15) the client resumes with whatever
+    /// state it had when the connection dropped, so everything that may have
+    /// changed during the gap is pushed again: the var cache is reset and all
+    /// varps re-synced, the build area is rebuilt with a forced map rebuild
+    /// (the client skips the reload when it is still in the same zone), any
+    /// open modal is closed, tabs are re-assigned, every transmitted inventory
+    /// is marked unseen so the next inventory flush sends full contents, all
+    /// stats are re-sent, and animations are reset. Finally, the local player
+    /// is flagged `tele`+`jump` so the next player-info packet re-places the
+    /// client absolutely (its position may have drifted while disconnected).
+    ///
+    /// The engine-side per-observer view state (tracked players/NPCs) is reset
+    /// by [`Engine::adopt_session`] before this runs, so the post-reconnect
+    /// info packets re-add every visible entity from a clean slate.
     ///
     /// # Returns
     /// `Ok(())` on success, or a [`ScriptError`] if closing a modal fails.
     ///
     /// # Call Stack
+    /// **Called by:** `Engine::adopt_session`
     /// **Calls:** [`reset_client_varcache`](Self::reset_client_varcache),
     /// [`sync_varps`](Self::sync_varps),
     /// [`rebuild_normal`](Self::rebuild_normal),
     /// [`close_modal`](Self::close_modal),
     /// [`sync_tabs`](Self::sync_tabs),
+    /// [`update_stat`](Self::update_stat),
     /// [`update_runenergy`](Self::update_runenergy),
     /// [`reset_anims`](Self::reset_anims)
     fn on_reconnect(&mut self) -> Result<(), ScriptError> {
@@ -1949,8 +1966,14 @@ impl EnginePlayer for ActivePlayer {
         self.rebuild_normal(true);
         self.close_modal(true)?;
         self.sync_tabs();
+        self.player.inv_first_seen.clear();
+        for i in 0..self.player.stats.len() {
+            self.update_stat(i);
+        }
         self.update_runenergy(self.player.runenergy);
         self.reset_anims();
+        self.player.pathing.tele = true;
+        self.player.pathing.jump = true;
         Ok(())
     }
 

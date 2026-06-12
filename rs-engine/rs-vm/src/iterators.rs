@@ -3,8 +3,6 @@ use crate::state::{LocRef, NpcRef, ObjRef};
 use rs_grid::CoordGrid;
 use rs_pack::types::HuntCheckVis;
 
-// ── Iterator states ──────────────────────────────────────────────────────
-
 /// Holds the result set and iteration cursor for NPC search operations.
 ///
 /// Populated by functions like [`npc_zone`], [`npc_distance`], or [`npc_distance_any`],
@@ -47,8 +45,6 @@ pub struct PlayerIteratorState {
     pub cursor: usize,
 }
 
-// ── Loc iterators ────────────────────────────────────────────────────────
-
 /// Collects all location (scenery) references in the zone containing the given coordinate.
 ///
 /// # Arguments
@@ -63,14 +59,10 @@ pub fn loc_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<LocRef> {
     engine::<E>().get_zone_locs(coord.x(), coord.y(), coord.z())
 }
 
-// ── Obj iterators ────────────────────────────────────────────────────────
-
 /// Collects all ground object references in the zone containing the given coordinate.
 pub fn obj_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<ObjRef> {
     engine::<E>().get_zone_objs(coord.x(), coord.y(), coord.z())
 }
-
-// ── Npc iterators ────────────────────────────────────────────────────────
 
 /// Collects all NPC references in the zone containing the given coordinate.
 ///
@@ -204,8 +196,6 @@ pub fn npc_distance_any<E: ScriptEngine + 'static>(
 ) -> Vec<NpcRef> {
     npc_distance_inner::<E>(None, coord, distance, vis)
 }
-
-// ── Player iterators ────────────────────────────────────────────────────
 
 /// Finds all players within Chebyshev distance of a coordinate, with optional visibility filtering.
 ///

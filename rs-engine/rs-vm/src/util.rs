@@ -21,8 +21,6 @@ use std::sync::Arc;
 
 pub const LOOTDROP_DURATION: u64 = (200 * 3) >> 1;
 
-// ── Active entity accessors ─────────────────────────────────────────────────
-
 /// Returns a mutable reference to the active player entity from the global engine.
 ///
 /// # Arguments
@@ -309,8 +307,6 @@ pub(crate) fn set_active_obj(state: &mut ScriptState, obj: ObjRef, secondary: bo
         .add(ScriptState::ACTIVE_OBJ[secondary as usize]);
 }
 
-// ── Protection check commands ────────────────────────────────────────
-
 /// Validates that the active player pointer is set for the current operand slot.
 ///
 /// Checks the script state's pointer flags to ensure the active player (primary or
@@ -400,8 +396,6 @@ pub(crate) fn require_protected_active_player(state: &ScriptState) -> Result<()>
         .check(ScriptState::PROTECTED_ACTIVE_PLAYER[state.int_operand() as usize])
 }
 
-// ── Script stack helpers ────────────────────────────────────────
-
 /// Pops an integer from the script stack and validates it as a non-negative count.
 ///
 /// # Arguments
@@ -422,8 +416,6 @@ pub(crate) fn pop_count(state: &mut ScriptState) -> Result<u32> {
     }
     Ok(count.clamp(0, i32::MAX) as u32)
 }
-
-// ── Cache helpers ───────────────────────────────────────────────
 
 /// Pops an integer from the script stack and looks up the corresponding [`EnumType`] from the cache.
 ///

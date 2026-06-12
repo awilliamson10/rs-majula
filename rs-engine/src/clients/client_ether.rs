@@ -21,6 +21,7 @@ pub enum EtherOutboundOp {
     PlayerResync = 10,
     LoginCheck = 11,
     RefreshAll = 12,
+    LoginAbort = 13,
 }
 
 /// Opcodes for messages received from the ether sidecar.
@@ -46,6 +47,7 @@ pub enum EtherOutbound {
     PlayerLogin {
         user37: u64,
         pid: u16,
+        ip: String,
     },
     PlayerLogout {
         user37: u64,
@@ -83,9 +85,16 @@ pub enum EtherOutbound {
         user37: u64,
         pid: u16,
         private_mode: u8,
+        ip: String,
     },
     LoginCheck {
         user37: u64,
+        max_per_ip: u8,
+        ip: String,
+    },
+    LoginAbort {
+        user37: u64,
+        ip: String,
     },
     RefreshAll,
 }
@@ -119,9 +128,11 @@ pub enum EtherInbound {
     LoginCheckResponse {
         user37: u64,
         allowed: bool,
+        ip_limited: bool,
     },
     WorldReady,
     EtherReconnected,
+    EtherDisconnected,
 }
 
 impl EtherOutbound {
@@ -138,10 +149,11 @@ impl EtherOutbound {
                 buf.push(EtherOutboundOp::WorldRegister as u8);
                 buf.push(*node_id);
             }
-            Self::PlayerLogin { user37, pid } => {
+            Self::PlayerLogin { user37, pid, ip } => {
                 buf.push(EtherOutboundOp::PlayerLogin as u8);
                 buf.extend_from_slice(&user37.to_be_bytes());
                 buf.extend_from_slice(&pid.to_be_bytes());
+                buf.extend_from_slice(ip.as_bytes());
             }
             Self::PlayerLogout { user37 } => {
                 buf.push(EtherOutboundOp::PlayerLogout as u8);
@@ -195,15 +207,28 @@ impl EtherOutbound {
                 user37,
                 pid,
                 private_mode,
+                ip,
             } => {
                 buf.push(EtherOutboundOp::PlayerResync as u8);
                 buf.extend_from_slice(&user37.to_be_bytes());
                 buf.extend_from_slice(&pid.to_be_bytes());
                 buf.push(*private_mode);
+                buf.extend_from_slice(ip.as_bytes());
             }
-            Self::LoginCheck { user37 } => {
+            Self::LoginCheck {
+                user37,
+                max_per_ip,
+                ip,
+            } => {
                 buf.push(EtherOutboundOp::LoginCheck as u8);
                 buf.extend_from_slice(&user37.to_be_bytes());
+                buf.push(*max_per_ip);
+                buf.extend_from_slice(ip.as_bytes());
+            }
+            Self::LoginAbort { user37, ip } => {
+                buf.push(EtherOutboundOp::LoginAbort as u8);
+                buf.extend_from_slice(&user37.to_be_bytes());
+                buf.extend_from_slice(ip.as_bytes());
             }
             Self::RefreshAll => {
                 buf.push(EtherOutboundOp::RefreshAll as u8);
@@ -288,12 +313,17 @@ impl EtherInbound {
                 Some(Self::FriendListComplete { target37 })
             }
             op if op == EtherInboundOp::LoginCheckResponse as u8 => {
-                if payload.len() < 9 {
+                if payload.len() < 10 {
                     return None;
                 }
                 let user37 = u64::from_be_bytes(payload[0..8].try_into().ok()?);
                 let allowed = payload[8] != 0;
-                Some(Self::LoginCheckResponse { user37, allowed })
+                let ip_limited = payload[9] == 2;
+                Some(Self::LoginCheckResponse {
+                    user37,
+                    allowed,
+                    ip_limited,
+                })
             }
             op if op == EtherInboundOp::WorldReady as u8 => Some(Self::WorldReady),
             _ => {
@@ -353,6 +383,7 @@ pub async fn ether_client_task(
                 {
                     warn!("Ether connection lost: {}", e);
                 }
+                let _ = inbound_tx.send(EtherInbound::EtherDisconnected);
             }
             Err(e) => {
                 warn!("Ether connect failed: {} (retry in {:?})", e, backoff);
@@ -429,6 +460,14 @@ async fn run_connection(
         if ready {
             break;
         }
+    }
+
+    let mut dropped = 0;
+    while outbound_rx.try_recv().is_ok() {
+        dropped += 1;
+    }
+    if dropped > 0 {
+        info!("Ether reconnect: dropped {dropped} stale outbound messages");
     }
 
     if let Some(tx) = ready_tx.take() {

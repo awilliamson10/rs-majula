@@ -42,12 +42,9 @@ impl Engine {
                 DbResponse::DbDisconnected => {
                     self.db_ready = false;
                     warn!("DB disconnected - logins disabled");
-                    for pending in self.pending_logins.drain(..) {
-                        let _ = pending
-                            .request
-                            .handle
-                            .outbox
-                            .send(vec![LoginResponse::LoginServerOffline as u8]);
+                    while !self.pending_logins.is_empty() {
+                        let idx = self.pending_logins.len() - 1;
+                        self.reject_pending_login(idx, LoginResponse::LoginServerOffline);
                     }
                 }
                 DbResponse::AuthResponse { user37, success } => {
@@ -56,12 +53,7 @@ impl Engine {
                             self.pending_logins[idx].auth_ok = true;
                             self.try_complete_login(idx);
                         } else {
-                            let pending = self.pending_logins.swap_remove(idx);
-                            let _ = pending
-                                .request
-                                .handle
-                                .outbox
-                                .send(vec![LoginResponse::InvalidCredentials as u8]);
+                            self.reject_pending_login(idx, LoginResponse::InvalidCredentials);
                         }
                     }
                 }

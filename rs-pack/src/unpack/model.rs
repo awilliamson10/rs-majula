@@ -182,8 +182,6 @@ fn axis_flags_name(flags: u8) -> &'static str {
     }
 }
 
-// ── Base extraction ─────────────────────────────────────────────────────
-
 fn extract_bases(
     head: &[u8],
     type_data: &[u8],
@@ -256,8 +254,6 @@ fn extract_bases(
     )?;
     Ok(count)
 }
-
-// ── Frame extraction ────────────────────────────────────────────────────
 
 fn extract_frames(
     head: &[u8],
@@ -333,8 +329,6 @@ fn extract_frames(
     )?;
     Ok(count)
 }
-
-// ── OB2 extraction ──────────────────────────────────────────────────────
 
 fn extract_ob2(
     head: &[u8],

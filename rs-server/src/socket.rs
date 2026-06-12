@@ -31,7 +31,8 @@ pub async fn handshake(mut client: Socket) -> anyhow::Result<()> {
                 bail!("empty bytes")
             };
             let mut buf = Packet::from(bytes);
-            match LoginType::try_from(buf.g1())? {
+            let login_type = LoginType::try_from(buf.g1())?;
+            match login_type {
                 LoginType::New | LoginType::Reconnect => {
                     let waiting = buf.g1(); // the amount of bytes in this login payload.
                     if waiting != buf.len().saturating_sub(buf.pos) as u8 {
@@ -99,6 +100,7 @@ pub async fn handshake(mut client: Socket) -> anyhow::Result<()> {
                             password: Box::from(password),
                             low_memory,
                             remote_addr: client.addr,
+                            reconnect: matches!(login_type, LoginType::Reconnect),
                         })
                         .is_err()
                     {

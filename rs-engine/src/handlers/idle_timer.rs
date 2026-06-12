@@ -20,8 +20,8 @@ use rs_vm::ScriptError;
 ///
 /// # Side Effects
 ///
-/// * In release: sets `player.logout_requested` to `true`.
-/// * In debug: sets `player.logout_requested` to `false`.
+/// * In release: sets `player.logout_idle_requested` to `true`.
+/// * In debug: sets `player.logout_idle_requested` to `false`.
 ///
 /// # Call Stack
 ///
@@ -30,11 +30,11 @@ impl ClientGameHandler for IdleTimer {
     fn handle(self, active: &mut ActivePlayer) -> Result<(), ScriptError> {
         #[cfg(debug_assertions)]
         {
-            active.player.logout_requested = false;
+            active.player.logout_idle_requested = false;
         }
         #[cfg(not(debug_assertions))]
         {
-            active.player.logout_requested = true;
+            active.player.logout_idle_requested = true;
         }
 
         Ok(())

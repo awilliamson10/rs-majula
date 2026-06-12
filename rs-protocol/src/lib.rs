@@ -61,6 +61,7 @@ pub enum LoginResponse {
     MembersOnly = 12,
     CouldNotComplete = 13,
     ServerUpdating = 14,
+    Reconnect = 15,
     TooManyAttempts = 16,
     MembersArea = 17,
     SuccessModerator = 18,

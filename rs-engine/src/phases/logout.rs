@@ -10,20 +10,40 @@ use rs_vm::subject::ScriptSubject;
 use rs_vm::trigger::ServerTriggerType;
 use tracing::{error, info};
 
+/// Ticks a disconnected player remains in-world before a logout is requested
+/// (30 seconds). The grace window exists so a client that lost its connection
+/// can reconnect (login type 18) and adopt the session instead of being
+/// logged out -- mirroring the reference engine's `TIMEOUT_NO_CONNECTION`.
+/// The request path respects logout prevention (e.g. combat), and is
+/// re-requested every tick after the window while the player stays
+/// disconnected.
+const TIMEOUT_NO_CONNECTION: u64 = 50;
+
+/// Ticks without any inbound packet before a player is force-logged-out
+/// (60 seconds), bypassing logout prevention`. This is the backstop for silently dead
+/// connections (no FIN/RST ever arrives, so no disconnect signal fires): a
+/// live client always sends keepalives well within this window. Bots are
+/// exempt (they never send packets).
+const TIMEOUT_NO_RESPONSE: u64 = 100;
+
 impl Engine {
     /// Processes the logout phase of the engine tick cycle.
     ///
     /// Iterates over every active player and handles pending disconnection
     /// or voluntary logout:
     ///
-    /// 1. Checks the player's `disconnect_rx` channel and sets
-    ///    `logout_requested` if a disconnect signal is received.
-    /// 2. If a logout is already in progress (`logout_sent`), the player is
+    /// 1. Checks the player's `disconnect_rx` channel and records the
+    ///    disconnect tick in `disconnected_at`. The player lingers in-world
+    ///    for [`TIMEOUT_NO_CONNECTION`] ticks (reconnect grace window)
+    ///    before a logout is requested.
+    /// 2. Players with no inbound traffic for [`TIMEOUT_NO_RESPONSE`] ticks
+    ///    are force-logged-out, bypassing logout prevention.
+    /// 3. If a logout is already in progress (`logout_sent`), the player is
     ///    marked for removal.
-    /// 3. If a logout is requested but temporarily prevented (e.g. in
+    /// 4. If a logout is requested but temporarily prevented (e.g. in
     ///    combat), the prevention message is shown and the request is
     ///    cleared.
-    /// 4. Otherwise, calls `active.logout()` to begin the logout sequence.
+    /// 5. Otherwise, calls `active.logout()` to begin the logout sequence.
     ///
     /// For each player marked for removal, the engine:
     ///
@@ -54,19 +74,37 @@ impl Engine {
                 continue;
             };
 
-            if !active.player.logout_requested && active.handle.disconnect_rx.try_recv().is_ok() {
-                active.player.logout_requested = true;
+            if active.player.disconnected_at.is_none()
+                && active.handle.disconnect_rx.try_recv().is_ok()
+            {
+                active.player.disconnected_at = Some(self.clock);
             }
+
+            let mut force = false;
+            if !active.player.bot {
+                force = self.clock - active.player.last_response >= TIMEOUT_NO_RESPONSE;
+                if let Some(at) = active.player.disconnected_at
+                    && self.clock - at >= TIMEOUT_NO_CONNECTION
+                {
+                    active.player.logout_idle_requested = true;
+                }
+            }
+
             if active.player.logout_sent {
                 removals.push(pid);
-            } else if active.player.logout_requested {
+            } else if force {
+                active.logout();
+            } else if active.player.logout_requested || active.player.logout_idle_requested {
                 if let Some(until) = active.player.logout_prevented_until
                     && self.clock < until
                 {
-                    if let Some(msg) = active.player.logout_prevented_message.take() {
+                    if active.player.logout_requested
+                        && let Some(msg) = active.player.logout_prevented_message.take()
+                    {
                         active.message_game(&msg);
                     }
                     active.player.logout_requested = false;
+                    active.player.logout_idle_requested = false;
                     continue;
                 }
                 active.logout();

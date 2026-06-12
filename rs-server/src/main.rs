@@ -40,9 +40,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static SIDECAR_PID: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(debug_assertions)]
-const MAX_CONNECTIONS_PER_IP: usize = 2;
+const MAX_CONNECTIONS_PER_IP: usize = 4;
 #[cfg(not(debug_assertions))]
-const MAX_CONNECTIONS_PER_IP: usize = 1;
+const MAX_CONNECTIONS_PER_IP: usize = 2;
 
 #[derive(Clone)]
 pub struct ConnectionGuard {
@@ -280,19 +280,16 @@ async fn bootstrap(
     info!("TCP Port: {}", tcp_port);
     info!("RSA: {:?}", args.private_key);
 
-    // ── 1. Pack sources & build CacheStore ──────────────────────────────────
     info!("Packing content sources & building CacheStore...");
     let (store, scripts) =
         rs_pack::pack_all(Path::new("content"), Path::new("content/pack"), args.verify)?;
     let cache_ptr_val = Box::into_raw(store) as usize;
     let cache: &'static CacheStore = unsafe { &*(cache_ptr_val as *const CacheStore) };
 
-    // ── 2. RSA key pair ───────────────────────────────────────────────────────
     info!("Loading RSA key pair...");
     let rsa_path = Path::new(&args.private_key);
     let rsa: &'static RsaKey = Box::leak(Box::new(load_rsa_key(rsa_path)?));
 
-    // ── 3. Start ether sidecar and wait for connection ───────────────────────
     let (ether_tx, ether_rx) = {
         let (outbound_tx, outbound_rx) = unbounded_channel::<EtherOutbound>();
         let (inbound_tx, inbound_rx) = unbounded_channel::<EtherInbound>();
@@ -334,7 +331,6 @@ async fn bootstrap(
         (Some(outbound_tx), inbound_rx)
     };
 
-    // ── 4. Start DB client background task ──────────────────────────────────
     let (db_tx, db_rx) = {
         let (req_tx, req_rx) = unbounded_channel::<rs_engine::DbRequest>();
         let (resp_tx, resp_rx) = unbounded_channel::<rs_engine::DbResponse>();
@@ -352,7 +348,6 @@ async fn bootstrap(
         (Some(req_tx), resp_rx)
     };
 
-    // ── 5. Create World and spawn tick task ────────────────────────────────────
     let (new_player_tx, new_player_rx) = unbounded_channel();
     let (reload_tx, reload_rx) = unbounded_channel();
     let (reload_world_tx, reload_world_rx) = unbounded_channel();
@@ -376,7 +371,6 @@ async fn bootstrap(
     tokio::spawn(engine_tick(engine, reload_rx, clock_rate_rx));
     info!("Engine clock task spawned (600ms cycle)");
 
-    // ── 4. Spawn hot-reload coordinator (debug only) ─────────────────────────
     #[cfg(debug_assertions)]
     tokio::spawn(reload_coordinator(
         args.verify,
@@ -387,14 +381,12 @@ async fn bootstrap(
     #[cfg(not(debug_assertions))]
     drop(trigger_rx);
 
-    // ── 5. Create server IO ─────────────────────────────────────────────────
     let server_state = ServerIO {
         cache,
         rsa,
         new_player_tx,
     };
 
-    // ── 6. Accept connections ──────────────────────────────
     let guard = ConnectionGuard::new();
 
     tokio::spawn(http::serve(
