@@ -850,8 +850,18 @@ impl ActivePlayer {
 
     /// Sends a full inventory update to the client for the given component.
     pub fn update_inv_full(&mut self, com: u16, objs: &[Option<(u16, i32)>]) {
+        // prevent a client crash by capping to inv size || interface size
+        let size = cache()
+            .interfaces
+            .get_by_id(com)
+            .map(|c| c.width as usize * c.height as usize)
+            .unwrap_or(objs.len())
+            .min(objs.len());
         self.write(
-            rs_protocol::network::game::server::update_inv_full::UpdateInvFull { com, objs },
+            rs_protocol::network::game::server::update_inv_full::UpdateInvFull {
+                com,
+                objs: &objs[..size],
+            },
         );
     }
 
