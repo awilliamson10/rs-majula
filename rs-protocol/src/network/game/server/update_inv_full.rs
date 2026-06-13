@@ -13,9 +13,11 @@ pub struct UpdateInvFull<'a> {
 
 impl ServerProtMessage for UpdateInvFull<'_> {
     fn encode(&self, buf: &mut Packet) {
+        // only send up to the last slot in use (anything beyond is cleared by the client)
+        let max = self.find_max_pos();
         buf.p2(self.com);
-        buf.p1(self.objs.len() as u8);
-        for obj in self.objs {
+        buf.p1(max as u8);
+        for obj in &self.objs[..max] {
             match obj {
                 None => {
                     buf.p2(0);
@@ -36,15 +38,26 @@ impl ServerProtMessage for UpdateInvFull<'_> {
     }
 
     fn sizeof(&self) -> usize {
+        let max = self.find_max_pos();
         size_of_val(&self.com)
             + 1
-            + self
-                .objs
+            + self.objs[..max]
                 .iter()
                 .map(|obj| match obj {
                     None => 3,
                     Some(obj) => 2 + if obj.1 >= u8::MAX as i32 { 5 } else { 1 },
                 })
                 .sum::<usize>()
+    }
+}
+
+impl UpdateInvFull<'_> {
+    fn find_max_pos(&self) -> usize {
+        let max = self
+            .objs
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |i| i + 1);
+        max
     }
 }
