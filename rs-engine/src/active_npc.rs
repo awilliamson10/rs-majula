@@ -1,5 +1,6 @@
 use rs_entity::{EntityLifeTime, Npc, NpcUid};
 use rs_grid::CoordGrid;
+use rs_info::FocusKind;
 use rs_pack::cache::CacheStore;
 use rs_pack::types::{BlockWalk, MoveRestrict, NpcStat};
 use rs_protocol::network::game::info_prot::NpcInfoProt;
@@ -266,7 +267,8 @@ impl ActiveNpc {
     /// Teleports this NPC to the given coordinate.
     ///
     /// The teleport is silently ignored if the target zone is not allocated
-    /// in the collision map.
+    /// in the collision map. If the destination is on a
+    /// different level, a jump flag is set.
     ///
     /// # Arguments
     /// * `coord` - The destination coordinate.
@@ -274,11 +276,18 @@ impl ActiveNpc {
     /// # Side Effects
     /// * Sets `npc.pathing.coord` and marks `npc.pathing.tele = true` so the
     ///   info encoder transmits the NPC as removed then re-added.
+    /// * Sets `npc.jump = true` when changing levels.
     pub fn tele(&mut self, coord: CoordGrid) {
-        if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
-            return;
+        match self.npc.pathing.teleport(coord) {
+            None => {}
+            Some((look_x, look_z)) => {
+                self.npc.info.focus(
+                    FocusKind::Npc,
+                    CoordGrid::fine(look_x, self.npc.pathing.size),
+                    CoordGrid::fine(look_z, self.npc.pathing.size),
+                    false,
+                );
+            }
         }
-        self.npc.pathing.coord = coord;
-        self.npc.pathing.tele = true;
     }
 }

@@ -471,6 +471,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             {
                 npc.clear_interaction();
                 npc.set_mode(Some(mode as u8));
+                if mode == NpcMode::Patrol as i32 {
+                    npc.clear_patrol();
+                }
                 return Ok(());
             }
 

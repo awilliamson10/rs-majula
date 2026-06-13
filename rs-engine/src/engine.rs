@@ -5171,6 +5171,16 @@ impl ScriptNpc for ActiveNpc {
         self.npc.clear_interaction();
     }
 
+    /// Resets the NPC's patrol progress.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptNpc` trait (`NPC_SETMODE`)
+    /// **Calls:** `Npc::clear_patrol`
+    fn clear_patrol(&mut self) {
+        self.npc.clear_patrol();
+    }
+
     /// Resets the NPC to its default spawn state.
     ///
     /// Reads default mode, hunt mode, hunt range, and timer interval from the NPC type

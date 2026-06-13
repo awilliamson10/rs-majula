@@ -1203,12 +1203,14 @@ impl Engine {
             && active.npc.pathing.coord.z() == active.npc.spawn_coord.z()
             && active.npc.pathing.coord.y() == active.npc.spawn_coord.y();
 
-        active.npc.wander_counter += 1;
-        if active.npc.wander_counter >= 500 {
+        // Npc should teleport 501 ticks after its last movement.
+        let stuck = active.npc.stuck_counter;
+        active.npc.stuck_counter += 1;
+        if stuck > 500 {
             if !on_spawn {
                 active.tele(active.npc.spawn_coord);
             }
-            active.npc.wander_counter = 0;
+            active.npc.stuck_counter = 0;
         }
     }
 
@@ -1217,7 +1219,8 @@ impl Engine {
     /// Walks the NPC through the patrol points defined in its NPC type.
     /// At each waypoint, pauses for the configured delay before advancing
     /// to the next point. If the NPC fails to reach a patrol point within
-    /// 30 ticks, it is teleported there.
+    /// 32 ticks of its last movement -- or the point is on another floor --
+    /// it is teleported there.
     ///
     /// # Safety Note
     ///
@@ -1237,53 +1240,48 @@ impl Engine {
         let Some(patrol) = &npc_type.patrol else {
             return;
         };
+
+        // No patrol points configured: just process movement and bail.
         if patrol.is_empty() {
-            return;
-        }
-
-        let point_idx = active.npc.next_patrol_point as usize % patrol.len();
-        let patrol_point = &patrol[point_idx];
-        let dest = CoordGrid::from(patrol_point.coord as u32);
-        let patrol_delay = patrol_point.delay as i64;
-
-        Self::npc_process_movement(active);
-
-        if !active.npc.pathing.has_waypoints() && active.npc.interaction.target.is_none() {
-            active.npc.pathing.queue_waypoint(dest.x(), dest.z());
-        }
-
-        let clock = engine().clock as i64;
-
-        if !(active.npc.pathing.coord.x() == dest.x() && active.npc.pathing.coord.z() == dest.z())
-            && active.npc.next_patrol_tick > -1
-            && clock >= active.npc.next_patrol_tick
-        {
-            active.tele(dest);
-        }
-
-        if active.npc.pathing.coord.x() == dest.x()
-            && active.npc.pathing.coord.z() == dest.z()
-            && !active.npc.delayed_patrol
-        {
-            active.npc.next_patrol_tick = clock + patrol_delay;
-            active.npc.delayed_patrol = true;
-        }
-
-        if active.npc.next_patrol_tick > clock {
+            Self::npc_process_movement(active);
             return;
         }
 
         let len = patrol.len();
-        active.npc.next_patrol_point = ((point_idx + 1) % len) as u8;
-        active.npc.next_patrol_tick = clock + 30;
-        active.npc.delayed_patrol = false;
+        let point_idx = active.npc.next_patrol_point as usize % len;
+        let mut dest = CoordGrid::from(patrol[point_idx].coord as u32);
 
-        let next_idx = active.npc.next_patrol_point as usize % len;
-        let next_dest = CoordGrid::from(patrol[next_idx].coord as u32);
-        active
-            .npc
-            .pathing
-            .queue_waypoint(next_dest.x(), next_dest.z());
+        if !active.npc.pathing.has_waypoints() && active.npc.interaction.target.is_none() {
+            // requeue waypoints in cases where an npc was interacting and the interaction has been cleared
+            active.npc.pathing.queue_waypoint(dest.x(), dest.z());
+        }
+
+        active.npc.stuck_counter += 1;
+
+        // Npc should teleport 32 ticks after its last movement, or if it needs to change floors.
+        if active.npc.stuck_counter >= 32 || active.npc.pathing.coord.y() != dest.y() {
+            active.tele(dest);
+            active.npc.stuck_counter = 0;
+        }
+
+        if active.npc.pathing.coord.x() == dest.x() && active.npc.pathing.coord.z() == dest.z() {
+            // If the patrol delay is uninitialized, seed it from this point's delay.
+            if active.npc.patrol_delay_ticks_remaining < 0 {
+                active.npc.patrol_delay_ticks_remaining = patrol[point_idx].delay as i64;
+            }
+
+            let remaining = active.npc.patrol_delay_ticks_remaining;
+            active.npc.patrol_delay_ticks_remaining -= 1;
+            if remaining <= 0 {
+                active.npc.next_patrol_point = ((point_idx + 1) % len) as u8;
+                active.npc.patrol_delay_ticks_remaining = -1;
+                let next_idx = active.npc.next_patrol_point as usize % len;
+                dest = CoordGrid::from(patrol[next_idx].coord as u32);
+                active.npc.pathing.queue_waypoint(dest.x(), dest.z());
+            }
+        }
+
+        Self::npc_process_movement(active);
     }
 
     /// Handles the `PlayerEscape` NPC mode (flee from a player).
@@ -1460,8 +1458,8 @@ impl Engine {
     #[inline(always)]
     fn npc_ai_mode(active: *mut ActiveNpc) {
         let active = unsafe { &mut *active };
-        // Reset wander timer
-        active.npc.wander_counter = 0;
+        // Reset the stuck timer if the npc runs its ai mode
+        active.npc.stuck_counter = 0;
 
         // Try to interact before moving (allow Op on scenery)
         if Self::npc_try_interact(active, true) {
@@ -1744,10 +1742,16 @@ impl Engine {
     fn npc_process_movement(active: *mut ActiveNpc) -> bool {
         let active = unsafe { &mut *active };
         let members = engine().members;
-        active
-            .npc
-            .pathing
-            .process_movement(members, &mut active.npc.info, FocusKind::Npc)
+        let moved =
+            active
+                .npc
+                .pathing
+                .process_movement(members, &mut active.npc.info, FocusKind::Npc);
+        if moved {
+            // Reset the stuck timer whenever the npc actually moves.
+            active.npc.stuck_counter = 0;
+        }
+        moved
     }
 
     /// Resets an NPC to its default mode, hunt, and timer configuration

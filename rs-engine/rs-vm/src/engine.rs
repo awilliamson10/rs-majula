@@ -1485,6 +1485,10 @@ pub trait ScriptNpc {
     /// Clears the NPC's current interaction target.
     fn clear_interaction(&mut self);
 
+    /// Resets the NPC's patrol progress (point index, stuck timer, and delay
+    /// countdown) so it restarts its route from the beginning.
+    fn clear_patrol(&mut self);
+
     /// Resets the NPC to its default spawn state, clearing temporary
     /// transformations, variables, and interaction state.
     fn reset_defaults(&mut self);

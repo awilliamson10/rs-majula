@@ -26,7 +26,7 @@ pub struct Npc {
     pub default_mode: NpcMode,
     pub wander_range: u8,
     pub max_range: u16,
-    pub wander_counter: u16,
+    pub stuck_counter: u16,
     pub info: EntityMasks,
     pub interaction: InteractionState,
     pub target_player: Option<u16>,
@@ -44,8 +44,7 @@ pub struct Npc {
     pub timer_clock: u16,
     pub regen_clock: i16,
     pub next_patrol_point: u8,
-    pub next_patrol_tick: i64,
-    pub delayed_patrol: bool,
+    pub patrol_delay_ticks_remaining: i64,
     pub observers: u16,
     pub revert_at: Option<u64>,
     pub revert_reset: bool,
@@ -81,7 +80,7 @@ impl Npc {
             default_mode: NpcMode::None,
             wander_range: 0,
             max_range: 0,
-            wander_counter: 0,
+            stuck_counter: 0,
             info: EntityMasks::new(),
             interaction: InteractionState::new(),
             target_player: None,
@@ -99,8 +98,7 @@ impl Npc {
             timer_clock: 0,
             regen_clock: 0,
             next_patrol_point: 0,
-            next_patrol_tick: -1,
-            delayed_patrol: false,
+            patrol_delay_ticks_remaining: -1,
             observers: 0,
             revert_at: None,
             revert_reset: false,
@@ -122,6 +120,17 @@ impl Npc {
         self.interaction.target_op = Some(NpcMode::None as u8);
         self.info.face_entity = None;
         self.info.face_entity_npc();
+    }
+
+    /// Resets patrol progress so the NPC restarts its route from the first
+    /// point with a fresh stuck timer and an uninitialized delay countdown.
+    ///
+    /// # Side Effects
+    /// * Resets `next_patrol_point`, `stuck_counter`, and `patrol_delay_ticks_remaining`.
+    pub fn clear_patrol(&mut self) {
+        self.next_patrol_point = 0;
+        self.stuck_counter = 0;
+        self.patrol_delay_ticks_remaining = -1;
     }
 
     /// Sets a new interaction target for this NPC.
@@ -196,6 +205,7 @@ impl Npc {
         self.hunt_clock = 0;
         self.hunt_target = None;
         self.timer_interval = timer_interval;
+        self.stuck_counter = 0;
     }
 
     /// Sets the NPC's orientation to face south (its default idle direction).

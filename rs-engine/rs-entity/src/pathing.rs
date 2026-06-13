@@ -192,6 +192,49 @@ impl PathingEntity {
         self.waypoint_index = -1;
     }
 
+    /// Teleports this PathingEntity to the given coordinate.
+    ///
+    /// The teleport is silently ignored if the target zone is not allocated
+    /// in the collision map. If the destination is on a
+    /// different level, a jump flag is set.
+    ///
+    /// # Arguments
+    /// * `coord` - The destination coordinate.
+    ///
+    /// # Side Effects
+    /// * Sets `coord` and marks `tele = true`.
+    /// * Sets `jump = true` when changing levels.
+    pub fn teleport(&mut self, coord: CoordGrid) -> Option<(u16, u16)> {
+        if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
+            return None;
+        }
+
+        // Focus entity direction in the correct way when teleporting.
+        let current = self.coord;
+        let dir = face_dir(
+            current.x() as i32,
+            current.z() as i32,
+            coord.x() as i32,
+            coord.z() as i32,
+        );
+
+        let (dx, dz) = dir_delta(dir);
+        let look_x = (coord.x() as i32 + dx as i32) as u16;
+        let look_z = (coord.z() as i32 + dz as i32) as u16;
+
+        self.tele = true;
+        // If the entity changes on Y then we have to jump.
+        if coord.y() != self.coord.y() {
+            self.jump = true;
+        }
+
+        // Actually change the coord of the entity and the last stepped coord when teleporting.
+        self.coord = coord;
+        self.last_step_coord = CoordGrid::new(coord.x().saturating_sub(1), coord.y(), coord.z());
+
+        Some((look_x, look_z))
+    }
+
     /// Maps a `MoveRestrict` to the corresponding `CollisionType` for pathfinding.
     ///
     /// # Arguments
