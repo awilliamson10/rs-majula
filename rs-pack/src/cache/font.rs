@@ -138,15 +138,18 @@ impl FontType {
         }
 
         let mut lines = Vec::new();
-        let mut remaining = s;
+        let mut saved_col: Option<String> = None;
+        let mut remaining = s.to_string();
 
         while !remaining.is_empty() {
-            let width = self.string_width(remaining);
+            // check if the string even needs to be broken up
+            let width = self.string_width(&remaining);
             if width <= max_width && !remaining.contains('|') {
-                lines.push(remaining.to_string());
+                lines.push(remaining);
                 break;
             }
 
+            // we need to split on the next word boundary
             let mut split_index = remaining.len();
             let bytes = remaining.as_bytes();
 
@@ -163,8 +166,52 @@ impl FontType {
                 }
             }
 
-            lines.push(remaining[..split_index].to_string());
-            remaining = &remaining[split_index + 1..];
+            let line = remaining[..split_index].to_string();
+
+            // save color from the emitted line
+            if line.contains('@') {
+                let lb = line.as_bytes();
+                let mut i = 0;
+                while i + 4 < lb.len() {
+                    if lb[i] == b'@' && lb[i + 4] == b'@' {
+                        if &lb[i + 1..i + 4] == b"str" {
+                            saved_col = None;
+                            if lb.get(i + 5..i + 10) == Some(&b"@bla@"[..]) {
+                                i += 10;
+                                continue;
+                            }
+                        } else {
+                            saved_col = Some(line[i..i + 5].to_string());
+                        }
+                        i += 5;
+                        continue;
+                    }
+                    i += 1;
+                }
+            }
+
+            lines.push(line);
+
+            // advance past the split point
+            let start = (split_index + 1).min(remaining.len());
+            let mut next = remaining[start..].to_string();
+
+            // apply saved color to the start of the next line
+            if let Some(col) = saved_col.clone() {
+                if !next.is_empty() && !next.starts_with('|') {
+                    if let Some(str_index) = next.find("@str@") {
+                        let after = str_index + 5;
+                        if next.as_bytes().get(after..after + 5) != Some(&b"@bla@"[..]) {
+                            next.insert_str(after, "@bla@");
+                        }
+                        saved_col = None;
+                    } else {
+                        next = format!("{col}{next}");
+                    }
+                }
+            }
+
+            remaining = next;
         }
 
         lines

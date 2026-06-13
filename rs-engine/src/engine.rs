@@ -250,6 +250,57 @@ fn cancel_one_pending_obj_reveal(
     }
 }
 
+/// Reapplies the active colour tag at the start of each `\n`-delimited line so
+/// colours carry across line breaks, inserting `@bla@` after a `@str@` reset.
+///
+/// The delimiter is the literal two-character sequence `\n` (backslash + `n`), not a newline byte.
+fn preserve_settext_colors(text: &str) -> String {
+    let mut lines: Vec<String> = text.split("\\n").map(str::to_string).collect();
+    let mut saved_col: Option<String> = None;
+
+    for i in 0..lines.len() {
+        // apply the color carried over from the previous line
+        if i > 0 {
+            if let Some(col) = saved_col.clone() {
+                if !lines[i].is_empty() {
+                    let line = &mut lines[i];
+                    if let Some(str_index) = line.find("@str@") {
+                        let after = str_index + 5;
+                        if line.as_bytes().get(after..after + 5) != Some(&b"@bla@"[..]) {
+                            line.insert_str(after, "@bla@");
+                        }
+                        saved_col = None;
+                    } else {
+                        *line = format!("{col}{line}");
+                    }
+                }
+            }
+        }
+
+        // scan this line for the last color tag, tracking @str@/@bla@ resets
+        let bytes = lines[i].as_bytes();
+        let mut j = 0;
+        while j + 4 < bytes.len() {
+            if bytes[j] == b'@' && bytes[j + 4] == b'@' {
+                if &bytes[j + 1..j + 4] == b"str" {
+                    saved_col = None;
+                    if bytes.get(j + 5..j + 10) == Some(&b"@bla@"[..]) {
+                        j += 10;
+                        continue;
+                    }
+                } else {
+                    saved_col = Some(lines[i][j..j + 5].to_string());
+                }
+                j += 5;
+                continue;
+            }
+            j += 1;
+        }
+    }
+
+    lines.join("\\n")
+}
+
 pub struct PlayerList {
     pub players: Vec<Option<ActivePlayer>>,
     pub processing: HashTable<u16>,
@@ -4411,7 +4462,11 @@ impl ScriptPlayer for ActivePlayer {
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `ActivePlayer::if_settext`
     fn if_settext(&mut self, com: u16, text: &str) {
-        self.if_settext(com, text);
+        if text.contains("\\n") && text.contains('@') {
+            self.if_settext(com, &preserve_settext_colors(text));
+        } else {
+            self.if_settext(com, text);
+        }
     }
 
     /// Plays a MIDI jingle (short musical effect) for the player.
