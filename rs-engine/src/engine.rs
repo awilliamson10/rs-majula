@@ -3264,11 +3264,6 @@ impl ScriptEngine for Engine {
                     continue;
                 }
                 let Some(zone) = self.zones.zone(zx as u16, y, zz as u16) else {
-                    debug_assert!(
-                        false,
-                        "Zone not found at coord: x={}, y={}, z={}",
-                        zx, y, zz
-                    );
                     continue;
                 };
                 for loc in &zone.locs {
