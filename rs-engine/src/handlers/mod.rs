@@ -34,6 +34,7 @@ pub mod opplayeru;
 pub mod rebuild_get_maps;
 pub mod resume_p_countdialog;
 pub mod resume_pause_button;
+pub mod send_snapshot;
 pub mod tut_clickside;
 
 use crate::active_player::ActivePlayer;

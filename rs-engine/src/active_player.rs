@@ -87,6 +87,7 @@ use rs_protocol::network::game::client::opplayeru::OpPlayerU;
 use rs_protocol::network::game::client::rebuild_get_maps::RebuildGetMaps;
 use rs_protocol::network::game::client::resume_p_countdialog::ResumePCountDialog;
 use rs_protocol::network::game::client::resume_pause_button::ResumePauseButton;
+use rs_protocol::network::game::client::send_snapshot::SendSnapshot;
 use rs_protocol::network::game::client::tut_clickside::TutClickSide;
 use rs_protocol::network::game::client_prot::ClientProt;
 use rs_protocol::network::game::client_prot_category::ClientProtCategory;
@@ -1813,17 +1814,24 @@ impl EnginePlayer for ActivePlayer {
                 ClientProt::AnticheatOpLogic7 => AnticheatOpLogic7::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatOpLogic8 => AnticheatOpLogic8::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatOpLogic9 => AnticheatOpLogic9::decode(&mut buf, len).handle(self),
+                ClientProt::ChatSetMode => ChatSetMode::decode(&mut buf, len).handle(self),
                 ClientProt::ClientCheat => ClientCheat::decode(&mut buf, len).handle(self),
                 ClientProt::CloseModal => CloseModal::decode(&mut buf, len).handle(self),
                 ClientProt::EventCameraPosition => EventCameraPosition::decode(&mut buf, len).handle(self),
+                ClientProt::FriendListAdd => FriendListAdd::decode(&mut buf, len).handle(self),
+                ClientProt::FriendListDel => FriendListDel::decode(&mut buf, len).handle(self),
+                ClientProt::IdkSaveDesign => IdkSaveDesign::decode(&mut buf, len).handle(self),
                 ClientProt::IdleTimer => IdleTimer::decode(&mut buf, len).handle(self),
                 ClientProt::IfButton => IfButton::decode(&mut buf, len).handle(self),
+                ClientProt::IgnoreListAdd => IgnoreListAdd::decode(&mut buf, len).handle(self),
+                ClientProt::IgnoreListDel => IgnoreListDel::decode(&mut buf, len).handle(self),
                 ClientProt::InvButton1 => InvButton1::decode(&mut buf, len).handle(self),
                 ClientProt::InvButton2 => InvButton2::decode(&mut buf, len).handle(self),
                 ClientProt::InvButton3 => InvButton3::decode(&mut buf, len).handle(self),
                 ClientProt::InvButton4 => InvButton4::decode(&mut buf, len).handle(self),
                 ClientProt::InvButton5 => InvButton5::decode(&mut buf, len).handle(self),
                 ClientProt::InvButtonD => InvButtonD::decode(&mut buf, len).handle(self),
+                ClientProt::MessagePrivate => MessagePrivate::decode(&mut buf, len).handle(self),
                 ClientProt::MessagePublic => MessagePublic::decode(&mut buf, len).handle(self),
                 ClientProt::MoveGameClick => MoveGameClick::decode(&mut buf, len).handle(self),
                 ClientProt::MoveMinimapClick => MoveMinimapClick::decode(&mut buf, len).handle(self),
@@ -1866,14 +1874,8 @@ impl EnginePlayer for ActivePlayer {
                 ClientProt::RebuildGetMaps => RebuildGetMaps::decode(&mut buf, len).handle(self),
                 ClientProt::ResumePCountDialog => ResumePCountDialog::decode(&mut buf, len).handle(self),
                 ClientProt::ResumePauseButton => ResumePauseButton::decode(&mut buf, len).handle(self),
-                ClientProt::FriendListAdd => FriendListAdd::decode(&mut buf, len).handle(self),
-                ClientProt::FriendListDel => FriendListDel::decode(&mut buf, len).handle(self),
-                ClientProt::IgnoreListAdd => IgnoreListAdd::decode(&mut buf, len).handle(self),
-                ClientProt::IgnoreListDel => IgnoreListDel::decode(&mut buf, len).handle(self),
-                ClientProt::MessagePrivate => MessagePrivate::decode(&mut buf, len).handle(self),
-                ClientProt::ChatSetMode => ChatSetMode::decode(&mut buf, len).handle(self),
+                ClientProt::SendSnapshot => SendSnapshot::decode(&mut buf, len).handle(self),
                 ClientProt::TutClickSide => TutClickSide::decode(&mut buf, len).handle(self),
-                ClientProt::IdkSaveDesign => IdkSaveDesign::decode(&mut buf, len).handle(self),
                 _ => Err(ScriptError::Client(format!("Unhandled opcode: {:?}", prot))),
             };
             match result {
