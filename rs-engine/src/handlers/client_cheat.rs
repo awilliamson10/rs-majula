@@ -135,6 +135,8 @@ fn cheat_developer(
         "minme" => cheat_minme(active),
         "givecrap" => cheat_give_crap(active),
         "speed" => cheat_engine_speed(&mut args, active),
+        "reboot" => cheat_reboot(),
+        "slowreboot" => cheat_slow_reboot(&mut args),
         "bots" => cheat_spawn_bots(active),
         "locadd" => cheat_loc_add(&mut args, active),
         "npcadd" => cheat_npc_add(&mut args, active),
@@ -550,6 +552,28 @@ fn cheat_engine_speed(
         engine().set_clock_rate(speed);
         active.message_game(&format!("Engine clock rate changed to: {}ms", speed));
     }
+    Ok(())
+}
+
+/// Reboots the game world immediately.
+///
+/// Usage: `::reboot` (no arguments).
+fn cheat_reboot() -> Result<(), ScriptError> {
+    engine_mut().reboot_timer(0);
+    Ok(())
+}
+
+/// Reboots the game world after `<seconds>` (default 30), giving players a
+/// visible countdown.
+///
+/// Usage: `::slowreboot <seconds>` (e.g. `::slowreboot 60`).
+fn cheat_slow_reboot(args: &mut Split<char>) -> Result<(), ScriptError> {
+    let Some(arg) = args.next() else {
+        return Ok(());
+    };
+    let seconds = arg.parse::<i64>().unwrap_or(30).max(0) as u64;
+    let clocks = seconds.saturating_mul(1000).saturating_add(599) / 600;
+    engine_mut().reboot_timer(clocks);
     Ok(())
 }
 

@@ -116,11 +116,15 @@ pub async fn db_client_task(
                 sync_local_saves(&mut client).await;
                 let _ = response_tx.send(DbResponse::DbReady);
 
-                if let Err(e) =
-                    run_requests(&mut client, &pepper, &mut request_rx, &response_tx).await
-                {
-                    warn!("DB connection lost: {}", e);
-                    let _ = response_tx.send(DbResponse::DbDisconnected);
+                match run_requests(&mut client, &pepper, &mut request_rx, &response_tx).await {
+                    Ok(()) => {
+                        info!("DB request channel closed -- stopping DB client task");
+                        return;
+                    }
+                    Err(e) => {
+                        warn!("DB connection lost: {}", e);
+                        let _ = response_tx.send(DbResponse::DbDisconnected);
+                    }
                 }
             }
             Err(e) => {

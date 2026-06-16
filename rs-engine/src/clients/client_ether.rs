@@ -372,7 +372,7 @@ pub async fn ether_client_task(
             Ok(stream) => {
                 info!("Ether client connected to {}", addr);
                 backoff = Duration::from_secs(1);
-                if let Err(e) = run_connection(
+                match run_connection(
                     stream,
                     node_id,
                     &mut outbound_rx,
@@ -381,9 +381,15 @@ pub async fn ether_client_task(
                 )
                 .await
                 {
-                    warn!("Ether connection lost: {}", e);
+                    Ok(()) => {
+                        info!("Ether outbound channel closed -- stopping ether client task");
+                        return;
+                    }
+                    Err(e) => {
+                        warn!("Ether connection lost: {}", e);
+                        let _ = inbound_tx.send(EtherInbound::EtherDisconnected);
+                    }
                 }
-                let _ = inbound_tx.send(EtherInbound::EtherDisconnected);
             }
             Err(e) => {
                 warn!("Ether connect failed: {} (retry in {:?})", e, backoff);

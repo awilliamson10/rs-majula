@@ -22,6 +22,7 @@ use rs_pack::types::{BlockWalk, LocAngle, LocLayer, LocShape, NpcMode, PlayerSta
 use rs_protocol::LoginResponse;
 use rs_protocol::network::game::info_prot::{NpcInfoProt, PlayerInfoProt};
 use rs_protocol::network::game::server::obj_count::ObjCount;
+use rs_protocol::network::game::server::update_reboot_timer::UpdateRebootTimer;
 use rs_util::random::JavaRandom;
 use rs_var::VarSet;
 use rs_vm::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, engine_typed, engine_typed_mut};
@@ -463,6 +464,7 @@ impl NpcList {
 /// it is *not* `Sync` and must never be shared across threads.
 pub struct Engine {
     pub clock: u64,
+    pub shutdown_clock: Option<u64>,
     pub members: bool,
     pub multi_xp: u8,
     pub client_pathfinder: bool,
@@ -578,6 +580,7 @@ impl Engine {
 
         let mut engine = Self {
             clock: 0,
+            shutdown_clock: None,
             members,
             multi_xp,
             client_pathfinder,
@@ -627,6 +630,19 @@ impl Engine {
 // Cycle orchestration
 // -----------------------------------------------------------------------
 
+/// Outcome of a single [`Engine::cycle`], telling the driver loop how to proceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CycleResult {
+    /// Cycle completed normally; keep ticking.
+    Continue,
+    /// A phase panicked fatally. Players were emergency-saved and removed; the
+    /// driver should stop the engine.
+    Fatal,
+    /// A scheduled reboot has fully drained the world (no players remain). The
+    /// driver should flush pending saves and exit the process cleanly.
+    Shutdown,
+}
+
 impl Engine {
     /// Executes one full game tick, running every engine phase in sequence.
     ///
@@ -635,9 +651,9 @@ impl Engine {
     /// 2. **input** -- read and dispatch client packets.
     /// 3. **npcs** -- NPC AI timers, movement, and scripts.
     /// 4. **players** -- player timers, queued actions, and movement.
-    /// 5. **logouts** -- finalise any pending player disconnections.
+    /// 5. **logouts** -- finalize any pending player disconnections.
     /// 6. **autosave** -- periodic persistence of online player data.
-    /// 7. **logins** -- accept and initialise new player sessions.
+    /// 7. **logins** -- accept and initialize new player sessions.
     /// 8. **ether** -- process cross-world (ether) messages.
     /// 9. **saves** -- process database save responses.
     /// 10. **zones** -- build and buffer zone update messages.
@@ -661,7 +677,7 @@ impl Engine {
     /// **Calls:** `world`, `inputs`, `npcs`, `players`, `logouts`, `autosave`,
     /// `logins`, `ether`, `saves`, `zones`, `infos`, `outputs`, `cleanups`.
     #[rustfmt::skip]
-    pub fn cycle(&mut self) -> bool {
+    pub fn cycle(&mut self) -> CycleResult {
         let engine = self as *mut Engine;
         with_engine(self, || {
             let engine = unsafe { &mut *engine };
@@ -702,7 +718,11 @@ impl Engine {
                     error!("emergency removing player {pid} due to fatal phase panic");
                     engine.emergency_remove_player(pid);
                 }
-                return true;
+                return CycleResult::Fatal;
+            }
+
+            if engine.is_shutdown() && engine.process_shutdown() {
+                return CycleResult::Shutdown;
             }
 
             let cycle = start.elapsed();
@@ -758,7 +778,7 @@ impl Engine {
                 cleanup.as_secs_f64() * 1000.0,
             );
 
-            false
+            CycleResult::Continue
         })
     }
 
@@ -775,6 +795,110 @@ impl Engine {
     /// this channel and adjusts its sleep duration accordingly.
     pub fn set_clock_rate(&self, ms: u64) {
         let _ = self.clock_rate_tx.send(ms);
+    }
+}
+
+// -----------------------------------------------------------------------
+// Reboot / maintenance shutdown
+// -----------------------------------------------------------------------
+
+impl Engine {
+    /// Whether the scheduled shutdown clock has arrived -- the world is now
+    /// being drained towards an orderly stop.
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown_clock.is_some_and(|tick| self.clock >= tick)
+    }
+
+    /// Whether the server is shutting down within the next 30 seconds
+    /// (50 ticks). New logins are refused from this point onward.
+    pub fn is_shutdown_soon(&self) -> bool {
+        // currentTick >= shutdownTick - 50, rearranged to avoid underflow.
+        self.shutdown_clock
+            .is_some_and(|tick| self.clock + 50 >= tick)
+    }
+
+    /// Whether a reboot is scheduled and still in the future.
+    pub fn is_pending_shutdown(&self) -> bool {
+        self.shutdown_clock.is_some_and(|tick| tick >= self.clock)
+    }
+
+    /// Clocks remaining until the scheduled reboot, or `-1` when none is
+    /// scheduled; this is the value shown by [`UpdateRebootTimer`].
+    pub fn shutdown_ticks_remaining(&self) -> i64 {
+        match self.shutdown_clock {
+            Some(clock) => clock as i64 - self.clock as i64,
+            None => -1,
+        }
+    }
+
+    /// The remaining-ticks countdown clamped into the [`UpdateRebootTimer`]
+    /// packet's `u16` field.
+    fn reboot_timer_clocks(&self) -> u16 {
+        self.shutdown_ticks_remaining().clamp(0, u16::MAX as i64) as u16
+    }
+
+    /// Schedules a reboot/maintenance shutdown `duration` clocks from now and
+    /// shows every online player the resulting countdown. A `duration` of 0
+    /// reboots as soon as the world can be drained.
+    pub fn reboot_timer(&mut self, duration: u64) {
+        self.shutdown_clock = Some(self.clock + duration);
+        let clocks = self.reboot_timer_clocks();
+        for active in self.player_list.players.iter_mut().flatten() {
+            active.write(UpdateRebootTimer { clocks });
+        }
+        info!(
+            "Reboot scheduled in {duration} tick(s) (fires at tick {})",
+            self.clock + duration
+        );
+    }
+
+    /// Drives a triggered shutdown towards process exit. Run once per cycle from
+    /// [`Engine::cycle`] (after the clock increment) while [`Engine::is_shutdown`]
+    /// holds.
+    ///
+    /// Each cycle it asks every still-connected player to log out; the logout
+    /// phase then removes and saves them cleanly. Players still present 1024
+    /// ticks after the shutdown began are force-removed -- they had their
+    /// chance to finish processing. Once a brief grace period passes the clock
+    /// rate drops to 0 ms so the remaining logout/save flushes drain at full
+    /// speed.
+    ///
+    /// # Returns
+    ///
+    /// `true` once the world is empty (no players, no pending logins),
+    /// signaling [`Engine::cycle`] to return [`CycleResult::Shutdown`] so the
+    /// driver can flush database saves and exit the process.
+    fn process_shutdown(&mut self) -> bool {
+        // Ask every connected (non-bot) player to log out. Idempotent: once
+        // `logout_sent` is set the logout phase takes over the removal.
+        for active in self.player_list.players.iter_mut().flatten() {
+            if !active.player.bot && !active.player.logout_sent {
+                active.logout();
+            }
+        }
+
+        let duration = self.clock - self.shutdown_clock.unwrap_or(self.clock);
+
+        if duration >= 1024 {
+            // Force out anyone still here -- they had 1024 ticks to finish.
+            for pid in self.player_list.pids() {
+                error!("Player (pid={pid}) force removed during shutdown");
+                self.emergency_remove_player(pid);
+            }
+        }
+
+        if self.player_list.count() == 0 && self.pending_logins.is_empty() {
+            info!("Server shutdown complete");
+            return true;
+        }
+
+        if duration > 2 {
+            // After ~1 second (time to flush logout packets first) run flat out
+            // so the remaining players drain quickly.
+            self.set_clock_rate(0);
+        }
+
+        false
     }
 }
 
@@ -2267,6 +2391,7 @@ impl Engine {
     ///
     /// * `request` -- The original [`LoginRequest`] with the client handle.
     /// * `profile` -- The player's saved profile, or `None` for a new player.
+    /// * `pid`     -- The accepted pid to use for the active player.
     ///
     /// # Side Effects
     ///
@@ -2279,23 +2404,12 @@ impl Engine {
     ///
     /// **Called by:** `try_complete_login`.
     /// **Calls:** `next_free_pid`, `add_player`, `run_script_by_trigger`.
-    pub(crate) fn accept_login(&mut self, request: LoginRequest, profile: Option<PlayerProfile>) {
-        if self.player_list.count() >= 2000 {
-            let _ = request
-                .handle
-                .outbox
-                .send(vec![LoginResponse::WorldFull as u8]);
-            return;
-        }
-
-        let Some(pid) = self.player_list.next_pid() else {
-            let _ = request
-                .handle
-                .outbox
-                .send(vec![LoginResponse::WorldFull as u8]);
-            return;
-        };
-
+    pub(crate) fn accept_login(
+        &mut self,
+        request: LoginRequest,
+        profile: Option<PlayerProfile>,
+        pid: u16,
+    ) {
         let mut active = ActivePlayer::new(
             request.handle,
             pid,
@@ -2359,6 +2473,13 @@ impl Engine {
         } else {
             None
         };
+
+        if self.is_pending_shutdown() {
+            let clocks = self.reboot_timer_clocks();
+            if let Some(active) = self.get_player_mut(pid) {
+                active.write(UpdateRebootTimer { clocks });
+            }
+        }
 
         if let (Some(user37), Some(tx)) = (user37, &self.ether_tx) {
             let _ = tx.send(EtherOutbound::PlayerLogin {
@@ -2577,6 +2698,21 @@ impl Engine {
             return;
         }
 
+        if self.is_shutdown_soon() {
+            self.reject_pending_login(idx, LoginResponse::ServerUpdating);
+            return;
+        }
+
+        if self.player_list.count() >= 2000 {
+            self.reject_pending_login(idx, LoginResponse::WorldFull);
+            return;
+        }
+
+        let Some(pid) = self.player_list.next_pid() else {
+            self.reject_pending_login(idx, LoginResponse::WorldFull);
+            return;
+        };
+
         if pending.profile.is_none() {
             if let Some(tx) = &self.db_tx {
                 let _ = tx.send(DbRequest::Load {
@@ -2587,7 +2723,7 @@ impl Engine {
         }
         let pending = self.pending_logins.swap_remove(idx);
         let profile = pending.profile.unwrap();
-        self.accept_login(pending.request, profile);
+        self.accept_login(pending.request, profile, pid);
     }
 
     /// Finds the pid of an online player by their Base37-encoded username.

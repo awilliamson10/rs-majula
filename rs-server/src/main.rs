@@ -14,7 +14,7 @@ use clap::Parser;
 use futures_util::SinkExt;
 use mpsc::{UnboundedReceiver, unbounded_channel};
 use rs_crypto::rsa::{RsaKey, load_rsa_key};
-use rs_engine::Engine;
+use rs_engine::{CycleResult, Engine};
 use rs_engine::{EtherInbound, EtherOutbound, ether_client_task};
 use rs_engine::{LoginRequest, TickStats};
 use rs_pack::cache::CacheStore;
@@ -35,7 +35,10 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::util::SubscriberInitExt;
 use watch::{Receiver, Sender, channel};
 
+use crossterm::execute;
+use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
 use std::sync::atomic::{AtomicU32, Ordering};
+use time::MissedTickBehavior;
 
 static SIDECAR_PID: AtomicU32 = AtomicU32::new(0);
 
@@ -90,10 +93,19 @@ struct ShutdownGuard;
 
 impl Drop for ShutdownGuard {
     fn drop(&mut self) {
-        shutdown_sidecar();
-        let _ = crossterm::terminal::disable_raw_mode();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+        restore_terminal_and_sidecar();
     }
+}
+
+fn restore_terminal_and_sidecar() {
+    shutdown_sidecar();
+    let _ = disable_raw_mode();
+    let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+}
+
+fn graceful_exit(code: i32) -> ! {
+    restore_terminal_and_sidecar();
+    std::process::exit(code);
 }
 
 struct DbEnv {
@@ -687,34 +699,67 @@ async fn engine_tick(
     mut reload_rx: UnboundedReceiver<(Box<CacheStore>, ScriptProvider)>,
     mut clock_rate_rx: Receiver<u64>,
 ) {
-    let mut interval = time::interval(Duration::from_millis(600));
-    interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    let mut clock_ms: u64 = 600;
+    let mut interval = time::interval(Duration::from_millis(clock_ms));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                if engine.cycle() {
-                    error!("Engine shutting down due to fatal phase panic");
-                    // Close outbound channels so background tasks drain
-                    // remaining messages before exiting.
-                    engine.ether_tx = None;
-                    engine.db_tx = None;
-                    info!("Waiting for database saves to complete...");
-                    while engine.db_rx.recv().await.is_some() {}
-                    info!("All saves flushed -- shutting down");
-                    return;
-                }
-            },
-            Some((store, scripts)) = reload_rx.recv() => {
+        if clock_ms == 0 {
+            tokio::task::yield_now().await;
+            while let Ok((store, scripts)) = reload_rx.try_recv() {
                 let ptr = &raw mut engine;
                 rs_engine::with_engine(&mut engine, || {
                     unsafe { &mut *ptr }.reload_assets(store, scripts);
                 });
             }
-            Ok(()) = clock_rate_rx.changed() => {
-                let ms = *clock_rate_rx.borrow_and_update();
-                interval = time::interval(Duration::from_millis(ms));
-                interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-                info!("Engine clock rate changed to {}ms", ms);
+            if clock_rate_rx.has_changed().unwrap_or(false) {
+                clock_ms = *clock_rate_rx.borrow_and_update();
+                if clock_ms != 0 {
+                    interval = time::interval(Duration::from_millis(clock_ms));
+                    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    info!("Engine clock rate changed to {}ms", clock_ms);
+                }
+            }
+        } else {
+            tokio::select! {
+                _ = interval.tick() => {}
+                Some((store, scripts)) = reload_rx.recv() => {
+                    let ptr = &raw mut engine;
+                    rs_engine::with_engine(&mut engine, || {
+                        unsafe { &mut *ptr }.reload_assets(store, scripts);
+                    });
+                    continue;
+                }
+                Ok(()) = clock_rate_rx.changed() => {
+                    clock_ms = *clock_rate_rx.borrow_and_update();
+                    if clock_ms != 0 {
+                        interval = time::interval(Duration::from_millis(clock_ms));
+                        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    }
+                    info!("Engine clock rate changed to {}ms", clock_ms);
+                    continue;
+                }
+            }
+        }
+
+        match engine.cycle() {
+            CycleResult::Continue => {}
+            CycleResult::Fatal => {
+                error!("Engine shutting down due to fatal phase panic");
+                engine.ether_tx = None;
+                engine.db_tx = None;
+                info!("Waiting for database saves to complete...");
+                while engine.db_rx.recv().await.is_some() {}
+                info!("All saves flushed -- shutting down");
+                graceful_exit(1);
+            }
+            CycleResult::Shutdown => {
+                info!("Reboot complete -- taking the world offline");
+                engine.ether_tx = None;
+                engine.db_tx = None;
+                info!("Waiting for database saves to complete...");
+                while engine.db_rx.recv().await.is_some() {}
+                info!("All saves flushed -- server offline");
+                graceful_exit(0);
             }
         }
     }
