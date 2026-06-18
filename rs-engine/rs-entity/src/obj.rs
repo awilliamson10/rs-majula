@@ -2,68 +2,88 @@ use crate::lifetime::EntityLifeTime;
 use rs_grid::{CoordGrid, ZoneCoordGrid};
 
 /// Number of ticks after which a private ground object becomes visible to all players.
-pub const REVEAL_TICKS: u64 = 100;
+pub const REVEAL_TICKS: u32 = 100;
 /// Sentinel value indicating that a ground object has no specific receiver (visible to all).
 pub const NO_RECEIVER: u64 = u64::MAX;
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u64` -- 62 bits wide.
+/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 95 bits wide.
 
-/// Bit offset for the local zone X (`x & 0x7`) within the packed `u64`.
+/// Bit offset for the local zone X (`x & 0x7`) within the packed `u128`.
 const LOCAL_X_SHIFT: u32 = 0;
-/// Bit offset for the local zone Z (`z & 0x7`) within the packed `u64`.
+/// Bit offset for the local zone Z (`z & 0x7`) within the packed `u128`.
 const LOCAL_Z_SHIFT: u32 = 3;
-/// Bit offset for the lifetime flag within the packed `u64`.
+/// Bit offset for the lifetime flag within the packed `u128`.
 const LIFETIME_SHIFT: u32 = 6;
-/// Bit offset for the obj type id within the packed `u64`.
+/// Bit offset for the obj type id within the packed `u128`.
 const ID_SHIFT: u32 = 7;
-/// Bit offset for the stack count within the packed `u64`.
+/// Bit offset for the stack count within the packed `u128`.
 const COUNT_SHIFT: u32 = 23;
-/// Bit offset for the per-(tile, id) instance slot within the packed `u64`.
+/// Bit offset for the per-(tile, id) instance slot within the packed `u128`.
 const SLOT_SHIFT: u32 = 54;
+/// Bit offset for the "has a private receiver" flag within the packed `u128`.
+const HAS_RECEIVER_SHIFT: u32 = 62;
+/// Bit offset for the `last_clock` field within the packed `u128`.
+const LAST_CLOCK_SHIFT: u32 = 63;
 
 /// Mask for the 3-bit local-coordinate fields.
-const COORD_MASK: u64 = 0x7;
+const COORD_MASK: u128 = 0x7;
 /// Mask for the single-bit lifetime field.
-const LIFETIME_MASK: u64 = 0x1;
+const LIFETIME_MASK: u128 = 0x1;
 /// Mask for the 16-bit obj type id.
-const ID_MASK: u64 = 0xFFFF;
+const ID_MASK: u128 = 0xFFFF;
 /// Mask for the 31-bit stack count.
-const COUNT_MASK: u64 = 0x7FFFFFFF;
+const COUNT_MASK: u128 = 0x7FFFFFFF;
 /// Mask for the 8-bit instance slot.
-const SLOT_MASK: u64 = 0xFF;
+const SLOT_MASK: u128 = 0xFF;
+/// Mask for the single-bit "has receiver" flag.
+const HAS_RECEIVER_MASK: u128 = 0x1;
+/// Mask for the 32-bit `last_clock` field. Its all-ones value is the `u32::MAX`
+/// "no timer" sentinel. Bits `95..128` of the `u128` are reserved (unused).
+const LAST_CLOCK_MASK: u128 = 0xFFFFFFFF;
 
 /// A ground object (item on the floor) in the game world.
 ///
-/// The core fields (position, lifetime, id, count) are bit-packed into a single
-/// `u64`. To keep the struct compact, the position is stored as the *local*
+/// Every field is bit-packed into a single `u128`, so the struct is exactly one
+/// 16-byte. To keep the struct compact, the position is stored as the *local*
 /// offset within the owning 8x8 zone (`x & 0x7`, `z & 0x7`); the full world
 /// coordinate is reconstructed from the zone's base via
-/// [`world_coord`](Self::world_coord). The remaining fields track the player who
-/// can see it privately (receiver) and the tick at which it was last modified
-/// or scheduled for removal.
+/// [`world_coord`](Self::world_coord).
+///
+/// The player a private obj is visible to (its base37 "receiver") is *not* stored
+/// here: that value is ~63 bits, and most objs are public (no receiver), so storing
+/// it inline would bloat every obj for the rare private case. Instead a 1-bit
+/// [`has_receiver`](Self::has_receiver) flag marks private objs, and the owning
+/// [`Zone`](crate::zone::Zone) keeps the actual receiver in a side map keyed by
+/// [`oid`](Self::oid). Public objs never touch that map.
+///
+/// `last_clock` is a `u32` packed into bits `63..95` (a tick clock; the engine
+/// clock is `u32`). Its all-ones value is the `u32::MAX` "no timer" sentinel.
 ///
 /// Packed layout (bit offsets):
-/// - `0..3`   local X (`x & 0x7`)
-/// - `3..6`   local Z (`z & 0x7`)
-/// - `6`      lifetime
-/// - `7..23`  obj type id (16 bits)
-/// - `23..54` stack count (31 bits)
-/// - `54..62` instance slot (8 bits)
-/// - `62..64` unused
-#[derive(Debug, Clone)]
-pub struct Obj {
-    packed: u64,
-    pub receiver37: u64,
-    pub last_clock: u64,
-}
+/// - `0..3`    local X (`x & 0x7`)
+/// - `3..6`    local Z (`z & 0x7`)
+/// - `6`       lifetime
+/// - `7..23`   obj type id (16 bits)
+/// - `23..54`  stack count (31 bits)
+/// - `54..62`  instance slot (8 bits)
+/// - `62`      has_receiver flag
+/// - `63..95`  last_clock (32 bits)
+/// - `95..128` reserved
+#[derive(Debug, Clone, Copy)]
+pub struct Obj(u128);
+
+/// The entire obj state, `last_clock` included, lives in the single `u128`, so the
+/// struct is exactly 16 bytes. Guards against accidentally growing it.
+const _: () = assert!(size_of::<Obj>() == 16);
 
 impl Obj {
     /// Creates a new ground object at the given coordinate.
     ///
     /// Only the object's position *within its 8x8 zone* is stored; the level and
-    /// zone base are recovered from the owning zone. The object starts with no
-    /// receiver (visible to all) and no last-clock, meaning it has not yet been
-    /// scheduled for any state transition.
+    /// zone base are recovered from the owning zone. The object starts public (no
+    /// receiver flag) and with `last_clock` at its `u32::MAX` sentinel, meaning it
+    /// has not yet been scheduled for any state transition. A private receiver, if
+    /// any, is recorded by the owning zone (see the type-level docs).
     ///
     /// # Arguments
     /// * `coord` - Grid coordinate where this object is placed (only the intra-zone offset is kept).
@@ -75,28 +95,25 @@ impl Obj {
     /// A new `Obj` with core fields bit-packed and metadata set to sentinel values.
     #[inline(always)]
     pub const fn new(coord: CoordGrid, lifetime: EntityLifeTime, id: u16, count: u32) -> Self {
-        let packed = (((coord.x() & COORD_MASK as u16) as u64) << LOCAL_X_SHIFT)
-            | (((coord.z() & COORD_MASK as u16) as u64) << LOCAL_Z_SHIFT)
-            | ((lifetime as u64) << LIFETIME_SHIFT)
-            | ((id as u64) << ID_SHIFT)
-            | (((count as u64) & COUNT_MASK) << COUNT_SHIFT);
-        Self {
-            packed,
-            receiver37: NO_RECEIVER,
-            last_clock: u64::MAX,
-        }
+        let packed = (((coord.x() & COORD_MASK as u16) as u128) << LOCAL_X_SHIFT)
+            | (((coord.z() & COORD_MASK as u16) as u128) << LOCAL_Z_SHIFT)
+            | ((lifetime as u128) << LIFETIME_SHIFT)
+            | ((id as u128) << ID_SHIFT)
+            | (((count as u128) & COUNT_MASK) << COUNT_SHIFT)
+            | (LAST_CLOCK_MASK << LAST_CLOCK_SHIFT);
+        Self(packed)
     }
 
     /// Returns the obj's local X offset (`0..=7`) within its owning zone.
     #[inline(always)]
     pub const fn local_x(&self) -> u8 {
-        ((self.packed >> LOCAL_X_SHIFT) & COORD_MASK) as u8
+        ((self.0 >> LOCAL_X_SHIFT) & COORD_MASK) as u8
     }
 
     /// Returns the obj's local Z offset (`0..=7`) within its owning zone.
     #[inline(always)]
     pub const fn local_z(&self) -> u8 {
-        ((self.packed >> LOCAL_Z_SHIFT) & COORD_MASK) as u8
+        ((self.0 >> LOCAL_Z_SHIFT) & COORD_MASK) as u8
     }
 
     /// Returns `true` if this obj occupies world tile (`x`, `z`) within its
@@ -123,7 +140,7 @@ impl Obj {
     /// Returns the lifetime type of this object (respawn or despawn).
     #[inline(always)]
     pub const fn lifetime(&self) -> EntityLifeTime {
-        if (self.packed >> LIFETIME_SHIFT) & LIFETIME_MASK == 0 {
+        if (self.0 >> LIFETIME_SHIFT) & LIFETIME_MASK == 0 {
             EntityLifeTime::Respawn
         } else {
             EntityLifeTime::Despawn
@@ -133,13 +150,13 @@ impl Obj {
     /// Returns the obj type identifier from the config.
     #[inline(always)]
     pub const fn id(&self) -> u16 {
-        ((self.packed >> ID_SHIFT) & ID_MASK) as u16
+        ((self.0 >> ID_SHIFT) & ID_MASK) as u16
     }
 
     /// Returns the stack count of this object.
     #[inline(always)]
     pub const fn count(&self) -> u32 {
-        ((self.packed >> COUNT_SHIFT) & COUNT_MASK) as u32
+        ((self.0 >> COUNT_SHIFT) & COUNT_MASK) as u32
     }
 
     /// Sets the stack count of this object.
@@ -147,8 +164,8 @@ impl Obj {
     /// Used when stackable drops accumulate onto an existing floor stack.
     #[inline(always)]
     pub const fn set_count(&mut self, count: u32) {
-        self.packed = (self.packed & !(COUNT_MASK << COUNT_SHIFT))
-            | (((count as u64) & COUNT_MASK) << COUNT_SHIFT);
+        self.0 = (self.0 & !(COUNT_MASK << COUNT_SHIFT))
+            | (((count as u128) & COUNT_MASK) << COUNT_SHIFT);
     }
 
     /// Returns this obj's instance slot.
@@ -160,7 +177,7 @@ impl Obj {
     /// changes afterward.
     #[inline(always)]
     pub const fn slot(&self) -> u8 {
-        ((self.packed >> SLOT_SHIFT) & SLOT_MASK) as u8
+        ((self.0 >> SLOT_SHIFT) & SLOT_MASK) as u8
     }
 
     /// Sets this obj's instance slot.
@@ -169,13 +186,50 @@ impl Obj {
     /// any other obj sharing its tile and id. See [`slot`](Self::slot).
     #[inline(always)]
     pub const fn set_slot(&mut self, slot: u8) {
-        self.packed = (self.packed & !(SLOT_MASK << SLOT_SHIFT))
-            | (((slot as u64) & SLOT_MASK) << SLOT_SHIFT);
+        self.0 =
+            (self.0 & !(SLOT_MASK << SLOT_SHIFT)) | (((slot as u128) & SLOT_MASK) << SLOT_SHIFT);
+    }
+
+    /// Returns whether this obj is privately owned (visible to a single receiver).
+    ///
+    /// When `true`, the owning zone holds the receiver's base37 id in its side map
+    /// keyed by [`oid`](Self::oid). When `false`, the obj is public (no map entry).
+    #[inline(always)]
+    pub const fn has_receiver(&self) -> bool {
+        (self.0 >> HAS_RECEIVER_SHIFT) & HAS_RECEIVER_MASK == 1
+    }
+
+    /// Sets the "has a private receiver" flag.
+    ///
+    /// The zone sets this when it records a receiver in its side map, and clears it
+    /// on reveal. See [`has_receiver`](Self::has_receiver).
+    #[inline(always)]
+    pub const fn set_has_receiver(&mut self, has_receiver: bool) {
+        self.0 = (self.0 & !(HAS_RECEIVER_MASK << HAS_RECEIVER_SHIFT))
+            | ((has_receiver as u128) << HAS_RECEIVER_SHIFT);
+    }
+
+    /// Returns the obj's `last_clock` (tick of its next scheduled state change),
+    /// or `u32::MAX` when no timer is pending.
+    ///
+    /// Stored in bits `63..95` of `packed`; the all-ones value is the `u32::MAX`
+    /// "no timer" sentinel, which falls out naturally since the field is exactly 32
+    /// bits wide.
+    #[inline(always)]
+    pub const fn last_clock(&self) -> u32 {
+        ((self.0 >> LAST_CLOCK_SHIFT) & LAST_CLOCK_MASK) as u32
+    }
+
+    /// Sets the obj's `last_clock`. Pass `u32::MAX` to clear the timer.
+    #[inline(always)]
+    pub const fn set_last_clock(&mut self, clock: u32) {
+        self.0 = (self.0 & !(LAST_CLOCK_MASK << LAST_CLOCK_SHIFT))
+            | ((clock as u128) << LAST_CLOCK_SHIFT);
     }
 
     /// Returns whether this object should be visible at the given engine tick.
     ///
-    /// Objects with no pending state change (`last_clock == u64::MAX`) are always
+    /// Objects with no pending state change (`last_clock == u32::MAX`) are always
     /// visible. Despawn-type objects are visible while the clock has not yet reached
     /// their `last_clock`. Respawn-type objects become visible once the clock reaches
     /// or exceeds their `last_clock`.
@@ -183,13 +237,13 @@ impl Obj {
     /// # Arguments
     /// * `clock` - The current engine tick.
     #[inline(always)]
-    pub const fn visible(&self, clock: u64) -> bool {
-        if self.last_clock == u64::MAX {
+    pub const fn visible(&self, clock: u32) -> bool {
+        if self.last_clock() == u32::MAX {
             return true;
         }
         match self.lifetime() {
-            EntityLifeTime::Despawn => clock < self.last_clock,
-            EntityLifeTime::Respawn => clock >= self.last_clock,
+            EntityLifeTime::Despawn => clock < self.last_clock(),
+            EntityLifeTime::Respawn => clock >= self.last_clock(),
         }
     }
 
@@ -200,7 +254,7 @@ impl Obj {
     /// `u64` (30 bits used). Because the zone gives each obj the lowest free slot
     /// among objs sharing its tile and id, every obj in a zone -- stackable or not,
     /// public or private -- gets a distinct oid. Used as the entity key for zone
-    /// event dedup/cancellation.
+    /// event dedup/cancellation and for the zone's receiver side map.
     #[inline(always)]
     pub const fn oid(&self) -> u64 {
         ((self.local_x() as u64) << LOCAL_X_SHIFT)

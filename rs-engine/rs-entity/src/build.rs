@@ -138,7 +138,7 @@ pub struct BuildArea {
     pub origin: CoordGrid,
     pub players: IdBitSet,
     pub npcs: IdBitSet,
-    pub appearances: Box<[u64; MAX_PLAYERS]>,
+    pub appearances: Box<[u32; MAX_PLAYERS]>,
     pub force_view_distance: bool,
     pub view_distance: u8,
     pub last_resize: u32,
@@ -335,7 +335,7 @@ impl BuildArea {
     /// * `pid` - The player index.
     /// * `clock` - The current appearance version clock.
     #[inline]
-    pub const fn has_appearance(&self, pid: u16, clock: u64) -> bool {
+    pub const fn has_appearance(&self, pid: u16, clock: u32) -> bool {
         unsafe { *self.appearances.as_ptr().add(pid as usize) == clock }
     }
 
@@ -346,7 +346,7 @@ impl BuildArea {
     /// * `pid` - The player index.
     /// * `clock` - The appearance version clock to store.
     #[inline]
-    pub fn save_appearance(&mut self, pid: u16, clock: u64) {
+    pub fn save_appearance(&mut self, pid: u16, clock: u32) {
         unsafe { *self.appearances.as_mut_ptr().add(pid as usize) = clock }
     }
 }

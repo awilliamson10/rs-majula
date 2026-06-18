@@ -118,7 +118,7 @@ pub struct LoginRequest {
 /// engine performance in real time.
 #[derive(Debug, Clone, Default)]
 pub struct TickStats {
-    pub clock: u64,
+    pub clock: u32,
     pub total_ms: f64,
     pub player_count: usize,
     pub npc_count: usize,
@@ -157,7 +157,7 @@ pub enum PendingZoneEvent {
     ObjDelete {
         coord: CoordGrid,
         id: u16,
-        clock: u64,
+        clock: u32,
     },
     ObjAdd {
         coord: CoordGrid,
@@ -166,7 +166,7 @@ pub enum PendingZoneEvent {
     LocDelete {
         coord: CoordGrid,
         layer: LocLayer,
-        clock: u64,
+        clock: u32,
     },
 }
 
@@ -199,7 +199,7 @@ pub struct ObjDelayedRequest {
 pub struct PendingLogin {
     pub user37: u64,
     pub request: LoginRequest,
-    pub clock: u64,
+    pub clock: u32,
     pub ether_allowed: bool,
     pub auth_ok: bool,
     pub profile: Option<Option<PlayerProfile>>,
@@ -233,7 +233,7 @@ const fn obj_revealable(tradeable: bool, members: bool, world_members: bool) -> 
 /// multi-drop (two identical non-stackable objs on one tile, each with its own
 /// scheduled reveal) keeps one reveal per remaining obj.
 fn cancel_one_pending_obj_reveal(
-    pending: &mut BTreeMap<u64, Vec<PendingZoneEvent>>,
+    pending: &mut BTreeMap<u32, Vec<PendingZoneEvent>>,
     coord: CoordGrid,
     id: u16,
     receiver37: u64,
@@ -463,8 +463,8 @@ impl NpcList {
 /// `unsafe impl Send` is provided so it can be moved into that task;
 /// it is *not* `Sync` and must never be shared across threads.
 pub struct Engine {
-    pub clock: u64,
-    pub shutdown_clock: Option<u64>,
+    pub clock: u32,
+    pub shutdown_clock: Option<u32>,
     pub members: bool,
     pub multi_xp: u8,
     pub client_pathfinder: bool,
@@ -486,7 +486,7 @@ pub struct Engine {
     pub invs: FxHashMap<u16, Inventory>,
     pub ops: OpsRegistry,
     pub zones_tracking: FxHashSet<ZoneCoordGrid>,
-    pub pending_zone_events: BTreeMap<u64, Vec<PendingZoneEvent>>,
+    pub pending_zone_events: BTreeMap<u32, Vec<PendingZoneEvent>>,
     pub world_queue: LinkList<ScriptState>,
     pub obj_delayed_queue: LinkList<ObjDelayedRequest>,
     pub clock_rate_tx: Sender<u64>,
@@ -841,14 +841,14 @@ impl Engine {
     /// shows every online player the resulting countdown. A `duration` of 0
     /// reboots as soon as the world can be drained.
     pub fn reboot_timer(&mut self, duration: u64) {
-        self.shutdown_clock = Some(self.clock + duration);
+        self.shutdown_clock = Some(self.clock + duration as u32);
         let clocks = self.reboot_timer_clocks();
         for active in self.player_list.players.iter_mut().flatten() {
             active.write(UpdateRebootTimer { clocks });
         }
         info!(
             "Reboot scheduled in {duration} tick(s) (fires at tick {})",
-            self.clock + duration
+            self.clock + duration as u32
         );
     }
 
@@ -1507,7 +1507,7 @@ impl Engine {
     ///
     /// * `clock` -- The game tick at which the event should be processed.
     /// * `event` -- The zone event to enqueue.
-    pub fn schedule_zone_event(&mut self, clock: u64, event: PendingZoneEvent) {
+    pub fn schedule_zone_event(&mut self, clock: u32, event: PendingZoneEvent) {
         self.pending_zone_events
             .entry(clock)
             .or_default()
@@ -1584,10 +1584,9 @@ impl Engine {
             return;
         }
 
-        let clock = self.clock + duration;
-        obj.last_clock = clock;
+        let clock = self.clock + duration as u32;
+        obj.set_last_clock(clock);
         if let Some(r) = receiver37 {
-            obj.receiver37 = r;
             let reveal_clock = self.clock + REVEAL_TICKS;
 
             let revealable =
@@ -1661,8 +1660,8 @@ impl Engine {
 
         let old_count = zone.objs[idx].count();
         zone.objs[idx].set_count(next_count);
-        let clock = self.clock + duration;
-        zone.objs[idx].last_clock = clock;
+        let clock = self.clock + duration as u32;
+        zone.objs[idx].set_last_clock(clock);
 
         let oid = zone.objs[idx].oid();
         let message = ZoneMessage::ObjCount(ObjCount {
@@ -1719,7 +1718,7 @@ impl Engine {
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
         let respawn_at = if duration > 0 {
             let scaled = self.scale_by_player_count(duration);
-            Some(self.clock + scaled)
+            Some(self.clock + scaled as u32)
         } else {
             None
         };
@@ -1797,13 +1796,13 @@ impl Engine {
                 apply_loc_collision(&old_loc, coord, false);
             }
 
-            let (blockwalk, blockrange) = cache
+            let (blockwalk, blockrange, width, length) = cache
                 .locs
                 .get_by_id(id)
-                .map(|lt| (lt.blockwalk, lt.blockrange))
-                .unwrap_or((false, false));
+                .map(|lt| (lt.blockwalk, lt.blockrange, lt.width, lt.length))
+                .unwrap_or((false, false, 1, 1));
 
-            zone.locs[idx].change(id, angle, blockwalk, blockrange);
+            zone.locs[idx].change(id, shape, angle, blockwalk, blockrange, width, length);
 
             // Apply collision from the *stored* loc. The change above stored the new
             // id/angle/flags; only shape is shared (a change can't alter it). Reading
@@ -1817,8 +1816,8 @@ impl Engine {
             let is_changed = zone.locs[idx].is_changed();
             let is_despawn = zone.locs[idx].lifetime() == EntityLifeTime::Despawn;
             if is_changed || is_despawn {
-                let clock = self.clock + duration;
-                zone.locs[idx].last_clock = clock;
+                let clock = self.clock + duration as u32;
+                zone.locs[idx].set_last_clock(clock);
                 self.schedule_zone_event(
                     clock,
                     PendingZoneEvent::LocDelete {
@@ -1828,27 +1827,27 @@ impl Engine {
                     },
                 );
             } else {
-                zone.locs[idx].last_clock = u64::MAX;
+                zone.locs[idx].set_last_clock(u32::MAX);
             }
             self.track_zone(x, y, z);
         } else {
-            let (width, length, blockwalk, blockrange) = self
+            let (blockwalk, blockrange, width, length) = self
                 .cache
                 .locs
                 .get_by_id(id)
-                .map(|lt| (lt.width, lt.length, lt.blockwalk, lt.blockrange))
-                .unwrap_or((1, 1, false, false));
+                .map(|lt| (lt.blockwalk, lt.blockrange, lt.width, lt.length))
+                .unwrap_or((false, false, 1, 1));
 
             let loc = Loc::new(
                 coord,
-                width,
-                length,
                 EntityLifeTime::Despawn,
                 id,
                 shape,
                 angle,
                 blockwalk,
                 blockrange,
+                width,
+                length,
             );
 
             apply_loc_collision(&loc, coord, true);
@@ -1862,9 +1861,9 @@ impl Engine {
             self.track_zone(x, y, z);
 
             if duration > 0 {
-                let clock = self.clock + duration;
+                let clock = self.clock + duration as u32;
                 if let Some(l) = self.zones.zone_mut(x, y, z).locs.last_mut() {
-                    l.last_clock = clock;
+                    l.set_last_clock(clock);
                 }
                 self.schedule_zone_event(
                     clock,
@@ -1921,8 +1920,8 @@ impl Engine {
         zone.remove_loc(idx);
 
         if loc.lifetime() == EntityLifeTime::Respawn && duration > 0 {
-            let clock = self.clock + duration;
-            zone.locs[idx].last_clock = clock;
+            let clock = self.clock + duration as u32;
+            zone.locs[idx].set_last_clock(clock);
             self.schedule_zone_event(
                 clock,
                 PendingZoneEvent::LocDelete {
@@ -1970,7 +1969,7 @@ impl Engine {
         apply_loc_collision(&reverted, coord, true);
 
         zone.change_loc(idx);
-        zone.locs[idx].last_clock = u64::MAX;
+        zone.locs[idx].set_last_clock(u32::MAX);
         self.track_zone(x, y, z);
     }
 }
@@ -2211,7 +2210,7 @@ impl Engine {
                 .get_by_id(active.npc.uid.id())
                 .map(|t| t.respawnrate as u64)
                 .unwrap_or(100);
-            active.npc.respawn_at = Some(self.clock + respawnrate);
+            active.npc.respawn_at = Some(self.clock + respawnrate as u32);
         }
     }
 
@@ -2348,7 +2347,7 @@ impl Engine {
                 .get_by_id(active.npc.uid.id())
                 .map(|t| t.respawnrate as u64)
                 .unwrap_or(100);
-            active.npc.respawn_at = Some(self.clock + respawnrate);
+            active.npc.respawn_at = Some(self.clock + respawnrate as u32);
         } else {
             self.npc_list.remove(nid);
         }
@@ -2777,7 +2776,7 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** reads `self.clock`
-    fn clock(&self) -> u64 {
+    fn clock(&self) -> u32 {
         self.clock
     }
 
@@ -4138,7 +4137,7 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** sets `self.player.logout_prevented_message` and `logout_prevented_until`
-    fn prevent_logout(&mut self, message: &str, until: u64) {
+    fn prevent_logout(&mut self, message: &str, until: u32) {
         self.player.logout_prevented_message = Some(message.into());
         self.player.logout_prevented_until = Some(until);
     }
@@ -4671,7 +4670,7 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** sets `self.player.state.delayed` and `delayed_until`
-    fn delay(&mut self, delay: u64) {
+    fn delay(&mut self, delay: u32) {
         self.player.state.delayed = true;
         self.player.state.delayed_until = delay;
     }
@@ -4685,7 +4684,7 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `Self::delay`
-    fn arrivedelay(&mut self, clock: u64) -> bool {
+    fn arrivedelay(&mut self, clock: u32) -> bool {
         if self.player.pathing.last_movement < clock {
             return false;
         }
@@ -4826,7 +4825,7 @@ impl ScriptPlayer for ActivePlayer {
         script_id: i32,
         priority: TimerPriority,
         interval: u16,
-        clock: u64,
+        clock: u32,
         args: Option<Vec<ScriptArgument>>,
     ) {
         self.player
@@ -5516,7 +5515,7 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** reads `self.npc.pathing.last_movement`
-    fn last_movement(&self) -> u64 {
+    fn last_movement(&self) -> u32 {
         self.npc.pathing.last_movement
     }
 
@@ -5530,7 +5529,7 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** sets `self.npc.state.delayed` and `delayed_until`
-    fn delay(&mut self, delay: u64) {
+    fn delay(&mut self, delay: u32) {
         self.npc.state.delayed = true;
         self.npc.state.delayed_until = delay;
     }
@@ -5595,7 +5594,7 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `ActiveNpc::change_type`
-    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u64) {
+    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u32) {
         self.change_type(new_type, duration, reset, clock);
     }
 

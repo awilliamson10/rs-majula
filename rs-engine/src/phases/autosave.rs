@@ -6,7 +6,7 @@ use tracing::info;
 
 /// Number of ticks between autosave cycles. At 600ms per tick this is
 /// approximately 150 seconds (~2.5 minutes).
-const AUTOSAVE_INTERVAL: u64 = 250;
+const AUTOSAVE_INTERVAL: u32 = 250;
 
 impl Engine {
     /// Processes the autosave phase of the engine tick cycle.

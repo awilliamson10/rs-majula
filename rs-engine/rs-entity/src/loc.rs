@@ -2,147 +2,153 @@ use crate::lifetime::EntityLifeTime;
 use rs_grid::{CoordGrid, ZoneCoordGrid};
 use rs_pack::types::{LocAngle, LocLayer, LocShape};
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u64` -- 64 bits wide.
+/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 113 bits wide.
 
-/// Bit offset for the local zone X (`x & 0x7`) within the packed `u64`.
+/// Bit offset for the local zone X (`x & 0x7`) within the packed `u128`.
 const LOCAL_X_SHIFT: u32 = 0;
-/// Bit offset for the local zone Z (`z & 0x7`) within the packed `u64`.
+/// Bit offset for the local zone Z (`z & 0x7`) within the packed `u128`.
 const LOCAL_Z_SHIFT: u32 = 3;
-/// Bit offset for the width field within the packed `u64`.
-const WIDTH_SHIFT: u32 = 6;
-/// Bit offset for the length field within the packed `u64`.
-const LENGTH_SHIFT: u32 = 12;
-/// Bit offset for the lifetime flag within the packed `u64`.
-const LIFETIME_SHIFT: u32 = 18;
-/// Bit offset for the shared shape within the packed `u64`.
-const SHAPE_SHIFT: u32 = 19;
-/// Bit offset for the base (original) info within the packed `u64`.
-const BASE_INFO_SHIFT: u32 = 24;
-/// Bit offset for the current (possibly modified) info within the packed `u64`.
+/// Bit offset for the lifetime flag within the packed `u128`.
+const LIFETIME_SHIFT: u32 = 6;
+/// Bit offset for the base (original) info within the packed `u128`.
+const BASE_INFO_SHIFT: u32 = 7;
+/// Bit offset for the current (possibly modified) info within the packed `u128`.
 const CURRENT_INFO_SHIFT: u32 = 44;
+/// Bit offset for the `last_clock` field within the packed `u128`.
+const LAST_CLOCK_SHIFT: u32 = 81;
 
 /// Mask for the 3-bit local-coordinate fields.
-const COORD_MASK: u64 = 0x7;
-/// Mask for the 6-bit width and length fields.
-const SIZE_MASK: u64 = 0x3F;
+const COORD_MASK: u128 = 0x7;
 /// Mask for the single-bit lifetime field.
-const LIFETIME_MASK: u64 = 0x1;
-/// Mask for the 5-bit shared shape field.
-const SHAPE_MASK: u64 = 0x1F;
-/// Mask for the 20-bit info field (id, angle, blockwalk, blockrange).
-const INFO_MASK: u64 = 0xFFFFF;
+const LIFETIME_MASK: u128 = 0x1;
+/// Mask for the 37-bit info field (id, shape, angle, blockwalk, blockrange, width, length).
+const INFO_MASK: u128 = 0x1FFFFFFFFF;
+/// Mask for the 32-bit `last_clock` field. Its all-ones value is the `u32::MAX`
+/// "no timer" sentinel. Bits `113..128` of the `u128` are reserved (unused).
+const LAST_CLOCK_MASK: u128 = 0xFFFFFFFF;
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE INDIVIDUAL INFO BITS `u32` -- 20 bits wide.
+/// ---- THE BELOW SECTION IS FOR BUILDING THE INDIVIDUAL INFO BITS `u64` -- 37 bits wide.
 
 /// Bit offset for the loc type id within the info word.
 const ID_SHIFT: u32 = 0;
+/// Bit offset for the shape within the info word.
+const SHAPE_SHIFT: u32 = 16;
 /// Bit offset for the angle within the info word.
-const ANGLE_SHIFT: u32 = 16;
+const ANGLE_SHIFT: u32 = 21;
 /// Bit offset for the blockwalk flag within the info word.
-const BLOCKWALK_SHIFT: u32 = 18;
+const BLOCKWALK_SHIFT: u32 = 23;
 /// Bit offset for the blockrange flag within the info word.
-const BLOCKRANGE_SHIFT: u32 = 19;
+const BLOCKRANGE_SHIFT: u32 = 24;
+/// Bit offset for the width field within the info word.
+const WIDTH_SHIFT: u32 = 25;
+/// Bit offset for the length field within the info word.
+const LENGTH_SHIFT: u32 = 31;
 
 /// Mask for the 16-bit loc type id.
-const ID_MASK: u32 = 0xFFFF;
+const ID_MASK: u64 = 0xFFFF;
+/// Mask for the 5-bit shape.
+const SHAPE_MASK: u64 = 0x1F;
 /// Mask for the 2-bit angle.
-const ANGLE_MASK: u32 = 0x3;
+const ANGLE_MASK: u64 = 0x3;
 /// Mask for the single-bit blockwalk flag.
-const BLOCKWALK_MASK: u32 = 0x1;
+const BLOCKWALK_MASK: u64 = 0x1;
 /// Mask for the single-bit blockrange flag.
-const BLOCKRANGE_MASK: u32 = 0x1;
+const BLOCKRANGE_MASK: u64 = 0x1;
+/// Mask for the 6-bit width field.
+const WIDTH_MASK: u64 = 0x3F;
+/// Mask for the 6-bit length field.
+const LENGTH_MASK: u64 = 0x3F;
 
 /// A placed location (scenery/object) in the game world.
 ///
-/// All fixed fields are bit-packed into a single `u64`. The position is stored as the
-/// *local* offset within the owning 8x8 zone (`x & 0x7`, `z & 0x7`);
-/// the full world coordinate is reconstructed from the
-/// zone's base via [`world_coord`](Self::world_coord). Width and length are
-/// stored in 6 bits each, clamped to `0..=63`. The struct tracks both base and
-/// current info to support runtime changes (e.g. opening a door changes its
-/// `id`) while preserving the original state for revert on respawn-type locs.
+/// Every field is bit-packed into a single `u128` -- including `last_clock`, so the
+/// struct is exactly one 16-byte. The position is stored as the *local* offset
+/// within the owning 8x8 zone (`x & 0x7`, `z & 0x7`); the full world coordinate is
+/// reconstructed from the zone's base via [`world_coord`](Self::world_coord). The
+/// struct tracks both base and current info to support runtime changes (e.g. opening
+/// a door changes its `id`) while preserving the original state for revert on
+/// respawn-type locs.
 ///
-/// The collision layer is *not* stored: it is a pure function of the shape
+/// Each info holds `id`, `shape`, `angle`, the `blockwalk`/`blockrange` flags,
+/// and `width`/`length`. These are *per-info* (base and current each carry their
+/// own) because a runtime change can swap the loc for a different type whose
+/// dimensions, shape, or flags differ -- e.g. lighting a fire (centrepiece) on a
+/// tile, then closing a diagonal door (wall) over it. The client renders by
+/// `(id, shape)`, so the changed shape must reach it or the new loc renders with no
+/// matching model (i.e. invisibly); collision uses the current width/length.
+/// [`revert`](Self::revert) restores the entire base info (id, shape, angle, flags,
+/// dimensions) in one shot.
+///
+/// The collision layer is *not* stored: it is a pure function of the *base* shape
 /// (see [`LocShape::layer`]) and is derived on demand by [`layer`](Self::layer).
+/// The base shape is used (not the current one) so the layer is stable across
+/// runtime changes -- matching the reference engine, where `loc.layer` reads the
+/// base info. A change only ever swaps a loc for another on the *same* layer, so the
+/// current shape always shares that layer.
 ///
-/// Shape is stored *once* (shared by base and current): a runtime change never
-/// alters a loc's shape. Angle, id and the `blockwalk`/`blockrange` flags *can*
-/// change (e.g. opening a door rotates it), so they live per-info in both base and
-/// current. Sharing the 5-bit shape frees the room for `width`/`length` to widen
-/// to 6 bits each, and the flags stay packed so collision applies straight from
-/// the loc without a cache lookup.
+/// `last_clock` is a `u32` packed into bits `81..113` (a tick clock; the engine
+/// clock is `u32`). Its all-ones value is the `u32::MAX` "no timer" sentinel,
+/// returned by [`last_clock`](Self::last_clock) / set by
+/// [`set_last_clock`](Self::set_last_clock). Bits `113..128` are reserved.
 ///
 /// Layout (bit offsets):
-/// - `0..3`   local X (`x & 0x7`)
-/// - `3..6`   local Z (`z & 0x7`)
-/// - `6..12`  width   (`0..=63`)
-/// - `12..18` length  (`0..=63`)
-/// - `18`     lifetime
-/// - `19..24` shape   (shared `LocShape`)
-/// - `24..44` base info    (`id16 | angle2 | blockwalk1 | blockrange1`)
-/// - `44..64` current info (`id16 | angle2 | blockwalk1 | blockrange1`)
+/// - `0..3`    local X (`x & 0x7`)
+/// - `3..6`    local Z (`z & 0x7`)
+/// - `6`       lifetime
+/// - `7..44`   base info    (`id16 | shape5 | angle2 | blockwalk1 | blockrange1 | width6 | length6`)
+/// - `44..81`  current info (`id16 | shape5 | angle2 | blockwalk1 | blockrange1 | width6 | length6`)
+/// - `81..113` last_clock (32 bits)
+/// - `113..128` reserved
 #[derive(Debug, Clone, Copy)]
-pub struct Loc {
-    packed: u64,
-    pub last_clock: u64,
-}
+pub struct Loc(u128);
+
+/// The entire loc state, `last_clock` included, lives in the single `u128`, so the
+/// struct is exactly 16 bytes. Guards against accidentally growing it.
+const _: () = assert!(size_of::<Loc>() == 16);
 
 impl Loc {
-    /// Creates a new `Loc` with the given position, dimensions, lifetime, and type info.
+    /// Creates a new `Loc` with the given position, lifetime, and type info.
     ///
     /// Only the loc's position *within its 8x8 zone* (`coord.x() & 0x7`,
     /// `coord.z() & 0x7`) is stored; the level and zone base are recovered from the
     /// owning zone. Both the base info and current info are initialized to the
-    /// same values, and `last_clock` is set to `u64::MAX` (not yet modified).
+    /// same values, and `last_clock` is set to its `u32::MAX` sentinel (not yet
+    /// modified).
     ///
     /// # Arguments
     /// * `coord` - Grid coordinate where this loc is placed (only the intra-zone offset is kept).
-    /// * `width` - Width of the loc in tiles (x-axis); clamped to `0..=63`.
-    /// * `length` - Length of the loc in tiles (z-axis); clamped to `0..=63`.
     /// * `lifetime` - Whether this loc respawns (map-loaded) or despawns (runtime-spawned).
     /// * `id` - The loc type identifier from the config.
     /// * `shape` - The rendering shape of the loc (e.g., wall, centrepiece).
     /// * `angle` - The rotation angle of the loc.
     /// * `blockwalk` - Whether the loc blocks movement (from its loc type).
     /// * `blockrange` - Whether the loc blocks ranged projectiles (from its loc type).
+    /// * `width` - Width of the loc in tiles (x-axis); clamped to `0..=63`.
+    /// * `length` - Length of the loc in tiles (z-axis); clamped to `0..=63`.
     ///
     /// # Returns
     /// A new `Loc` with all fields bit-packed.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         coord: CoordGrid,
-        width: u8,
-        length: u8,
         lifetime: EntityLifeTime,
         id: u16,
         shape: LocShape,
         angle: LocAngle,
         blockwalk: bool,
         blockrange: bool,
+        width: u8,
+        length: u8,
     ) -> Self {
-        let info = Self::pack_info(id, angle, blockwalk, blockrange) as u64;
-        let width = if width > SIZE_MASK as u8 {
-            SIZE_MASK as u8
-        } else {
-            width
-        };
-        let length = if length > SIZE_MASK as u8 {
-            SIZE_MASK as u8
-        } else {
-            length
-        };
-        let packed = (((coord.x() & COORD_MASK as u16) as u64) << LOCAL_X_SHIFT)
-            | (((coord.z() & COORD_MASK as u16) as u64) << LOCAL_Z_SHIFT)
-            | ((width as u64) << WIDTH_SHIFT)
-            | ((length as u64) << LENGTH_SHIFT)
-            | ((lifetime as u64) << LIFETIME_SHIFT)
-            | ((shape as u64 & SHAPE_MASK) << SHAPE_SHIFT)
+        let info = Self::pack_info(id, shape, angle, blockwalk, blockrange, width, length) as u128;
+        let packed = (((coord.x() & COORD_MASK as u16) as u128) << LOCAL_X_SHIFT)
+            | (((coord.z() & COORD_MASK as u16) as u128) << LOCAL_Z_SHIFT)
+            | ((lifetime as u128) << LIFETIME_SHIFT)
             | (info << BASE_INFO_SHIFT)
-            | (info << CURRENT_INFO_SHIFT);
-        Self {
-            packed,
-            last_clock: u64::MAX,
-        }
+            | (info << CURRENT_INFO_SHIFT)
+            | (LAST_CLOCK_MASK << LAST_CLOCK_SHIFT);
+        Self(packed)
     }
 
     /// Returns whether this loc should be visible to players.
@@ -157,20 +163,20 @@ impl Loc {
     pub const fn visible(&self) -> bool {
         match self.lifetime() {
             EntityLifeTime::Despawn => true,
-            EntityLifeTime::Respawn => self.is_changed() || self.last_clock == u64::MAX,
+            EntityLifeTime::Respawn => self.is_changed() || self.last_clock() == u32::MAX,
         }
     }
 
     /// Returns the loc's local X offset (`0..=7`) within its owning zone.
     #[inline(always)]
     pub const fn local_x(&self) -> u8 {
-        ((self.packed >> LOCAL_X_SHIFT) & COORD_MASK) as u8
+        ((self.0 >> LOCAL_X_SHIFT) & COORD_MASK) as u8
     }
 
     /// Returns the loc's local Z offset (`0..=7`) within its owning zone.
     #[inline(always)]
     pub const fn local_z(&self) -> u8 {
-        ((self.packed >> LOCAL_Z_SHIFT) & COORD_MASK) as u8
+        ((self.0 >> LOCAL_Z_SHIFT) & COORD_MASK) as u8
     }
 
     /// Returns `true` if this loc occupies world tile (`x`, `z`) within its
@@ -194,22 +200,10 @@ impl Loc {
         )
     }
 
-    /// Returns the width of the loc in tiles along the x-axis (`0..=63`).
-    #[inline(always)]
-    pub const fn width(&self) -> u8 {
-        ((self.packed >> WIDTH_SHIFT) & SIZE_MASK) as u8
-    }
-
-    /// Returns the length of the loc in tiles along the z-axis (`0..=63`).
-    #[inline(always)]
-    pub const fn length(&self) -> u8 {
-        ((self.packed >> LENGTH_SHIFT) & SIZE_MASK) as u8
-    }
-
     /// Returns the lifetime type of this loc (respawn or despawn).
     #[inline(always)]
     pub const fn lifetime(&self) -> EntityLifeTime {
-        if (self.packed >> LIFETIME_SHIFT) & LIFETIME_MASK == 0 {
+        if (self.0 >> LIFETIME_SHIFT) & LIFETIME_MASK == 0 {
             EntityLifeTime::Respawn
         } else {
             EntityLifeTime::Despawn
@@ -225,16 +219,31 @@ impl Loc {
         (self.current_info() & ID_MASK) as u16
     }
 
-    /// Returns the rendering shape of this loc.
+    /// Returns the current rendering shape of this loc.
     ///
-    /// Stored once and shared by base and current state; a runtime change never
-    /// alters the shape.
+    /// Read from the current info, so it reflects a runtime change (e.g. a tile's
+    /// loc being swapped for a different-shaped one on the same layer); after a
+    /// [`revert`](Self::revert) it matches the base shape again. The client renders
+    /// a loc by `(id, shape)`, so this must carry the changed shape -- otherwise the
+    /// new loc has no matching model and renders invisibly.
     ///
     /// # Safety
     /// Uses `transmute` internally; the 5-bit value is assumed to be a valid `LocShape` discriminant.
     #[inline(always)]
     pub const fn shape(&self) -> LocShape {
-        unsafe { std::mem::transmute(((self.packed >> SHAPE_SHIFT) & SHAPE_MASK) as u8) }
+        unsafe { std::mem::transmute(((self.current_info() >> SHAPE_SHIFT) & SHAPE_MASK) as u8) }
+    }
+
+    /// Returns the original (base) shape of this loc, ignoring any runtime change.
+    ///
+    /// Used to derive the collision [`layer`](Self::layer), which must stay stable
+    /// across changes (a change only swaps a loc within the same layer).
+    ///
+    /// # Safety
+    /// Uses `transmute` internally; the 5-bit value is assumed to be a valid `LocShape` discriminant.
+    #[inline(always)]
+    const fn base_shape(&self) -> LocShape {
+        unsafe { std::mem::transmute(((self.base_info() >> SHAPE_SHIFT) & SHAPE_MASK) as u8) }
     }
 
     /// Returns the current rotation angle of this loc.
@@ -267,60 +276,117 @@ impl Loc {
         (self.current_info() >> BLOCKRANGE_SHIFT) & BLOCKRANGE_MASK == 1
     }
 
+    /// Returns the width of the loc in tiles along the x-axis (`0..=63`).
+    ///
+    /// Read from the current info; reflects any runtime change and is restored to
+    /// the base value by [`revert`](Self::revert).
+    #[inline(always)]
+    pub const fn width(&self) -> u8 {
+        ((self.current_info() >> WIDTH_SHIFT) & WIDTH_MASK) as u8
+    }
+
+    /// Returns the length of the loc in tiles along the z-axis (`0..=63`).
+    ///
+    /// Read from the current info; reflects any runtime change and is restored to
+    /// the base value by [`revert`](Self::revert).
+    #[inline(always)]
+    pub const fn length(&self) -> u8 {
+        ((self.current_info() >> LENGTH_SHIFT) & LENGTH_MASK) as u8
+    }
+
     /// Returns the collision layer of this loc.
     ///
-    /// The layer is derived from the (shared) shape ([`LocShape::layer`]) rather
-    /// than stored: it is a pure function of the shape, which never changes at
-    /// runtime.
+    /// The layer is derived from the *base* shape ([`LocShape::layer`]) rather
+    /// than stored. Using the base shape keeps the layer stable across runtime
+    /// changes (a change only swaps a loc within the same layer), matching the
+    /// reference engine where `loc.layer` reads the base info.
     #[inline(always)]
     pub const fn layer(&self) -> LocLayer {
-        self.shape().layer()
+        self.base_shape().layer()
+    }
+
+    /// Returns the loc's `last_clock` (tick of its next scheduled state change),
+    /// or `u32::MAX` when no timer is pending.
+    ///
+    /// Stored in bits `81..113` of `packed`. The all-ones value is the `u32::MAX`
+    /// "no timer" sentinel, which falls out naturally since the field is exactly 32
+    /// bits wide.
+    #[inline(always)]
+    pub const fn last_clock(&self) -> u32 {
+        ((self.0 >> LAST_CLOCK_SHIFT) & LAST_CLOCK_MASK) as u32
+    }
+
+    /// Sets the loc's `last_clock`. Pass `u32::MAX` to clear the timer.
+    ///
+    /// The value is stored verbatim in bits `81..113` of `packed`; `u32::MAX` is the
+    /// "no timer" sentinel.
+    #[inline(always)]
+    pub const fn set_last_clock(&mut self, clock: u32) {
+        self.0 = (self.0 & !(LAST_CLOCK_MASK << LAST_CLOCK_SHIFT))
+            | ((clock as u128) << LAST_CLOCK_SHIFT);
     }
 
     /// Returns `true` if the current info differs from the base info.
     ///
     /// A changed loc needs to be communicated to clients so they see the updated
-    /// type or angle. Respawn-type locs use this to determine visibility. (Shape is
-    /// shared and never changes, so only the `id`, angle or flags can differ.)
+    /// type, shape, angle, flags or dimensions. Respawn-type locs use this to
+    /// determine visibility.
     #[inline(always)]
     pub const fn is_changed(&self) -> bool {
         self.current_info() != self.base_info()
     }
 
-    /// Modifies the current info of this loc to a new type id, angle and flags.
+    /// Modifies the current info of this loc to a new type id, shape, angle, flags
+    /// and dimensions.
     ///
     /// The base info is left unchanged, allowing the loc to be reverted later.
-    /// This is used for runtime loc changes such as opening/closing doors (which
-    /// can rotate the loc). The shape is shared with the base state and is
-    /// intentionally *not* changed.
+    /// This is used for runtime loc changes -- e.g. opening/closing doors (which
+    /// rotate the loc), or swapping a tile's loc for a different-shaped one on the
+    /// same layer (lighting a fire, then closing a diagonal door over it). The shape
+    /// *is* updated: the client renders by `(id, shape)`, so a changed shape must be
+    /// reflected here or the new loc renders with no matching model. The new type's
+    /// `width`/`length` are stored too, since they can differ from the base type's.
     ///
     /// # Arguments
     /// * `id` - New loc type identifier.
+    /// * `shape` - New rendering shape.
     /// * `angle` - New rotation angle.
     /// * `blockwalk` - Whether the new loc type blocks movement.
     /// * `blockrange` - Whether the new loc type blocks ranged projectiles.
+    /// * `width` - New width in tiles (x-axis); clamped to `0..=63`.
+    /// * `length` - New length in tiles (z-axis); clamped to `0..=63`.
     ///
     /// # Side Effects
     /// * Overwrites the current info bits in `self.packed`.
     #[inline(always)]
-    pub const fn change(&mut self, id: u16, angle: LocAngle, blockwalk: bool, blockrange: bool) {
-        let info = Self::pack_info(id, angle, blockwalk, blockrange) as u64;
-        self.packed =
-            (self.packed & !(INFO_MASK << CURRENT_INFO_SHIFT)) | (info << CURRENT_INFO_SHIFT);
+    #[allow(clippy::too_many_arguments)]
+    pub const fn change(
+        &mut self,
+        id: u16,
+        shape: LocShape,
+        angle: LocAngle,
+        blockwalk: bool,
+        blockrange: bool,
+        width: u8,
+        length: u8,
+    ) {
+        let info = Self::pack_info(id, shape, angle, blockwalk, blockrange, width, length) as u128;
+        self.0 = (self.0 & !(INFO_MASK << CURRENT_INFO_SHIFT)) | (info << CURRENT_INFO_SHIFT);
     }
 
     /// Reverts the current info back to the base info.
     ///
     /// Used when a respawn-type loc's change timer expires, restoring it to its
-    /// original map-loaded state (e.g., a door closing automatically).
+    /// original map-loaded state (e.g., a door closing automatically). Restores
+    /// id, shape, angle, flags and dimensions in one shot; `last_clock` is left
+    /// untouched.
     ///
     /// # Side Effects
     /// * Copies the base info bits into the current info bits in `self.packed`.
     #[inline(always)]
     pub const fn revert(&mut self) {
-        let base = (self.packed >> BASE_INFO_SHIFT) & INFO_MASK;
-        self.packed =
-            (self.packed & !(INFO_MASK << CURRENT_INFO_SHIFT)) | (base << CURRENT_INFO_SHIFT);
+        let base = (self.0 >> BASE_INFO_SHIFT) & INFO_MASK;
+        self.0 = (self.0 & !(INFO_MASK << CURRENT_INFO_SHIFT)) | (base << CURRENT_INFO_SHIFT);
     }
 
     /// Returns a unique local identifier for this loc within its zone.
@@ -352,27 +418,51 @@ impl Loc {
         ((self.shape() as u8) << 2) | (self.angle() as u8)
     }
 
-    /// Packs a loc type id, angle and collision flags into a 20-bit info value.
+    /// Packs a loc type id, shape, angle, collision flags and dimensions into a
+    /// 37-bit info value.
     ///
-    /// Layout: bits 0-15 = type_id, bits 16-17 = angle, bit 18 = blockwalk,
-    /// bit 19 = blockrange.
+    /// Layout: bits 0-15 = id, bits 16-20 = shape, bits 21-22 = angle,
+    /// bit 23 = blockwalk, bit 24 = blockrange, bits 25-30 = width,
+    /// bits 31-36 = length. `width`/`length` are clamped to `0..=63`.
     #[inline(always)]
-    const fn pack_info(type_id: u16, angle: LocAngle, blockwalk: bool, blockrange: bool) -> u32 {
-        ((type_id as u32 & ID_MASK) << ID_SHIFT)
-            | ((angle as u32 & ANGLE_MASK) << ANGLE_SHIFT)
-            | ((blockwalk as u32 & BLOCKWALK_MASK) << BLOCKWALK_SHIFT)
-            | ((blockrange as u32 & BLOCKRANGE_MASK) << BLOCKRANGE_SHIFT)
+    #[allow(clippy::too_many_arguments)]
+    const fn pack_info(
+        id: u16,
+        shape: LocShape,
+        angle: LocAngle,
+        blockwalk: bool,
+        blockrange: bool,
+        width: u8,
+        length: u8,
+    ) -> u64 {
+        let width = if width as u64 > WIDTH_MASK {
+            WIDTH_MASK as u8
+        } else {
+            width
+        };
+        let length = if length as u64 > LENGTH_MASK {
+            LENGTH_MASK as u8
+        } else {
+            length
+        };
+        ((id as u64 & ID_MASK) << ID_SHIFT)
+            | ((shape as u64 & SHAPE_MASK) << SHAPE_SHIFT)
+            | ((angle as u64 & ANGLE_MASK) << ANGLE_SHIFT)
+            | ((blockwalk as u64 & BLOCKWALK_MASK) << BLOCKWALK_SHIFT)
+            | ((blockrange as u64 & BLOCKRANGE_MASK) << BLOCKRANGE_SHIFT)
+            | ((width as u64 & WIDTH_MASK) << WIDTH_SHIFT)
+            | ((length as u64 & LENGTH_MASK) << LENGTH_SHIFT)
     }
 
     /// Extracts the base (original) info from the packed representation.
     #[inline(always)]
-    const fn base_info(&self) -> u32 {
-        ((self.packed >> BASE_INFO_SHIFT) & INFO_MASK) as u32
+    const fn base_info(&self) -> u64 {
+        ((self.0 >> BASE_INFO_SHIFT) & INFO_MASK) as u64
     }
 
     /// Extracts the current (possibly modified) info from the packed representation.
     #[inline(always)]
-    const fn current_info(&self) -> u32 {
-        ((self.packed >> CURRENT_INFO_SHIFT) & INFO_MASK) as u32
+    const fn current_info(&self) -> u64 {
+        ((self.0 >> CURRENT_INFO_SHIFT) & INFO_MASK) as u64
     }
 }

@@ -164,7 +164,7 @@ impl Engine {
     /// * Updates `timer.clock` to the current tick.
     /// * Executes RuneScript timer scripts.
     #[inline(always)]
-    fn process_timers(clock: u64, active: *mut ActivePlayer, priority: TimerPriority) {
+    fn process_timers(clock: u32, active: *mut ActivePlayer, priority: TimerPriority) {
         let active = unsafe { &mut *active };
         if active.player.logout_sent {
             return;
@@ -180,7 +180,7 @@ impl Engine {
         };
 
         for timer in timers.values_mut() {
-            if clock < timer.clock + timer.interval as u64 || !accessible {
+            if clock < timer.clock + timer.interval as u32 || !accessible {
                 continue;
             }
 

@@ -130,7 +130,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_npc_mut!(m, NPC_DELAY => |s, npc| {
             let delay = s.pop_int();
             let clock = engine::<E>().clock();
-            npc.delay(clock + 1 + delay as u64);
+            npc.delay(clock + 1 + delay as u32);
             s.execution = ExecutionState::NpcSuspended;
         });
 

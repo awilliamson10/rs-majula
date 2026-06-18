@@ -17,14 +17,14 @@ use tracing::{error, info};
 /// The request path respects logout prevention (e.g. combat), and is
 /// re-requested every tick after the window while the player stays
 /// disconnected.
-const TIMEOUT_NO_CONNECTION: u64 = 50;
+const TIMEOUT_NO_CONNECTION: u32 = 50;
 
 /// Ticks without any inbound packet before a player is force-logged-out
 /// (60 seconds), bypassing logout prevention`. This is the backstop for silently dead
 /// connections (no FIN/RST ever arrives, so no disconnect signal fires): a
 /// live client always sends keepalives well within this window. Bots are
 /// exempt (they never send packets).
-const TIMEOUT_NO_RESPONSE: u64 = 100;
+const TIMEOUT_NO_RESPONSE: u32 = 100;
 
 impl Engine {
     /// Processes the logout phase of the engine tick cycle.

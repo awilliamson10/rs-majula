@@ -7,7 +7,7 @@ use tracing::warn;
 
 /// Number of ticks a pending login may remain unresolved before being
 /// discarded with a [`LoginResponse::CouldNotComplete`] error.
-const LOGIN_TIMEOUT_TICKS: u64 = 10;
+const LOGIN_TIMEOUT_TICKS: u32 = 10;
 
 /// Maximum playing sessions (distinct accounts) allowed per IP across all
 /// nodes, enforced cluster-wide by the ether sidecar during the login check.

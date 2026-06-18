@@ -3,7 +3,7 @@ use rs_entity::lifetime::EntityLifeTime;
 
 /// Default restock interval (in ticks) for inventory slots that have
 /// `allstock` enabled but no per-slot rate configured.
-const INV_STOCKRATE: u64 = 100;
+const INV_STOCKRATE: u32 = 100;
 
 impl Engine {
     /// Processes the cleanup phase of the engine tick cycle.
@@ -216,13 +216,13 @@ impl Engine {
                 let rate = stockrate.get(index).copied().unwrap_or(0);
 
                 // Item stock is under min -> restock one unit toward base.
-                if item.num < base_count && rate > 0 && tick.is_multiple_of(rate as u64) {
+                if item.num < base_count && rate > 0 && tick.is_multiple_of(rate as u32) {
                     inv.set(index as u16, item.obj, item.num + 1);
                     continue;
                 }
 
                 // Item stock is over min -> destock one unit toward base.
-                if item.num > base_count && rate > 0 && tick.is_multiple_of(rate as u64) {
+                if item.num > base_count && rate > 0 && tick.is_multiple_of(rate as u32) {
                     inv.remove(index as u16, 1);
                     continue;
                 }

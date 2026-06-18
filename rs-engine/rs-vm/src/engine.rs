@@ -20,8 +20,8 @@ pub trait ScriptEngine {
     /// Returns the current game clock tick.
     ///
     /// # Returns
-    /// The monotonically increasing tick counter (`u64`).
-    fn clock(&self) -> u64;
+    /// The monotonically increasing tick counter (`u32`).
+    fn clock(&self) -> u32;
 
     /// Returns the experience multiplier of the engine.
     ///
@@ -790,7 +790,7 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `message` - The message to display if the player attempts to log out.
     /// * `until` - The game tick after which logout is permitted again.
-    fn prevent_logout(&mut self, message: &str, until: u64);
+    fn prevent_logout(&mut self, message: &str, until: u32);
 
     /// Sends a game message to the player's chatbox.
     ///
@@ -1074,7 +1074,7 @@ pub trait ScriptPlayer {
     ///
     /// # Arguments
     /// * `delay` - The number of game ticks to suspend execution.
-    fn delay(&mut self, delay: u64);
+    fn delay(&mut self, delay: u32);
 
     /// Records an arrive-delay timestamp so movement completion can be checked.
     ///
@@ -1085,7 +1085,7 @@ pub trait ScriptPlayer {
     /// `true` if a delay was actually applied (the player moved this/last tick), in which
     /// case the caller should suspend the script; `false` if it was a no-op and the script
     /// should continue this tick.
-    fn arrivedelay(&mut self, clock: u64) -> bool;
+    fn arrivedelay(&mut self, clock: u32) -> bool;
 
     /// Opens a count-dialog input prompt on the client.
     fn countdialog(&mut self);
@@ -1187,7 +1187,7 @@ pub trait ScriptPlayer {
         script_id: i32,
         priority: TimerPriority,
         interval: u16,
-        clock: u64,
+        clock: u32,
         args: Option<Vec<ScriptArgument>>,
     );
 
@@ -1614,13 +1614,13 @@ pub trait ScriptNpc {
     ///
     /// # Returns
     /// The tick at which the NPC last moved.
-    fn last_movement(&self) -> u64;
+    fn last_movement(&self) -> u32;
 
     /// Suspends the NPC's currently running script for a number of ticks.
     ///
     /// # Arguments
     /// * `delay` - The number of game ticks to suspend execution.
-    fn delay(&mut self, delay: u64);
+    fn delay(&mut self, delay: u32);
 
     /// Teleports the NPC to a new coordinate.
     ///
@@ -1665,7 +1665,7 @@ pub trait ScriptNpc {
     /// * `duration` - The tick at which the transformation should revert.
     /// * `reset` - Whether to reset the NPC's state upon transformation.
     /// * `clock` - The current game tick.
-    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u64);
+    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u32);
 
     /// Returns whether the NPC's current target is within its max range.
     fn inrange(&self) -> bool;

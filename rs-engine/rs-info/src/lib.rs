@@ -105,7 +105,7 @@ pub enum Visibility {
 pub struct EntityMasks {
     pub masks: u16,
     pub appearance: Option<u16>,
-    pub last_appearance: Option<u64>,
+    pub last_appearance: Option<u32>,
     pub last_appearance_info: Option<Box<[u8]>>,
     pub readyanim: Option<u16>,
     pub turnanim: Option<u16>,

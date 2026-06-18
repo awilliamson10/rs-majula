@@ -1436,7 +1436,7 @@ impl ActivePlayer {
     /// Panics if any of the required animation fields (`readyanim`, `turnanim`,
     /// `walkanim`, `walkanim_b`, `walkanim_l`, `walkanim_r`, `runanim`)
     /// are `None`.
-    pub fn generateappearance(&mut self, clock: u64) {
+    pub fn generateappearance(&mut self, clock: u32) {
         use std::cell::RefCell;
         // Reused per-thread scratch buffer so each appearance rebuild doesn't
         // allocate (and zero) a fresh Packet. Only the final boxed slice -- the
@@ -1662,7 +1662,7 @@ pub trait EnginePlayer {
 
     /// Sends full and incremental zone updates (objects, locs, events) to
     /// the client for all zones in the build area.
-    fn update_zones(&mut self, zones: &ZoneMap, clock: u64);
+    fn update_zones(&mut self, zones: &ZoneMap, clock: u32);
 
     /// Closes any open modal interface, optionally clearing the weak script
     /// queue, and fires `IfClose` triggers.
@@ -2027,7 +2027,7 @@ impl EnginePlayer for ActivePlayer {
     /// # Side Effects
     /// * Marks zones as loaded in the player's build area.
     /// * Sends zone update packets to the client.
-    fn update_zones(&mut self, zones: &ZoneMap, clock: u64) {
+    fn update_zones(&mut self, zones: &ZoneMap, clock: u32) {
         let origin_x = self.player.build_area.origin.zone_origin_x();
         let origin_z = self.player.build_area.origin.zone_origin_z();
         let user37 = self.uid().username37();

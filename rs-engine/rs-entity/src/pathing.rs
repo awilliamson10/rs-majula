@@ -23,7 +23,7 @@ pub enum MoveStrategy {
 /// and collision parameters. Each tick, `process_movement` consumes waypoints and
 /// produces walk/run direction values that are sent to the client for animation.
 pub struct PathingEntity {
-    pub last_movement: u64,
+    pub last_movement: u32,
     pub waypoints: [u32; 25],
     pub coord: CoordGrid,
     pub waypoint_index: i32,

@@ -352,14 +352,14 @@ impl GameMap {
                 {
                     let loc = Loc::new(
                         coord,
-                        width,
-                        length,
                         EntityLifeTime::Respawn,
                         id as u16,
                         shape,
                         angle,
                         loc_type.blockwalk,
                         loc_type.blockrange,
+                        width,
+                        length,
                     );
 
                     zones
@@ -509,10 +509,10 @@ impl GameMap {
 /// Applies or removes collision for a location entity based on the collision
 /// flags stored on the loc itself.
 ///
-/// Only modifies collision if the loc has `blockwalk` set. The `blockwalk` and
-/// `blockrange` flags are bit-packed into the loc (see [`Loc`]), so no cache
-/// lookup is needed -- a [`revert`](Loc::revert) restores them along with the
-/// rest of the base state.
+/// Only modifies collision if the loc has `blockwalk` set. The `blockwalk`,
+/// `blockrange`, `width` and `length` fields are all bit-packed into the loc (see
+/// [`Loc`]), so no cache lookup is needed -- a [`revert`](Loc::revert) restores
+/// them along with the rest of the base state.
 ///
 /// # Arguments
 /// * `loc` - The location entity whose collision is being changed.

@@ -615,7 +615,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, P_DELAY => |s, player| {
             let delay = s.pop_int();
             let clock = engine::<E>().clock();
-            player.delay(clock + 1 + delay as u64);
+            player.delay(clock + 1 + delay as u32);
             s.execution = ExecutionState::Suspended;
         });
 
@@ -874,7 +874,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let message = s.pop_string();
             let duration = s.pop_int();
             let clock = engine::<E>().clock();
-            player.prevent_logout(&message, clock + duration as u64);
+            player.prevent_logout(&message, clock + duration as u32);
         });
 
         // 2085

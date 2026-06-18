@@ -93,7 +93,7 @@ impl Engine {
                         let (x, y, z) = (coord.x(), coord.y(), coord.z());
                         let zone = self.zones.zone_mut(x, y, z);
                         let Some(idx) = zone.locs.iter().position(|loc| {
-                            loc.is_at(x, z) && loc.layer() == layer && loc.last_clock == clock
+                            loc.is_at(x, z) && loc.layer() == layer && loc.last_clock() == clock
                         }) else {
                             continue;
                         };

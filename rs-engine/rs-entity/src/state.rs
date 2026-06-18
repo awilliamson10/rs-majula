@@ -9,7 +9,7 @@ use rs_vm::state::ScriptState;
 /// and the pending script queues.
 pub struct EntityState {
     pub delayed: bool,
-    pub delayed_until: u64,
+    pub delayed_until: u32,
     pub protect: bool,
     pub active_script: Option<Box<ScriptState>>,
     pub queues: ScriptQueue,
@@ -40,7 +40,7 @@ impl EntityState {
     ///
     /// # Side Effects
     /// * Sets `self.delayed` to `false` when `clock >= self.delayed_until`.
-    pub fn check_delay(&mut self, clock: u64) {
+    pub fn check_delay(&mut self, clock: u32) {
         if self.delayed && clock >= self.delayed_until {
             self.delayed = false;
         }

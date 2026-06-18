@@ -54,7 +54,7 @@ impl ScriptTimer {
         priority: TimerPriority,
         script_id: i32,
         interval: u16,
-        clock: u64,
+        clock: u32,
         args: Option<Vec<ScriptArgument>>,
     ) {
         let timer = TimedScript {
@@ -263,7 +263,7 @@ mod tests {
     fn add_many_and_remove_all() {
         let mut t = ScriptTimer::new();
         for i in 0..100 {
-            t.add(TimerPriority::Normal, i, i as u16, i as u64, None);
+            t.add(TimerPriority::Normal, i, i as u16, i as u32, None);
         }
         assert_eq!(t.normal.len(), 100);
         for i in 0..100 {
@@ -296,10 +296,10 @@ mod tests {
     #[test]
     fn max_values() {
         let mut t = ScriptTimer::new();
-        t.add(TimerPriority::Normal, i32::MAX, u16::MAX, u64::MAX, None);
+        t.add(TimerPriority::Normal, i32::MAX, u16::MAX, u32::MAX, None);
         let timer = t.normal.get(&i32::MAX).unwrap();
         assert_eq!(timer.interval, u16::MAX);
-        assert_eq!(timer.clock, u64::MAX);
+        assert_eq!(timer.clock, u32::MAX);
     }
 
     #[test]
@@ -308,8 +308,8 @@ mod tests {
         t.add(TimerPriority::Normal, 1, 10, 100, None);
 
         let timer = t.normal.get(&1).unwrap();
-        let current_clock: u64 = 110;
-        let ready = current_clock >= timer.clock + timer.interval as u64;
+        let current_clock: u32 = 110;
+        let ready = current_clock >= timer.clock + timer.interval as u32;
         assert!(ready);
     }
 
@@ -319,8 +319,8 @@ mod tests {
         t.add(TimerPriority::Normal, 1, 10, 100, None);
 
         let timer = t.normal.get(&1).unwrap();
-        let current_clock: u64 = 105;
-        let ready = current_clock >= timer.clock + timer.interval as u64;
+        let current_clock: u32 = 105;
+        let ready = current_clock >= timer.clock + timer.interval as u32;
         assert!(!ready);
     }
 
@@ -342,11 +342,11 @@ mod tests {
         t.add(TimerPriority::Normal, 2, 10, 0, None);
         t.add(TimerPriority::Normal, 3, 3, 0, None);
 
-        let current_clock: u64 = 5;
+        let current_clock: u32 = 5;
         let ready: Vec<i32> = t
             .normal
             .iter()
-            .filter(|(_, timer)| current_clock >= timer.clock + timer.interval as u64)
+            .filter(|(_, timer)| current_clock >= timer.clock + timer.interval as u32)
             .map(|(id, _)| *id)
             .collect();
         // Timer 1 (interval 5, clock 0): 5 >= 0+5 = true

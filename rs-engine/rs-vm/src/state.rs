@@ -1168,7 +1168,7 @@ pub enum TimerPriority {
 /// [`clock`](Self::clock). The timer persists until explicitly cancelled.
 #[derive(Debug)]
 pub struct TimedScript {
-    pub clock: u64,
+    pub clock: u32,
     pub args: Option<Vec<ScriptArgument>>,
     pub script_id: i32,
     pub interval: u16,

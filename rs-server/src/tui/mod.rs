@@ -119,7 +119,7 @@ struct App {
 
     // Sparkline history.
     tick_ms_history: VecDeque<u64>,
-    last_seen_clock: u64,
+    last_seen_clock: u32,
     mem_mb_history: VecDeque<u64>,
     last_mem_poll: Instant,
     mem_peak_mb: u64,
