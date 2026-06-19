@@ -175,7 +175,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_obj!(m, OBJ_PARAM => |s, obj| {
             let param = pop_param(s)?;
             let value = cache()
-                .npcs
+                .objs
                 .get_by_id(obj.id)
                 .ok_or(ScriptError::ParamNotFound(param.id as i32))?
                 .params
