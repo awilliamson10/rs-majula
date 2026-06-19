@@ -148,11 +148,6 @@ fn report<E: ScriptEngine + 'static>(
     mut callback: impl FnMut(&mut dyn ScriptPlayer),
 ) {
     for secondary in [false, true] {
-        if secondary && state.active_player2.is_none()
-            || !secondary && state.active_player.is_none()
-        {
-            continue;
-        }
         if let Ok(player) = get_active_player_mut::<E>(state, secondary) {
             callback(player);
         }
@@ -200,27 +195,26 @@ fn report_error<E: ScriptEngine + 'static>(state: &mut ScriptState, msg: &str) {
         })
         .collect();
 
-    error!("script error: {msg}");
-    error!("file: {file_name}");
-    error!("stack backtrace:");
-    error!("   1: {name} - {file_name}:{line}");
+    let mut lines = vec![
+        format!("script error: {msg}"),
+        format!("file: {file_name}"),
+        "stack backtrace:".to_string(),
+        format!("   1: {name} - {file_name}:{line}"),
+    ];
     let mut trace = 1;
     for (name, file_name, line) in &frames {
         trace += 1;
-        error!("   {trace}: {name} - {file_name}:{line}");
+        lines.push(format!("   {trace}: {name} - {file_name}:{line}"));
+    }
+
+    for line in &lines {
+        error!("{line}");
     }
 
     #[cfg(debug_assertions)]
     report::<E>(state, |player| {
-        player.message_game_wrapped(&format!("script error: {msg}"));
-        player.message_game_wrapped(&format!("file: {file_name}"));
-        player.message_game_wrapped("stack backtrace:");
-        player.message_game_wrapped(&format!("   1: {name} - {file_name}:{line}"));
-
-        let mut trace = 1;
-        for (name, file_name, line) in &frames {
-            trace += 1;
-            player.message_game_wrapped(&format!("   {trace}: {name} - {file_name}:{line}"));
+        for line in &lines {
+            player.message_game_wrapped(line);
         }
     });
 }

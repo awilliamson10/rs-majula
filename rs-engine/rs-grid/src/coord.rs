@@ -517,9 +517,17 @@ impl CoordGrid {
     /// **Calls:** [`x()`](Self::x), [`z()`](Self::z).
     #[inline(always)]
     pub fn distance(&self, other: CoordGrid) -> i32 {
+        let (dx, dz) = self.abs_deltas(other);
+        dx.max(dz)
+    }
+
+    /// Returns the absolute X and Z deltas to another coordinate on the X-Z
+    /// plane as `(|dx|, |dz|)`. The Y (level) component is not considered.
+    #[inline(always)]
+    const fn abs_deltas(&self, other: CoordGrid) -> (i32, i32) {
         let dx = (self.x() as i32 - other.x() as i32).abs();
         let dz = (self.z() as i32 - other.z() as i32).abs();
-        dx.max(dz)
+        (dx, dz)
     }
 
     /// Computes the Chebyshev distance between two axis-aligned bounding
@@ -646,8 +654,7 @@ impl CoordGrid {
     /// **Calls:** [`x()`](Self::x), [`z()`](Self::z).
     #[inline(always)]
     pub fn euclidean_squared_distance(&self, other: CoordGrid) -> i32 {
-        let dx = (self.x() as i32 - other.x() as i32).abs();
-        let dz = (self.z() as i32 - other.z() as i32).abs();
+        let (dx, dz) = self.abs_deltas(other);
         dx * dx + dz * dz
     }
 

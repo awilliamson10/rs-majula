@@ -195,13 +195,7 @@ pub fn build() -> OpsRegistry {
 /// stores the matching row ids in `db_row_query`, and resets the cursor; pushes
 /// the match count when `with_count` is set.
 fn db_find(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
-    let is_string = s.pop_int() == 2;
-    let query = if is_string {
-        DbIndexKey::String(s.pop_string().into_boxed_str())
-    } else {
-        DbIndexKey::Int(s.pop_int())
-    };
-    let packed = s.pop_int() as u32;
+    let (query, packed) = decode_query(s);
     let table = ((packed >> 12) & 0xFFFF) as u16;
     cache()
         .dbtables
@@ -211,6 +205,29 @@ fn db_find(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
     s.db_table = Some(table);
     s.db_row = None;
     s.db_row_query = rows.to_vec();
+    finish_query(s, with_count)
+}
+
+/// Pops a string/int query key and the packed field id from the stack.
+///
+/// Pops (top first): the `is_string` flag (`2` = string), the query value, and
+/// the packed `table << 12 | column << 4 | tuple` id. Shared by the `DB_FIND`
+/// and `DB_FIND_REFINE` families, which decode their arguments identically.
+fn decode_query(s: &mut ScriptState) -> (DbIndexKey, u32) {
+    let is_string = s.pop_int() == 2;
+    let query = if is_string {
+        DbIndexKey::String(s.pop_string().into_boxed_str())
+    } else {
+        DbIndexKey::Int(s.pop_int())
+    };
+    let packed = s.pop_int() as u32;
+    (query, packed)
+}
+
+/// Finalizes a query op by pushing the match count when `with_count` is set.
+///
+/// Shared tail of `db_find`, `db_listall`, and `db_find_refine`.
+fn finish_query(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
     if with_count {
         let count = s.db_row_query.len() as i32;
         s.push_int(count);
@@ -238,11 +255,7 @@ fn db_listall(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
         .filter(|row| row.table == table_id)
         .map(|row| row.id)
         .collect();
-    if with_count {
-        let count = s.db_row_query.len() as i32;
-        s.push_int(count);
-    }
-    Ok(())
+    finish_query(s, with_count)
 }
 
 /// Refines the current result set (`DB_FIND_REFINE` / `DB_FIND_REFINE_WITH_COUNT`).
@@ -251,13 +264,7 @@ fn db_listall(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
 /// `db_row_query` (intersection, preserving the previous order). The selected
 /// table is left unchanged; pushes the count when `with_count` is set.
 fn db_find_refine(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
-    let is_string = s.pop_int() == 2;
-    let query = if is_string {
-        DbIndexKey::String(s.pop_string().into_boxed_str())
-    } else {
-        DbIndexKey::Int(s.pop_int())
-    };
-    let packed = s.pop_int() as u32;
+    let (query, packed) = decode_query(s);
     let found = cache().db_index.find(&query, packed);
     let found_set: FxHashSet<u16> = found.iter().copied().collect();
     let prev = std::mem::take(&mut s.db_row_query);
@@ -266,9 +273,5 @@ fn db_find_refine(s: &mut ScriptState, with_count: bool) -> crate::Result<()> {
         .into_iter()
         .filter(|id| found_set.contains(id))
         .collect();
-    if with_count {
-        let count = s.db_row_query.len() as i32;
-        s.push_int(count);
-    }
-    Ok(())
+    finish_query(s, with_count)
 }

@@ -110,6 +110,37 @@ pub enum ChatSettingsTradeDuel {
     Off = 2,
 }
 
+impl ChatSettingsPublic {
+    pub const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Friends,
+            2 => Self::Off,
+            3 => Self::Hide,
+            _ => Self::On,
+        }
+    }
+}
+
+impl ChatSettingsPrivate {
+    pub const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Friends,
+            2 => Self::Off,
+            _ => Self::On,
+        }
+    }
+}
+
+impl ChatSettingsTradeDuel {
+    pub const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Friends,
+            2 => Self::Off,
+            _ => Self::On,
+        }
+    }
+}
+
 /// A player entity in the game world with full game state.
 ///
 /// Contains all per-player state: identity, movement/pathing, combat stats, skill

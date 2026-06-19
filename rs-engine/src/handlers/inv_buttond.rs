@@ -90,12 +90,10 @@ impl ClientGameHandler for InvButtonD {
             )));
         };
 
-        if !inventory.valid_slot(self.slot) {
-            return Err(ScriptError::Client(format!("Invalid slot: {}", self.slot)));
-        }
-
-        if !inventory.valid_slot(self.slot2) {
-            return Err(ScriptError::Client(format!("Invalid slot: {}", self.slot2)));
+        for slot in [self.slot, self.slot2] {
+            if !inventory.valid_slot(slot) {
+                return Err(ScriptError::Client(format!("Invalid slot: {}", slot)));
+            }
         }
 
         if inventory.get(self.slot).is_none() {

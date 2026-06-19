@@ -1347,6 +1347,18 @@ impl ActivePlayer {
         self.player.info.masks |= PlayerInfoProt::Appearance as u16;
     }
 
+    /// Recalculates the player's combat level and, if it changed, rebuilds the
+    /// appearance so the new combat level is reflected to other players.
+    pub fn recalc_combat_and_appearance(&mut self) {
+        let new_combat = self.player.get_combat_level();
+        if new_combat != self.player.combat_level {
+            self.player.combat_level = new_combat;
+            if let Some(appearance) = self.player.info.appearance {
+                self.buildappearance(appearance);
+            }
+        }
+    }
+
     /// Applies damage to this player, clamping hitpoints to zero if the damage
     /// exceeds the current value.
     ///
@@ -1723,19 +1735,11 @@ impl EnginePlayer for ActivePlayer {
         self.user_limit = 0;
         self.restricted_limit = 0;
 
-        loop {
-            if self.client_limit >= ClientProtCategory::ClientEvent as u8 {
-                break;
-            }
-            if self.user_limit >= ClientProtCategory::UserEvent as u8 {
-                break;
-            }
-            if self.restricted_limit >= ClientProtCategory::RestrictedEvent as u8 {
-                break;
-            }
-            if self.handle.read_queue.is_empty() {
-                break;
-            }
+        while self.client_limit < ClientProtCategory::ClientEvent as u8
+            && self.user_limit < ClientProtCategory::UserEvent as u8
+            && self.restricted_limit < ClientProtCategory::RestrictedEvent as u8
+            && !self.handle.read_queue.is_empty()
+        {
             self.read();
         }
 

@@ -72,12 +72,7 @@ impl ClientGameHandler for ClientCheat {
 
         let input_lower = self.cheat.to_lowercase();
         let mut args = input_lower.split(' ');
-        let Some(cmd) = args.next() else {
-            return Err(ScriptError::Client(format!(
-                "Client cheat command was not found for input: {}",
-                self.cheat
-            )));
-        };
+        let cmd = args.next().unwrap_or_default();
         if cmd.is_empty() {
             return Err(ScriptError::Client(format!(
                 "Client cheat command was not found for input: {}",
@@ -126,7 +121,7 @@ fn cheat_developer(
     match cmd {
         _ if cmd.starts_with("~") => cheat_debugproc(&cmd, &mut args, active),
         "reload" => cheat_reload(),
-        "give" => cheat_give(&mut args, active)?,
+        "give" => cheat_give(&mut args, active),
         "givemany" => cheat_give_many(&mut args, active),
         "setvar" => cheat_setvar(&mut args, active),
         "getvar" => cheat_getvar(&mut args, active),
@@ -305,17 +300,12 @@ fn cheat_reload() -> Result<(), ScriptError> {
 /// Adds an object to the player's backpack (`inv`), defaulting to a count of 1.
 ///
 /// Usage: `::give <obj> [count]` (e.g. `::give coins 1000`).
-fn cheat_give(
-    args: &mut Split<char>,
-    active: &mut ActivePlayer,
-) -> Result<Result<(), ScriptError>, ScriptError> {
-    let obj_name = args.next();
+fn cheat_give(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(), ScriptError> {
+    let obj_name = args.next().unwrap_or_default();
     let obj = cache()
         .objs
-        .get_by_debugname(obj_name.unwrap_or_default())
-        .ok_or(ScriptError::ObjNotFoundName(
-            obj_name.unwrap_or_default().into(),
-        ))?;
+        .get_by_debugname(obj_name)
+        .ok_or(ScriptError::ObjNotFoundName(obj_name.into()))?;
     let inv = cache()
         .invs
         .get_by_debugname("inv")
@@ -324,7 +314,7 @@ fn cheat_give(
         let count = args.next().unwrap_or("1").parse::<i32>().unwrap_or(1);
         inventory.add(obj.id, count as u32, obj.stackable);
     }
-    Ok(Ok(()))
+    Ok(())
 }
 
 /// Adds 1000 of an object to the player's backpack (`inv`).
@@ -364,14 +354,7 @@ fn cheat_set_stat(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(
         active.player.stats.base_levels[stat] = level;
         active.player.stats.levels[stat] = level;
         active.player.stats.xp[stat] = get_exp_by_level(level);
-
-        let new_combat = active.player.get_combat_level();
-        if new_combat != active.player.combat_level {
-            active.player.combat_level = new_combat;
-            if let Some(appearance) = active.player.info.appearance {
-                active.buildappearance(appearance);
-            }
-        }
+        active.recalc_combat_and_appearance();
     })
 }
 
@@ -414,14 +397,7 @@ fn cheat_minme(active: &mut ActivePlayer) -> Result<(), ScriptError> {
         active.player.stats.levels[stat] = level;
         active.player.stats.xp[stat] = get_exp_by_level(level);
     }
-
-    let new_combat = active.player.get_combat_level();
-    if new_combat != active.player.combat_level {
-        active.player.combat_level = new_combat;
-        if let Some(appearance) = active.player.info.appearance {
-            active.buildappearance(appearance);
-        }
-    }
+    active.recalc_combat_and_appearance();
     Ok(())
 }
 
@@ -511,17 +487,24 @@ fn cheat_setvar(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(),
             active.player.clear_interaction();
             active.unset_map_flag();
         }
-        let value = if v.var_type == ScriptVarType::String {
-            VarValue::String(args.next().unwrap_or("0").into())
-        } else {
-            VarValue::from_int(
-                v.var_type,
-                args.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-            )
-        };
+        let value = build_var_value(v, args);
         active.message_game(&format!("Set {:?}: to {:?}", v.debugname(), value));
         active.set_varp(v.id, value, v.transmit);
     })
+}
+
+/// Builds a [`VarValue`] for `v` from the next argument token: a raw string for
+/// string varps, otherwise an integer (defaulting to `0` when missing or
+/// unparseable).
+fn build_var_value(v: &VarPlayerType, args: &mut Split<char>) -> VarValue {
+    if v.var_type == ScriptVarType::String {
+        VarValue::String(args.next().unwrap_or("0").into())
+    } else {
+        VarValue::from_int(
+            v.var_type,
+            args.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
+        )
+    }
 }
 
 /// Reports a player variable (varp) back to the player as a game message.
@@ -529,14 +512,7 @@ fn cheat_setvar(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(),
 /// Usage: `::getvar <varp>` (e.g. `::getvar testvar`).
 fn cheat_getvar(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(), ScriptError> {
     parse_varp(args.next(), |v| {
-        let value = if v.var_type == ScriptVarType::String {
-            VarValue::String(args.next().unwrap_or("0").into())
-        } else {
-            VarValue::from_int(
-                v.var_type,
-                args.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-            )
-        };
+        let value = build_var_value(v, args);
         active.message_game(&format!("Get {:?}: {:?}", v.debugname(), value));
     })
 }
@@ -1112,40 +1088,24 @@ where
     F: FnOnce(CoordGrid),
 {
     if let Some(coord) = value {
+        let err = || ScriptError::Client(format!("Cannot parse coord: {}", coord));
         let parts: Vec<&str> = coord.split('_').collect();
         if parts.len() != 5 {
-            return Err(ScriptError::Client(format!(
-                "Cannot parse coord: {}",
-                coord
-            )));
+            return Err(err());
         }
-        let y: i32 = parts[0]
-            .parse()
-            .map_err(|_| ScriptError::Client(format!("Cannot parse coord: {}", coord)))?;
-        let mx: i32 = parts[1]
-            .parse()
-            .map_err(|_| ScriptError::Client(format!("Cannot parse coord: {}", coord)))?;
-        let mz: i32 = parts[2]
-            .parse()
-            .map_err(|_| ScriptError::Client(format!("Cannot parse coord: {}", coord)))?;
-        let lx: i32 = parts[3]
-            .parse()
-            .map_err(|_| ScriptError::Client(format!("Cannot parse coord: {}", coord)))?;
-        let lz: i32 = parts[4]
-            .parse()
-            .map_err(|_| ScriptError::Client(format!("Cannot parse coord: {}", coord)))?;
+        let y: i32 = parts[0].parse().map_err(|_| err())?;
+        let mx: i32 = parts[1].parse().map_err(|_| err())?;
+        let mz: i32 = parts[2].parse().map_err(|_| err())?;
+        let lx: i32 = parts[3].parse().map_err(|_| err())?;
+        let lz: i32 = parts[4].parse().map_err(|_| err())?;
 
-        if lz < 0 || lx < 0 || mz < 0 || mx < 0 || y < 0 {
-            return Err(ScriptError::Client(format!(
-                "Cannot parse coord: {}",
-                coord
-            )));
-        }
-        if lz > 63 || lx > 63 || mz > 255 || mx > 255 || y > 3 {
-            return Err(ScriptError::Client(format!(
-                "Cannot parse coord: {}",
-                coord
-            )));
+        if !(0..=63).contains(&lz)
+            || !(0..=63).contains(&lx)
+            || !(0..=255).contains(&mz)
+            || !(0..=255).contains(&mx)
+            || !(0..=3).contains(&y)
+        {
+            return Err(err());
         }
 
         let x = (mx << 6) + lx;

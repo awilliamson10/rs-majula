@@ -56,6 +56,13 @@ impl<const N: usize> Stats<N> {
         self.base_levels.iter().map(|&l| l as i32).sum()
     }
 
+    /// Clamps a computed level into the storable `0..=255` range and narrows it
+    /// to a `u8`.
+    #[inline(always)]
+    fn clamp_level(value: i32) -> u8 {
+        value.clamp(0, 255) as u8
+    }
+
     /// Raises the current level by a flat amount plus a percentage of the
     /// base level. The result is clamped to `[0, 255]`.
     ///
@@ -64,7 +71,7 @@ impl<const N: usize> Stats<N> {
         let base = self.base_levels[stat] as i32;
         let current = self.levels[stat] as i32;
         let added = current + (constant + base * percent / 100);
-        self.levels[stat] = added.clamp(0, 255) as u8;
+        self.levels[stat] = Self::clamp_level(added);
     }
 
     /// Lowers the current level by a flat amount plus a percentage of the
@@ -101,7 +108,7 @@ impl<const N: usize> Stats<N> {
         let current = self.levels[stat] as i32;
         let amount = constant + base * percent / 100;
         let boosted = (current + amount).min(base + amount).max(current);
-        self.levels[stat] = boosted.clamp(0, 255) as u8;
+        self.levels[stat] = Self::clamp_level(boosted);
     }
 
     /// Drains the current level by a flat amount plus a percentage of the

@@ -11,7 +11,7 @@ use rs_pack::types::PlayerStat;
 use rs_stat::{get_exp_by_level, get_level_by_exp};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::error;
 
 /// Magic number at the start of every binary save file for format validation.
@@ -170,22 +170,9 @@ pub fn apply_profile(profile: &PlayerProfile, player: &mut Player, cache: &Cache
     player.last_login_date = profile.last_date;
     player.staff_mod_level = StaffModLevel::from_u8(profile.staff_mod_level);
 
-    player.public = match profile.public_chat {
-        1 => ChatSettingsPublic::Friends,
-        2 => ChatSettingsPublic::Off,
-        3 => ChatSettingsPublic::Hide,
-        _ => ChatSettingsPublic::On,
-    };
-    player.private = match profile.private_chat {
-        1 => ChatSettingsPrivate::Friends,
-        2 => ChatSettingsPrivate::Off,
-        _ => ChatSettingsPrivate::On,
-    };
-    player.trade = match profile.trade_chat {
-        1 => ChatSettingsTradeDuel::Friends,
-        2 => ChatSettingsTradeDuel::Off,
-        _ => ChatSettingsTradeDuel::On,
-    };
+    player.public = ChatSettingsPublic::from_u8(profile.public_chat);
+    player.private = ChatSettingsPrivate::from_u8(profile.private_chat);
+    player.trade = ChatSettingsTradeDuel::from_u8(profile.trade_chat);
 
     for &(id, value) in &profile.varps {
         if (id as usize) < player.vars.len()
@@ -518,6 +505,13 @@ pub fn apply_new_player_defaults(player: &mut Player) {
 
 // ---- File I/O ----
 
+/// Builds the on-disk save path `data/players/{username}.sav` for a player.
+fn save_path(username: &str) -> PathBuf {
+    Path::new("data")
+        .join("players")
+        .join(format!("{}.sav", username))
+}
+
 /// Writes binary save data to a local file at `data/players/{username}.sav`.
 ///
 /// Creates the `data/players/` directory if it does not exist.
@@ -535,7 +529,7 @@ pub fn save_to_file(username: &str, data: &[u8]) {
         error!("Failed to create save directory: {}", e);
         return;
     }
-    let path = dir.join(format!("{}.sav", username));
+    let path = save_path(username);
     match fs::File::create(&path).and_then(|mut f| f.write_all(data)) {
         Ok(()) => {}
         Err(e) => error!("Failed to write save file for '{}': {}", username, e),
@@ -550,9 +544,7 @@ pub fn save_to_file(username: &str, data: &[u8]) {
 /// # Returns
 /// `Some(data)` if the file exists and is readable, `None` otherwise.
 pub fn load_from_file(username: &str) -> Option<Vec<u8>> {
-    let path = Path::new("data")
-        .join("players")
-        .join(format!("{}.sav", username));
+    let path = save_path(username);
     fs::read(&path).ok()
 }
 
@@ -563,9 +555,7 @@ pub fn load_from_file(username: &str) -> Option<Vec<u8>> {
 /// # Arguments
 /// * `username` - The player's username (used as the filename stem).
 pub fn delete_save_file(username: &str) {
-    let path = Path::new("data")
-        .join("players")
-        .join(format!("{}.sav", username));
+    let path = save_path(username);
     let _ = fs::remove_file(path);
 }
 

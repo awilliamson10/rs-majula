@@ -226,14 +226,7 @@ impl GameMap {
                         continue;
                     }
 
-                    let bridged = if y == 1 {
-                        (land & LINK_BELOW) == LINK_BELOW
-                    } else {
-                        let coord = MapsquareCoordGrid::new(x as u8, 1, z as u8);
-                        (lands[coord.packed() as usize] & LINK_BELOW) == LINK_BELOW
-                    };
-
-                    let bridge = if bridged { y as i8 - 1 } else { y as i8 };
+                    let bridge = Self::bridge_level(lands, x as u8, y as u8, z as u8);
                     if bridge < 0 {
                         continue;
                     }
@@ -301,18 +294,7 @@ impl GameMap {
                     continue;
                 }
 
-                let bridged = if coord.y() == 1 {
-                    (lands[coord.packed() as usize] & LINK_BELOW) == LINK_BELOW
-                } else {
-                    let coord = MapsquareCoordGrid::new(coord.x(), 1, coord.z());
-                    (lands[coord.packed() as usize] & LINK_BELOW) == LINK_BELOW
-                };
-
-                let bridge = if bridged {
-                    coord.y() as i8 - 1
-                } else {
-                    coord.y() as i8
-                };
+                let bridge = Self::bridge_level(lands, coord.x(), coord.y(), coord.z());
                 if bridge < 0 {
                     continue;
                 }
@@ -325,7 +307,7 @@ impl GameMap {
                 let length = loc_type.length;
 
                 let shape = LocShape::try_from_primitive(info >> 2).unwrap();
-                let layer = LocShape::try_from_primitive(shape as u8).unwrap().layer();
+                let layer = shape.layer();
                 let angle = LocAngle::try_from_primitive(info & 0x3).unwrap();
                 let coord = CoordGrid::new(
                     originx + coord.x() as u16,
@@ -369,6 +351,18 @@ impl GameMap {
             }
             id_offset = buf.gsmart1or2();
         }
+    }
+
+    /// Computes the bridge-adjusted floor level for a tile.
+    ///
+    /// A tile is "bridged" when the tile directly above the ground floor
+    /// (y = 1) has the `LINK_BELOW` flag set, which shifts content down one
+    /// level. Returns the level as an `i8` so callers can detect the
+    /// underflow case (a negative result) and skip it.
+    fn bridge_level(lands: &[u8; MAPSQUARE], x: u8, y: u8, z: u8) -> i8 {
+        let coord = MapsquareCoordGrid::new(x, 1, z);
+        let bridged = (lands[coord.packed() as usize] & LINK_BELOW) == LINK_BELOW;
+        if bridged { y as i8 - 1 } else { y as i8 }
     }
 
     /// Decodes NPC spawn entries from the mapsquare buffer and creates

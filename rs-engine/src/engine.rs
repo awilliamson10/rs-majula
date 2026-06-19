@@ -3846,13 +3846,7 @@ impl ScriptPlayer for ActivePlayer {
                 .queues
                 .add(QueuePriority::Engine, script.id, 0, None);
         }
-        let new_combat = self.player.get_combat_level();
-        if new_combat != self.player.combat_level {
-            self.player.combat_level = new_combat;
-            if let Some(appearance) = self.player.info.appearance {
-                self.buildappearance(appearance);
-            }
-        }
+        self.recalc_combat_and_appearance();
     }
 
     /// Raises a stat's current level via [`StatBlock::add`].

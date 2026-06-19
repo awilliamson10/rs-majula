@@ -387,35 +387,29 @@ impl PathingEntity {
         let dest_x = ((wp >> 14) & 0x3FFF) as u16;
         let dest_z = (wp & 0x3FFF) as u16;
 
-        if self.size > 1 {
-            let try_dir_x = face_dir(src_x as i32, 0, dest_x as i32, 0);
-            let (dx, _) = dir_delta(try_dir_x);
-            if can_travel(
+        let walk = |dx: i8, dz: i8| {
+            can_travel(
                 members,
                 self.coord.y(),
                 src_x,
                 src_z,
                 dx,
-                0,
-                self.size,
-                extra_flag,
-                Self::collision_type(mr).unwrap(),
-            ) {
-                return Some(try_dir_x);
-            }
-            let try_dir_z = face_dir(0, src_z as i32, 0, dest_z as i32);
-            let (_, dz) = dir_delta(try_dir_z);
-            if can_travel(
-                members,
-                self.coord.y(),
-                src_x,
-                src_z,
-                0,
                 dz,
                 self.size,
                 extra_flag,
                 Self::collision_type(mr).unwrap(),
-            ) {
+            )
+        };
+
+        if self.size > 1 {
+            let try_dir_x = face_dir(src_x as i32, 0, dest_x as i32, 0);
+            let (dx, _) = dir_delta(try_dir_x);
+            if walk(dx, 0) {
+                return Some(try_dir_x);
+            }
+            let try_dir_z = face_dir(0, src_z as i32, 0, dest_z as i32);
+            let (_, dz) = dir_delta(try_dir_z);
+            if walk(0, dz) {
                 return Some(try_dir_z);
             }
             return Some(-1);
@@ -442,19 +436,7 @@ impl PathingEntity {
             return Some(dir);
         }
 
-        if dx != 0
-            && can_travel(
-                members,
-                self.coord.y(),
-                src_x,
-                src_z,
-                dx,
-                0,
-                self.size,
-                extra_flag,
-                Self::collision_type(mr).unwrap(),
-            )
-        {
+        if dx != 0 && walk(dx, 0) {
             return Some(face_dir(
                 src_x as i32,
                 src_z as i32,
@@ -463,19 +445,7 @@ impl PathingEntity {
             ));
         }
 
-        if dz != 0
-            && can_travel(
-                members,
-                self.coord.y(),
-                src_x,
-                src_z,
-                0,
-                dz,
-                self.size,
-                extra_flag,
-                Self::collision_type(mr).unwrap(),
-            )
-        {
+        if dz != 0 && walk(0, dz) {
             return Some(face_dir(
                 src_x as i32,
                 src_z as i32,
@@ -554,6 +524,21 @@ pub const fn face_dir(src_x: i32, src_z: i32, dest_x: i32, dest_z: i32) -> i8 {
     }
 }
 
+/// The (dx, dz) tile delta for each direction index 0-7.
+///
+/// Indexed by the direction values produced by [`face_dir`]:
+/// 0=NW, 1=N, 2=NE, 3=W, 4=E, 5=SW, 6=S, 7=SE.
+const DIR_DELTAS: [(i8, i8); 8] = [
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+    (-1, 0),
+    (1, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+];
+
 /// Returns the (dx, dz) tile delta for the given direction index.
 ///
 /// # Arguments
@@ -562,16 +547,10 @@ pub const fn face_dir(src_x: i32, src_z: i32, dest_x: i32, dest_z: i32) -> i8 {
 /// # Returns
 /// A tuple `(dx, dz)` where each component is -1, 0, or 1.
 pub const fn dir_delta(dir: i8) -> (i8, i8) {
-    match dir {
-        0 => (-1, 1),
-        1 => (0, 1),
-        2 => (1, 1),
-        3 => (-1, 0),
-        4 => (1, 0),
-        5 => (-1, -1),
-        6 => (0, -1),
-        7 => (1, -1),
-        _ => (0, 0),
+    if dir >= 0 && (dir as usize) < DIR_DELTAS.len() {
+        DIR_DELTAS[dir as usize]
+    } else {
+        (0, 0)
     }
 }
 

@@ -407,10 +407,9 @@ impl Zone {
     /// a player enters a new zone.
     pub fn visible_objs(&self, user37: u64, clock: u32) -> impl Iterator<Item = &Obj> {
         let receivers = &self.receivers;
-        self.objs.iter().filter(move |obj| {
-            obj.visible(clock)
-                && (!obj.has_receiver() || receivers.get(&obj.oid()) == Some(&user37))
-        })
+        self.objs
+            .iter()
+            .filter(move |obj| obj.visible(clock) && matches_receiver(receivers, obj, Some(user37)))
     }
 
     /// Returns an iterator over follows event messages visible to a given player.
@@ -496,11 +495,7 @@ impl Zone {
             Some(loc.lid()),
             ZoneEventType::Enclosed,
             None,
-            ZoneMessage::LocAddChange(LocAddChange {
-                coord: loc.packed_zone_coord(),
-                id: loc.id(),
-                shape_angle: loc.packed_shape_angle(),
-            }),
+            loc_add_change_msg(&loc),
         );
         evicted
     }
@@ -553,11 +548,7 @@ impl Zone {
         let loc = &mut self.locs[idx];
         loc.set_last_clock(u32::MAX);
         let lid = loc.lid();
-        let message = ZoneMessage::LocAddChange(LocAddChange {
-            coord: loc.packed_zone_coord(),
-            id: loc.id(),
-            shape_angle: loc.packed_shape_angle(),
-        });
+        let message = loc_add_change_msg(loc);
         self.events
             .retain(|e| e.id != Some(lid) || !matches!(e.message, ZoneMessage::LocAddChange(_)));
         self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
@@ -682,11 +673,7 @@ impl Zone {
         loc.revert();
         loc.set_last_clock(u32::MAX);
         let lid = loc.lid();
-        let message = ZoneMessage::LocAddChange(LocAddChange {
-            coord: loc.packed_zone_coord(),
-            id: loc.id(),
-            shape_angle: loc.packed_shape_angle(),
-        });
+        let message = loc_add_change_msg(loc);
         self.queue_event(Some(lid), ZoneEventType::Enclosed, None, message);
     }
 
@@ -799,7 +786,7 @@ impl Zone {
         let message = ZoneMessage::ObjAdd(ObjAdd {
             coord: obj.packed_zone_coord(),
             id: obj.id(),
-            count: obj.count().clamp(0, 65535) as u16,
+            count: clamp_count(obj.count()),
         });
         if despawn {
             if let Some(r) = receiver37 {
@@ -884,12 +871,9 @@ impl Zone {
     /// objs before merging or stacking.
     pub fn get_obj_of_receiver(&self, x: u16, z: u16, id: u16, receiver37: u64) -> Option<usize> {
         let receivers = &self.receivers;
-        self.objs.iter().position(|obj| {
-            obj.is_at(x, z)
-                && obj.id() == id
-                && obj.has_receiver()
-                && receivers.get(&obj.oid()) == Some(&receiver37)
-        })
+        self.objs
+            .iter()
+            .position(|obj| obj.is_at(x, z) && obj.id() == id && owns(receivers, obj, receiver37))
     }
 
     /// Finds the index of an obj matching coordinates, type id, and optional receiver.
@@ -915,12 +899,7 @@ impl Zone {
     pub fn get_obj(&self, x: u16, z: u16, id: u16, receiver37: Option<u64>) -> Option<usize> {
         let receivers = &self.receivers;
         self.objs.iter().position(|obj| {
-            obj.is_at(x, z)
-                && obj.id() == id
-                && match receiver37 {
-                    None => !obj.has_receiver(),
-                    Some(r) => !obj.has_receiver() || receivers.get(&obj.oid()) == Some(&r),
-                }
+            obj.is_at(x, z) && obj.id() == id && matches_receiver(receivers, obj, receiver37)
         })
     }
 
@@ -955,10 +934,7 @@ impl Zone {
         let idx = {
             let receivers = &self.receivers;
             self.objs.iter().position(|obj| {
-                obj.is_at(x, z)
-                    && obj.id() == id
-                    && obj.has_receiver()
-                    && receivers.get(&obj.oid()) == Some(&receiver37)
+                obj.is_at(x, z) && obj.id() == id && owns(receivers, obj, receiver37)
             })
         };
         let Some(idx) = idx else {
@@ -976,7 +952,7 @@ impl Zone {
             ZoneMessage::ObjReveal(ObjReveal {
                 coord: self.objs[idx].packed_zone_coord(),
                 id,
-                count: count.clamp(0, 65535) as u16,
+                count: clamp_count(count),
                 receiver: receiver_pid,
             }),
         );
@@ -1051,12 +1027,7 @@ impl Zone {
                 obj.is_at(x, z)
                     && obj.id() == id
                     && (obj.lifetime() == EntityLifeTime::Despawn || obj.last_clock() == u32::MAX)
-                    && match receiver37 {
-                        None => !obj.has_receiver(),
-                        Some(receiver) => {
-                            !obj.has_receiver() || receivers.get(&obj.oid()) == Some(&receiver)
-                        }
-                    }
+                    && matches_receiver(receivers, obj, receiver37)
             })
         };
         let Some(idx) = idx else {
@@ -1160,7 +1131,7 @@ impl Zone {
             ZoneMessage::ObjAdd(ObjAdd {
                 coord: self.objs[idx].packed_zone_coord(),
                 id,
-                count: count.clamp(0, 65535) as u16,
+                count: clamp_count(count),
             }),
         );
     }
@@ -1205,6 +1176,45 @@ impl Zone {
     /// **Calls:** [`queue_event`](Self::queue_event).
     pub fn map_proj_anim(&mut self, message: ZoneMessage) {
         self.queue_event(None, ZoneEventType::Enclosed, None, message);
+    }
+}
+
+/// Clamps an obj count into the `u16` range used by obj protocol messages.
+///
+/// Mirrors the inline `count.clamp(0, 65535) as u16` used at every obj message
+/// construction site.
+fn clamp_count(n: u32) -> u16 {
+    n.clamp(0, 65535) as u16
+}
+
+/// Builds the `LocAddChange` zone message describing a loc's current state.
+///
+/// Captures the identical payload constructed when a loc is added, changed, or
+/// respawned.
+fn loc_add_change_msg(loc: &Loc) -> ZoneMessage {
+    ZoneMessage::LocAddChange(LocAddChange {
+        coord: loc.packed_zone_coord(),
+        id: loc.id(),
+        shape_angle: loc.packed_shape_angle(),
+    })
+}
+
+/// Returns whether `obj` is privately owned by the player `receiver37`.
+///
+/// An obj is owned when it carries a receiver and that receiver's recorded UID
+/// matches `receiver37`. Public objs (no receiver) are never owned.
+fn owns(receivers: &FxHashMap<u64, u64>, obj: &Obj, receiver37: u64) -> bool {
+    obj.has_receiver() && receivers.get(&obj.oid()) == Some(&receiver37)
+}
+
+/// Returns whether `obj` is visible to the player identified by `receiver37`.
+///
+/// - `None`: matches only public objs (those without a receiver).
+/// - `Some(r)`: matches objs that are either public or privately owned by `r`.
+fn matches_receiver(receivers: &FxHashMap<u64, u64>, obj: &Obj, receiver37: Option<u64>) -> bool {
+    match receiver37 {
+        None => !obj.has_receiver(),
+        Some(r) => !obj.has_receiver() || receivers.get(&obj.oid()) == Some(&r),
     }
 }
 

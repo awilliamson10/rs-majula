@@ -154,13 +154,11 @@ impl ScriptQueue {
     ///
     /// The number of matching entries in the `queue` and `weak` lanes.
     pub fn count_by_script(&self, script_id: i32) -> i32 {
-        let count = self
-            .queue
+        self.queue
             .iter()
             .chain(self.weak.iter())
             .filter(|q| q.script_id == script_id)
-            .count();
-        count as i32
+            .count() as i32
     }
 }
 

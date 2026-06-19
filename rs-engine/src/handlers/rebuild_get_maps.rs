@@ -22,6 +22,15 @@ enum MapKind {
     Loc = 1,
 }
 
+impl MapKind {
+    fn prefix(&self) -> char {
+        match self {
+            MapKind::Land => 'm',
+            MapKind::Loc => 'l',
+        }
+    }
+}
+
 /// Sends map data to the client in chunks of [`CHUNK_SIZE`] bytes, followed by
 /// a completion marker.
 ///
@@ -113,10 +122,7 @@ impl ClientGameHandler for RebuildGetMaps {
                 continue;
             };
 
-            let data = match kind {
-                MapKind::Land => cache.mapsquares.get(&('m', x, z)),
-                MapKind::Loc => cache.mapsquares.get(&('l', x, z)),
-            };
+            let data = cache.mapsquares.get(&(kind.prefix(), x, z));
 
             if let Some(data) = data {
                 send_chunked(data, x, z, active, kind);

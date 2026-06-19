@@ -130,11 +130,8 @@ impl InteractionState {
     pub fn set(&mut self, target: InteractionTarget, op: u8) -> Option<(u16, u16)> {
         self.target = Some(target);
         self.target_op = Some(op);
-        self.ap_range = Some(10);
-        self.ap_range_called = false;
+        self.reset_path_and_range();
         self.target_subject_com = None;
-        self.last_path_src = 0;
-        self.last_path_dst = 0;
 
         match &target {
             InteractionTarget::Obj { id, .. } | InteractionTarget::Loc { id, .. } => {
@@ -165,10 +162,19 @@ impl InteractionState {
         self.target_op = None;
         self.target_subject_type = None;
         self.target_subject_com = None;
-        self.ap_range = Some(10);
-        self.ap_range_called = false;
+        self.reset_path_and_range();
         // self.target_x = -1;
         // self.target_z = -1;
+    }
+
+    /// Resets the approach-range and path-tracking fields shared by `set` and `clear`.
+    ///
+    /// # Side Effects
+    /// * Resets `ap_range` to `Some(10)` and `ap_range_called` to `false`.
+    /// * Resets `last_path_src` and `last_path_dst` to `0`.
+    fn reset_path_and_range(&mut self) {
+        self.ap_range = Some(10);
+        self.ap_range_called = false;
         self.last_path_src = 0;
         self.last_path_dst = 0;
     }

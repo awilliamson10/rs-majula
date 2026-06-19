@@ -880,12 +880,6 @@ impl Engine {
             .is_some_and(|t| t.is_pathing_entity());
         let in_op = Self::in_operable_distance(active);
 
-        /*#[cfg(debug_assertions)]
-        active.message_game(&format!(
-            "try_interact: has_op={has_op} has_ap={has_ap} allow_op={allow_op_scenery} in_op={in_op} steps={}",
-            active.player.pathing.steps_taken
-        ));*/
-
         if has_op && (is_pathing || allow_op_scenery) && in_op {
             let target = active.player.interaction.target.unwrap();
             let target_subject = Self::target_to_subject(&target);

@@ -56,6 +56,20 @@ const MAX_LENGTH: usize = 100;
 ///
 /// **Calls:** [`to_sentence_case`].
 pub fn unpack(data: &[u8]) -> String {
+    fn nibble(out: &mut String, carry: &mut i32, nibble: i32) {
+        if *carry != -1 {
+            let idx = ((*carry << 4) + nibble - 195) as usize;
+            if let Some(&c) = CHAR_LOOKUP.get(idx) {
+                out.push(c);
+            }
+            *carry = -1;
+        } else if nibble < 13 {
+            out.push(CHAR_LOOKUP[nibble as usize]);
+        } else {
+            *carry = nibble;
+        }
+    }
+
     let mut out = String::with_capacity(MAX_LENGTH);
     let mut carry: i32 = -1;
 
@@ -65,34 +79,14 @@ pub fn unpack(data: &[u8]) -> String {
         }
 
         let hi = ((byte >> 4) & 0xF) as i32;
-        if carry != -1 {
-            let idx = ((carry << 4) + hi - 195) as usize;
-            if let Some(&c) = CHAR_LOOKUP.get(idx) {
-                out.push(c);
-            }
-            carry = -1;
-        } else if hi < 13 {
-            out.push(CHAR_LOOKUP[hi as usize]);
-        } else {
-            carry = hi;
-        }
+        nibble(&mut out, &mut carry, hi);
 
         if out.len() >= MAX_LENGTH {
             break;
         }
 
         let lo = (byte & 0xF) as i32;
-        if carry != -1 {
-            let idx = ((carry << 4) + lo - 195) as usize;
-            if let Some(&c) = CHAR_LOOKUP.get(idx) {
-                out.push(c);
-            }
-            carry = -1;
-        } else if lo < 13 {
-            out.push(CHAR_LOOKUP[lo as usize]);
-        } else {
-            carry = lo;
-        }
+        nibble(&mut out, &mut carry, lo);
     }
     to_sentence_case(&out)
 }

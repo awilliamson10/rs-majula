@@ -39,14 +39,7 @@ impl Inventory {
     /// **Called by:** `Engine::get_shared_inv`, player save loading, tests.
     /// **Calls:** nothing.
     pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            slots: vec![None; capacity],
-            stack_mode: StackMode::Normal,
-            dirty: false,
-            dirty_slots: Vec::new(),
-            stockobj: Box::default(),
-        }
+        Self::with_stack_mode(capacity, StackMode::Normal)
     }
 
     /// Creates a new inventory with the given capacity and explicit stack mode.
@@ -127,7 +120,7 @@ impl Inventory {
         slots
             .into_iter()
             .filter(|&s| (s as usize) < self.capacity)
-            .map(|s| (s, self.get(s).map(|i| (i.obj, i.num as i32))))
+            .map(|s| (s, self.get(s).map(|i| i.as_pair())))
             .collect()
     }
 
@@ -418,32 +411,39 @@ impl Inventory {
         (slot as usize) < self.capacity
     }
 
+    /// Removes and returns the item in `slot`, clearing the slot.
+    ///
+    /// Returns `None` (leaving the inventory untouched) if `slot` is out of
+    /// bounds or empty. On success the slot is cleared via [`delete_slot`](Self::delete_slot)
+    /// before the item is returned, matching the read-then-clear order used by
+    /// the `move_from_slot*` helpers.
+    fn take_slot(&mut self, slot: u16) -> Option<Item> {
+        if !self.valid_slot(slot) {
+            return None;
+        }
+        let item = self.get(slot).copied()?;
+        self.delete_slot(slot);
+        Some(item)
+    }
+
     /// Remove `count` of `obj_id`, add to self as `dest_obj_id`.
     /// Returns overflow (count that couldn't be added).
     /// Take item from `slot`, re-add it to self.
     /// Returns `(overflow, obj_id)` or `None` if slot was empty/invalid.
     pub fn move_from_slot(&mut self, slot: u16, stackable: bool) -> u32 {
-        if !self.valid_slot(slot) {
-            return 0;
+        match self.take_slot(slot) {
+            Some(item) => self.add(item.obj, item.num, stackable),
+            None => 0,
         }
-        let Some(item) = self.get(slot).copied() else {
-            return 0;
-        };
-        self.delete_slot(slot);
-        self.add(item.obj, item.num, stackable)
     }
 
     /// Take item from `slot` in self and add to `dest`.
     /// Returns `(overflow, obj_id)` or `None` if slot was empty/invalid.
     pub fn move_from_slot_to(&mut self, dest: &mut Inventory, slot: u16, stackable: bool) -> u32 {
-        if !self.valid_slot(slot) {
-            return 0;
+        match self.take_slot(slot) {
+            Some(item) => dest.add(item.obj, item.num, stackable),
+            None => 0,
         }
-        let Some(item) = self.get(slot).copied() else {
-            return 0;
-        };
-        self.delete_slot(slot);
-        dest.add(item.obj, item.num, stackable)
     }
 
     /// Swap items between `self[a]` and `self[b]` across two inventories
@@ -479,7 +479,7 @@ impl Inventory {
     pub fn collect_slots(&self) -> Vec<Option<(u16, i32)>> {
         self.slots
             .iter()
-            .map(|s| s.map(|item| (item.obj, item.num as i32)))
+            .map(|s| s.map(|item| item.as_pair()))
             .collect()
     }
 
@@ -503,7 +503,7 @@ impl Inventory {
     pub fn collect_slots_at(&self, slots: &[u16]) -> Vec<Option<(u16, i32)>> {
         slots
             .iter()
-            .map(|&slot| self.get(slot).map(|item| (item.obj, item.num as i32)))
+            .map(|&slot| self.get(slot).map(|item| item.as_pair()))
             .collect()
     }
 }
@@ -513,6 +513,15 @@ impl Inventory {
 pub struct Item {
     pub obj: u16,
     pub num: u32,
+}
+
+impl Item {
+    /// Returns this item as the `(obj_id, count)` pair used for network
+    /// transmission, with the count cast to `i32` for the client protocol.
+    #[inline]
+    pub fn as_pair(&self) -> (u16, i32) {
+        (self.obj, self.num as i32)
+    }
 }
 
 #[cfg(test)]

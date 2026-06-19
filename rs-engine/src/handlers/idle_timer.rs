@@ -28,14 +28,7 @@ use rs_vm::ScriptError;
 /// **Called by:** `ActivePlayer::decode_and_handle` (via `ClientGameHandler` dispatch)
 impl ClientGameHandler for IdleTimer {
     fn handle(self, active: &mut ActivePlayer) -> Result<(), ScriptError> {
-        #[cfg(debug_assertions)]
-        {
-            active.player.logout_idle_requested = false;
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            active.player.logout_idle_requested = true;
-        }
+        active.player.logout_idle_requested = !cfg!(debug_assertions);
 
         Ok(())
     }
