@@ -102,10 +102,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             if a == -1 {
                 return Err(ScriptError::Runtime("null char".to_string()));
             }
-            if let Some(c) = std::char::from_u32((a & 0xffff) as u32) {
-                b.push(c);
-                s.push_string(&b);
-            }
+            let Some(char) = std::char::from_u32((a & 0xFFFF) as u32) else {
+                return Err(ScriptError::Runtime("bad char".to_string()));
+            };
+            b.push(char);
+            s.push_string(&b);
         });
 
         // 4509
@@ -130,14 +131,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             if a == -1 {
                 return Err(ScriptError::Runtime("null char".to_string()));
             }
-            if let Some(char) = std::char::from_u32((a & 0xffff) as u32) {
-                s.push_int(
-                    b.chars()
-                        .position(|c| c == char)
-                        .map_or(-1, |index| index as i32),
-                );
-            }
-            Err(ScriptError::Runtime("bad char".to_string()))?;
+            let Some(char) = std::char::from_u32((a & 0xFFFF) as u32) else {
+                return Err(ScriptError::Runtime("bad char".to_string()));
+            };
+            s.push_int(b.chars().position(|c| c == char).map_or(-1, |index| index as i32));
         });
 
         // 4512
