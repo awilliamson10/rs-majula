@@ -43,11 +43,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let coord = CoordGrid::from(s.pop_int() as u32);
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[secondary])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, secondary)?;
             let to_uid = if secondary != 0 { s.active_player } else { s.active_player2 }
                 .ok_or(ScriptError::Runtime("player is null".into()))?;
             let inventory = get_inv_mut::<E>(inv.id, player)?;
@@ -69,11 +65,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[secondary])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, secondary)?;
             if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[if secondary != 0 { 0 } else { 1 }])
                 && to_inv.protect
                 && from_inv.scope != InvScope::Shared {
@@ -94,13 +86,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 let to_coord = to_player.coord();
                 let overflow = get_inv_mut::<E>(to_inv.id, to_player)?.add(item.obj, item.num, obj_type.stackable);
                 if overflow > 0 {
-                    if !obj_type.stackable || overflow == 1 {
-                        for _ in 0..overflow {
-                            engine_mut::<E>().add_obj(to_coord, item.obj, 1, to_receiver37, LOOTDROP_DURATION);
-                        }
-                    } else {
-                        engine_mut::<E>().add_obj(to_coord, item.obj, overflow, to_receiver37, LOOTDROP_DURATION);
-                    }
+                    add_obj_split::<E>(to_coord, item.obj, overflow, obj_type.stackable, to_receiver37, LOOTDROP_DURATION);
                 }
             }
         });
@@ -110,11 +96,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let count = pop_count(s)?;
             let obj = pop_obj(s)?;
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             if !inv.dummyinv && obj.dummyitem != DummyItem::None {
                 return Err(ScriptError::Runtime(format!("dummyitem in non-dummyinv: {:?} -> {:?}", obj.debugname(), inv.debugname())));
             }
@@ -123,13 +105,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let overflow = get_inv_mut::<E>(inv.id, player)?.add(obj_id, count, obj.stackable);
             if overflow > 0 {
                 let receiver37 = Some(player.uid().username37());
-                if !obj.stackable || overflow == 1 {
-                    for _ in 0..overflow {
-                        engine_mut::<E>().add_obj(coord, obj_id, 1, receiver37, LOOTDROP_DURATION);
-                    }
-                } else {
-                    engine_mut::<E>().add_obj(coord, obj_id, overflow, receiver37, LOOTDROP_DURATION);
-                }
+                add_obj_split::<E>(coord, obj_id, overflow, obj.stackable, receiver37, LOOTDROP_DURATION);
             }
         });
 
@@ -145,11 +121,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let replace_obj = pop_obj(s)?;
             let find_obj = pop_obj(s)?;
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             let inventory = get_inv_mut::<E>(inv.id, player)?;
             for slot in 0..inventory.capacity {
                 if let Some(item) = inventory.get(slot as u16) {
@@ -164,11 +136,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 4305
         active_player_mut!(m, INV_CLEAR => |s, player| {
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             get_inv_mut::<E>(inv.id, player)?.clear();
         });
 
@@ -185,11 +153,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let count = pop_count(s)?;
             let obj = pop_obj(s)?;
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             get_inv_mut::<E>(inv.id, player)?.delete(obj.id, count);
         });
 
@@ -197,11 +161,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, INV_DELSLOT => |s, player| {
             let slot = s.pop_int();
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             get_inv_mut::<E>(inv.id, player)?.delete_slot(slot as u16);
         });
 
@@ -211,11 +171,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             let inventory = get_inv_mut::<E>(inv.id, player)?;
             let packed = coord.packed();
             for slot in 0..inventory.capacity {
@@ -240,11 +196,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = pop_obj(s)?;
             let coord = CoordGrid::from(s.pop_int() as u32);
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             let completed = get_inv_mut::<E>(inv.id, player)?.delete(obj.id, count);
             if completed == 0 {
                 return Ok(());
@@ -268,11 +220,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let coord = CoordGrid::from(s.pop_int() as u32);
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[secondary])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, secondary)?;
             let completed = get_inv_mut::<E>(inv.id, player)?.delete(obj.id, count);
             if completed == 0 {
                 return Ok(());
@@ -296,11 +244,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let coord = CoordGrid::from(s.pop_int() as u32);
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[secondary])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, secondary)?;
 
             let inventory = get_inv_mut::<E>(inv.id, player)?;
             let Some(item) = inventory.get(slot as u16).copied() else {
@@ -315,13 +259,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
             let receiver37 = Some(player.uid().username37());
             let packed = coord.packed();
-            if !stackable || item.num == 1 {
-                for _ in 0..item.num {
-                    engine_mut::<E>().add_obj(packed, item.obj, 1, receiver37, duration as u64);
-                }
-            } else {
-                engine_mut::<E>().add_obj(packed, item.obj, item.num, receiver37, duration as u64);
-            }
+            add_obj_split::<E>(packed, item.obj, item.num, stackable, receiver37, duration as u64);
 
             set_active_obj(s, ObjRef { coord: packed, id: item.obj, count: item.num }, secondary != 0);
         });
@@ -383,16 +321,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let slot = s.pop_int();
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && to_inv.protect
-                && to_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", to_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, s.int_operand() as usize)?;
+            require_inv_access(s, to_inv, s.int_operand() as usize)?;
             let coord = player.coord();
             if from_inv.id == to_inv.id {
                 let inv = get_inv_mut::<E>(from_inv.id, player)?;
@@ -403,13 +333,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 let overflow = inv.move_from_slot(slot as u16, stackable);
                 if overflow > 0 {
                     let receiver37 = Some(player.uid().username37());
-                    if !stackable || overflow == 1 {
-                        for _ in 0..overflow {
-                            engine_mut::<E>().add_obj(coord, item.obj, 1, receiver37, LOOTDROP_DURATION);
-                        }
-                    } else {
-                        engine_mut::<E>().add_obj(coord, item.obj, overflow, receiver37, LOOTDROP_DURATION);
-                    }
+                    add_obj_split::<E>(coord, item.obj, overflow, stackable, receiver37, LOOTDROP_DURATION);
                 }
             } else {
                 let (from, to) = get_inv_pair_mut(from_inv.id, to_inv.id, player)?;
@@ -420,13 +344,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 let overflow = from.move_from_slot_to(to, slot as u16, stackable);
                 if overflow > 0 {
                     let receiver37 = Some(player.uid().username37());
-                    if !stackable || overflow == 1 {
-                        for _ in 0..overflow {
-                            engine_mut::<E>().add_obj(coord, item.obj, 1, receiver37, LOOTDROP_DURATION);
-                        }
-                    } else {
-                        engine_mut::<E>().add_obj(coord, item.obj, overflow, receiver37, LOOTDROP_DURATION);
-                    }
+                    add_obj_split::<E>(coord, item.obj, overflow, stackable, receiver37, LOOTDROP_DURATION);
                 }
             }
         });
@@ -438,16 +356,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = pop_obj(s)?;
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && to_inv.protect
-                && to_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", to_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, s.int_operand() as usize)?;
+            require_inv_access(s, to_inv, s.int_operand() as usize)?;
             let completed = get_inv_mut::<E>(from_inv.id, player)?.delete(obj.id, count);
             if completed == 0 {
                 return Ok(());
@@ -466,16 +376,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = pop_obj(s)?;
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && to_inv.protect
-                && to_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", to_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, s.int_operand() as usize)?;
+            require_inv_access(s, to_inv, s.int_operand() as usize)?;
             let completed = get_inv_mut::<E>(from_inv.id, player)?.delete(obj.id, count);
             if completed == 0 {
                 return Ok(());
@@ -492,16 +394,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = pop_obj(s)?;
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && to_inv.protect
-                && to_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", to_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, s.int_operand() as usize)?;
+            require_inv_access(s, to_inv, s.int_operand() as usize)?;
             let coord = player.coord();
             let obj_id = obj.id;
             let completed = get_inv_mut::<E>(from_inv.id, player)?.delete(obj_id, count);
@@ -511,13 +405,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let overflow = get_inv_mut::<E>(to_inv.id, player)?.add(obj_id, completed, obj.stackable);
             if overflow > 0 {
                 let receiver37 = Some(player.uid().username37());
-                if !obj.stackable || overflow == 1 {
-                    for _ in 0..overflow {
-                        engine_mut::<E>().add_obj(coord, obj_id, 1, receiver37, LOOTDROP_DURATION);
-                    }
-                } else {
-                    engine_mut::<E>().add_obj(coord, obj_id, overflow, receiver37, LOOTDROP_DURATION);
-                }
+                add_obj_split::<E>(coord, obj_id, overflow, obj.stackable, receiver37, LOOTDROP_DURATION);
             }
         });
 
@@ -528,16 +416,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let from_slot = s.pop_int();
             let to_inv = pop_inv(s)?;
             let from_inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && from_inv.protect
-                && from_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", from_inv.debugname())));
-            }
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && to_inv.protect
-                && to_inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", to_inv.debugname())));
-            }
+            require_inv_access(s, from_inv, s.int_operand() as usize)?;
+            require_inv_access(s, to_inv, s.int_operand() as usize)?;
             if from_inv.id == to_inv.id {
                 get_inv_mut::<E>(from_inv.id, player)?.move_to_slot(from_slot as u16, to_slot as u16);
             } else {
@@ -552,11 +432,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = pop_obj(s)?;
             let slot = s.pop_int();
             let inv = pop_inv(s)?;
-            if !s.pointers.has(ScriptState::PROTECTED_ACTIVE_PLAYER[s.int_operand() as usize])
-                && inv.protect
-                && inv.scope != InvScope::Shared {
-                return Err(ScriptError::Runtime(format!("Inv: {:?} requires protected access!", inv.debugname())));
-            }
+            require_inv_access(s, inv, s.int_operand() as usize)?;
             if !inv.dummyinv && obj.dummyitem != DummyItem::None {
                 return Err(ScriptError::Runtime(format!("dummyitem in non-dummyinv: {:?} -> {:?}", obj.debugname(), inv.debugname())));
             }

@@ -13,6 +13,7 @@ use rs_pack::cache::midi::MidiType;
 use rs_pack::cache::npc::NpcType;
 use rs_pack::cache::obj::ObjType;
 use rs_pack::cache::param::ParamType;
+use rs_pack::cache::provider::CacheType;
 use rs_pack::cache::script::Script;
 use rs_pack::cache::seq::SeqType;
 use rs_pack::cache::spotanim::SpotAnimType;
@@ -20,6 +21,51 @@ use rs_pack::cache::r#struct::StructType;
 use std::sync::Arc;
 
 pub const LOOTDROP_DURATION: u64 = (200 * 3) >> 1;
+
+/// Enforces the protected-access rule shared by the inventory opcodes: a
+/// `protect` inventory may only be mutated while the matching protected
+/// active-player pointer is held, unless the inventory is shared.
+///
+/// `idx` selects which protected active-player pointer is required (`0` for the
+/// primary active player, `1` for the secondary).
+///
+/// # Errors
+/// Returns [`ScriptError::Runtime`] when access is not permitted.
+pub(crate) fn require_inv_access(state: &ScriptState, inv: &InvType, idx: usize) -> Result<()> {
+    if !state
+        .pointers
+        .has(ScriptState::PROTECTED_ACTIVE_PLAYER[idx])
+        && inv.protect
+        && inv.scope != InvScope::Shared
+    {
+        return Err(ScriptError::Runtime(format!(
+            "Inv: {:?} requires protected access!",
+            inv.debugname()
+        )));
+    }
+    Ok(())
+}
+
+/// Drops `count` of object `id` on the ground at `coord`, splitting the way the
+/// inventory and obj opcodes expect: a non-stackable object (or a lone item) is
+/// dropped as individual single-count piles, while a stackable amount is dropped
+/// as one combined pile.
+pub(crate) fn add_obj_split<E: ScriptEngine + 'static>(
+    coord: u32,
+    id: u16,
+    count: u32,
+    stackable: bool,
+    receiver37: Option<u64>,
+    duration: u64,
+) {
+    if !stackable || count == 1 {
+        for _ in 0..count {
+            engine_mut::<E>().add_obj(coord, id, 1, receiver37, duration);
+        }
+    } else {
+        engine_mut::<E>().add_obj(coord, id, count, receiver37, duration);
+    }
+}
 
 /// Returns a mutable reference to the active player entity from the global engine.
 ///
