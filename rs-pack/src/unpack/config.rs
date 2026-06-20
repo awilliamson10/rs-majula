@@ -8,6 +8,9 @@ use rs_io::Packet;
 use rs_io::jag::JagFile;
 use tracing::info;
 
+type ConfigEntries = Vec<(u16, Vec<(String, String)>)>;
+type ConfigDecoder = fn(&[u8], &[u8], &HashMap<u16, u16>, &mut UnpackedPacks) -> ConfigEntries;
+
 #[derive(Clone, Debug)]
 pub enum ModelCategory {
     Npc,
@@ -148,15 +151,7 @@ pub fn unpack_config(
     let reverse_hsl = build_reverse_hsl_table();
     let mut packs = UnpackedPacks::new();
 
-    let types: &[(
-        &str,
-        fn(
-            &[u8],
-            &[u8],
-            &HashMap<u16, u16>,
-            &mut UnpackedPacks,
-        ) -> Vec<(u16, Vec<(String, String)>)>,
-    )] = &[
+    let types: &[(&str, ConfigDecoder)] = &[
         ("idk", decode_idk_entries),
         ("obj", decode_obj_entries),
         ("npc", decode_npc_entries),
