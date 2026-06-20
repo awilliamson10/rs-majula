@@ -3,6 +3,7 @@ pub mod interface;
 pub mod media;
 pub mod model;
 pub mod other;
+#[allow(clippy::module_inception)]
 pub mod pack;
 pub mod pack_registry;
 pub mod packed_data;
