@@ -118,6 +118,9 @@ use tracing::{error, warn};
 /// returns buffers faster than they're reused; extras are dropped (freed).
 const OUTPUT_POOL_CAP: usize = 8;
 
+type PartialInvUpdate = Vec<(u16, Option<(u16, i32)>)>;
+type FullInvUpdate = Vec<Option<(u16, i32)>>;
+
 /// Wraps a [`Player`] entity together with its network [`ClientHandle`] and
 /// per-tick buffered output packets.
 ///
@@ -973,10 +976,9 @@ impl ActivePlayer {
     pub fn update_invs(&mut self, shared_invs: &mut FxHashMap<u16, Inventory>) {
         thread_local! {
             // Full payload (every slot) for first-seen components.
-            static FULL: RefCell<Vec<Option<(u16, i32)>>> = RefCell::new(Vec::with_capacity(48));
+            static FULL: RefCell<FullInvUpdate> = RefCell::new(Vec::with_capacity(48));
             // Partial payload (changed slots only) for already-seen components.
-            static PARTIAL: RefCell<Vec<(u16, Option<(u16, i32)>)>> =
-                RefCell::new(Vec::with_capacity(48));
+            static PARTIAL: RefCell<PartialInvUpdate> = RefCell::new(Vec::with_capacity(48));
         }
 
         // Take the transmit map out of the player so we can iterate it while
@@ -1087,9 +1089,8 @@ impl ActivePlayer {
         }
 
         thread_local! {
-            static FULL: RefCell<Vec<Option<(u16, i32)>>> = RefCell::new(Vec::with_capacity(48));
-            static PARTIAL: RefCell<Vec<(u16, Option<(u16, i32)>)>> =
-                RefCell::new(Vec::with_capacity(48));
+            static FULL: RefCell<FullInvUpdate> = RefCell::new(Vec::with_capacity(48));
+            static PARTIAL: RefCell<PartialInvUpdate> = RefCell::new(Vec::with_capacity(48));
         }
 
         // Take the map out so `&mut self` methods (update_inv_full) can be called
