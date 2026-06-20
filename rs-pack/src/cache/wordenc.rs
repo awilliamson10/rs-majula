@@ -6,15 +6,16 @@ const AMPERSAT: &[u8] = b"(a)";
 const SLASH: &[u8] = b"slash";
 const WHITELIST: &[&str] = &["cook", "cook's", "cooks", "seeks", "sheet"];
 
-pub type BadCombinations = Box<[Option<Box<[[i8; 2]]>>]>;
+type BadCombinations = Box<[Option<Box<[[i8; 2]]>>]>;
+type WordList = Box<[Box<[u8]>]>;
 
 pub struct WordEncProvider {
-    pub bads: Box<[Box<[u8]>]>,
+    pub bads: WordList,
     pub bad_combinations: BadCombinations,
     pub fragments: Box<[i32]>,
-    pub tlds: Box<[Box<[u8]>]>,
+    pub tlds: WordList,
     pub tld_types: Box<[u8]>,
-    pub domains: Box<[Box<[u8]>]>,
+    pub domains: WordList,
 }
 
 impl WordEncProvider {
@@ -1001,7 +1002,7 @@ fn format_uppercases(chars: &mut [char]) {
 
 // --- decoding ---
 
-fn decode_badenc(data: &[u8]) -> (Box<[Box<[u8]>]>, BadCombinations) {
+fn decode_badenc(data: &[u8]) -> (WordList, BadCombinations) {
     let mut buf = Packet::from(data.to_vec());
     let count = buf.g4s() as usize;
     let mut bads = Vec::with_capacity(count);
@@ -1032,7 +1033,7 @@ fn decode_fragments(data: &[u8]) -> Vec<i32> {
     (0..count).map(|_| buf.g2() as i32).collect()
 }
 
-fn decode_tldlist(data: &[u8]) -> (Box<[Box<[u8]>]>, Vec<u8>) {
+fn decode_tldlist(data: &[u8]) -> (WordList, Vec<u8>) {
     let mut buf = Packet::from(data.to_vec());
     let count = buf.g4s() as usize;
     let mut tlds = Vec::with_capacity(count);
@@ -1052,7 +1053,7 @@ fn decode_tldlist(data: &[u8]) -> (Box<[Box<[u8]>]>, Vec<u8>) {
     (Box::from(tlds), types)
 }
 
-fn decode_domains(data: &[u8]) -> Box<[Box<[u8]>]> {
+fn decode_domains(data: &[u8]) -> WordList {
     let mut buf = Packet::from(data.to_vec());
     let count = buf.g4s() as usize;
     (0..count)
