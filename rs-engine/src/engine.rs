@@ -2579,7 +2579,7 @@ impl Engine {
         // old socket task (dead or alive) shuts down. Buffered packets queued
         // earlier this tick survive on `active.buffered` and flush through
         // the new handle's ISAAC cipher at the output phase.
-        active.handle = Box::new(request.handle);
+        *active.handle = request.handle;
         active.player.low_memory = request.low_memory;
         active.remote_ip = Some(request.remote_addr.ip());
 
