@@ -53,11 +53,9 @@ impl ServerProtMessage for UpdateInvFull<'_> {
 
 impl UpdateInvFull<'_> {
     fn find_max_pos(&self) -> usize {
-        let max = self
-            .objs
+        self.objs
             .iter()
             .rposition(Option::is_some)
-            .map_or(0, |i| i + 1);
-        max
+            .map_or(0, |i| i + 1)
     }
 }
