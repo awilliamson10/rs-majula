@@ -259,12 +259,11 @@ fn preserve_settext_colors(text: &str) -> String {
     let mut lines: Vec<String> = text.split("\\n").map(str::to_string).collect();
     let mut saved_col: Option<String> = None;
 
-    for i in 0..lines.len() {
+    for (i, line) in lines.iter_mut().enumerate() {
         // apply the color carried over from the previous line
         if i > 0 {
             if let Some(col) = saved_col.clone() {
-                if !lines[i].is_empty() {
-                    let line = &mut lines[i];
+                if !line.is_empty() {
                     if let Some(str_index) = line.find("@str@") {
                         let after = str_index + 5;
                         if line.as_bytes().get(after..after + 5) != Some(&b"@bla@"[..]) {
@@ -279,7 +278,7 @@ fn preserve_settext_colors(text: &str) -> String {
         }
 
         // scan this line for the last color tag, tracking @str@/@bla@ resets
-        let bytes = lines[i].as_bytes();
+        let bytes = line.as_bytes();
         let mut j = 0;
         while j + 4 < bytes.len() {
             if bytes[j] == b'@' && bytes[j + 4] == b'@' {
@@ -290,7 +289,7 @@ fn preserve_settext_colors(text: &str) -> String {
                         continue;
                     }
                 } else {
-                    saved_col = Some(lines[i][j..j + 5].to_string());
+                    saved_col = Some(line[j..j + 5].to_string());
                 }
                 j += 5;
                 continue;
