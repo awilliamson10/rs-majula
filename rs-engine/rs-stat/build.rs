@@ -8,9 +8,9 @@ fn main() {
 
     let mut table = [0; 99];
     let mut acc: i32 = 0;
-    for level in 1..99 {
+    for (level, item) in table.iter_mut().enumerate().skip(1) {
         acc += ((level as f64) + 2.0_f64.powf(level as f64 / 7.0) * 300.0).floor() as i32;
-        table[level] = (acc / 4) * 10;
+        *item = (acc / 4) * 10;
     }
 
     let mut entries = String::new();
