@@ -988,13 +988,13 @@ fn replace_uppercases(chars: &mut [char], comparison: &[char]) {
 fn format_uppercases(chars: &mut [char]) {
     let mut flagged = true;
     for c in chars.iter_mut() {
-        if !is_alpha(&c) {
+        if !is_alpha(c) {
             flagged = true;
         } else if flagged {
-            if is_lowercase_alpha(&c) {
+            if is_lowercase_alpha(c) {
                 flagged = false;
             }
-        } else if is_uppercase_alpha(&c) {
+        } else if is_uppercase_alpha(c) {
             *c = (*c as u8 + b'a' - 65) as char;
         }
     }
