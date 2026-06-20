@@ -6,9 +6,11 @@ const AMPERSAT: &[u8] = b"(a)";
 const SLASH: &[u8] = b"slash";
 const WHITELIST: &[&str] = &["cook", "cook's", "cooks", "seeks", "sheet"];
 
+pub type BadCombinations = Box<[Option<Box<[[i8; 2]]>>]>;
+
 pub struct WordEncProvider {
     pub bads: Box<[Box<[u8]>]>,
-    pub bad_combinations: Box<[Option<Box<[[i8; 2]]>>]>,
+    pub bad_combinations: BadCombinations,
     pub fragments: Box<[i32]>,
     pub tlds: Box<[Box<[u8]>]>,
     pub tld_types: Box<[u8]>,
@@ -1001,7 +1003,7 @@ fn format_uppercases(chars: &mut [char]) {
 
 // --- decoding ---
 
-fn decode_badenc(data: &[u8]) -> (Box<[Box<[u8]>]>, Box<[Option<Box<[[i8; 2]]>>]>) {
+fn decode_badenc(data: &[u8]) -> (Box<[Box<[u8]>]>, BadCombinations) {
     let mut buf = Packet::from(data.to_vec());
     let count = buf.g4s() as usize;
     let mut bads = Vec::with_capacity(count);
