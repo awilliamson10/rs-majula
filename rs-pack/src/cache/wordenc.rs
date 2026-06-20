@@ -85,7 +85,7 @@ impl WordEncProvider {
     fn filter_bad_words(&self, chars: &mut [char]) {
         for _ in 0..2 {
             for i in (0..self.bads.len()).rev() {
-                let combos = self.bad_combinations.get(i).and_then(|c| c.as_ref());
+                let combos = self.bad_combinations.get(i).and_then(|c| c.as_deref());
                 self.filter_bad_combinations(combos, chars, &self.bads[i]);
             }
         }
@@ -93,7 +93,7 @@ impl WordEncProvider {
 
     pub fn filter_bad_combinations(
         &self,
-        combos: Option<&Box<[[i8; 2]]>>,
+        combos: Option<&[[i8; 2]]>,
         chars: &mut [char],
         bads: &[u8],
     ) {
