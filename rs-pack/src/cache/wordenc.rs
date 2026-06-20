@@ -112,9 +112,9 @@ impl WordEncProvider {
 
             if has_symbol {
                 let is_before_symbol = start_index == 0
-                    || (is_symbol(chars[start_index - 1]) && chars[start_index - 1] != '\'');
+                    || (is_symbol(&chars[start_index - 1]) && chars[start_index - 1] != '\'');
                 let is_after_symbol = current_index >= chars.len()
-                    || (is_symbol(chars[current_index]) && chars[current_index] != '\'');
+                    || (is_symbol(&chars[current_index]) && chars[current_index] != '\'');
 
                 if !is_before_symbol || !is_after_symbol {
                     let mut is_substring_valid = false;
@@ -127,12 +127,12 @@ impl WordEncProvider {
                     while !is_substring_valid && (local_index as usize) < current_index {
                         if local_index >= 0 {
                             let li = local_index as usize;
-                            if !is_symbol(chars[li]) || chars[li] == '\'' {
+                            if !is_symbol(&chars[li]) || chars[li] == '\'' {
                                 let mut sub = ['\0'; 3];
                                 let mut sub_len = 0;
                                 while sub_len < 3
                                     && li + sub_len < chars.len()
-                                    && (!is_symbol(chars[li + sub_len])
+                                    && (!is_symbol(&chars[li + sub_len])
                                         || chars[li + sub_len] == '\'')
                                 {
                                     sub[sub_len] = chars[li + sub_len];
@@ -144,7 +144,7 @@ impl WordEncProvider {
                                 }
                                 if sub_len < 3
                                     && li >= 1
-                                    && (!is_symbol(chars[li - 1]) || chars[li - 1] == '\'')
+                                    && (!is_symbol(&chars[li - 1]) || chars[li - 1] == '\'')
                                 {
                                     is_valid = false;
                                 }
@@ -186,9 +186,9 @@ impl WordEncProvider {
             let mut numeral_count = 0;
             let mut alpha_count = 0;
             for &c in chars.iter().take(current_index).skip(start_index) {
-                if is_numerical(c) {
+                if is_numerical(&c) {
                     numeral_count += 1;
-                } else if is_alpha(c) {
+                } else if is_alpha(&c) {
                     alpha_count += 1;
                 }
             }
@@ -223,11 +223,11 @@ impl WordEncProvider {
                 let current_length =
                     get_emulated_bad_char_len(next_char, bads[bad_index] as char, current_char);
                 if current_length > 0 {
-                    if current_length == 1 && is_numerical(current_char) {
+                    if current_length == 1 && is_numerical(&current_char) {
                         has_number = true;
                     }
                     if current_length == 2
-                        && (is_numerical(current_char) || is_numerical(next_char))
+                        && (is_numerical(&current_char) || is_numerical(&next_char))
                     {
                         has_number = true;
                     }
@@ -246,13 +246,13 @@ impl WordEncProvider {
             if previous_length > 0 {
                 index += previous_length;
             } else {
-                if bad_index >= bads.len() || !is_not_lowercase_alpha(current_char) {
+                if bad_index >= bads.len() || !is_not_lowercase_alpha(&current_char) {
                     break;
                 }
-                if is_symbol(current_char) && current_char != '\'' {
+                if is_symbol(&current_char) && current_char != '\'' {
                     has_symbol = true;
                 }
-                if is_numerical(current_char) {
+                if is_numerical(&current_char) {
                     has_digit = true;
                 }
                 index += 1;
@@ -370,11 +370,11 @@ impl WordEncProvider {
                 let mut pi = start_filter as i32 - 1;
                 while pi >= 0 {
                     if found {
-                        if is_symbol(chars[pi as usize]) {
+                        if is_symbol(&chars[pi as usize]) {
                             break;
                         }
                         start_filter = pi as usize;
-                    } else if !is_symbol(chars[pi as usize]) {
+                    } else if !is_symbol(&chars[pi as usize]) {
                         found = true;
                         start_filter = pi as usize;
                     }
@@ -405,11 +405,11 @@ impl WordEncProvider {
                 let mut found = false;
                 for (pi, &c) in chars.iter().enumerate().skip(end_filter + 1) {
                     if found {
-                        if is_symbol(c) {
+                        if is_symbol(&c) {
                             break;
                         }
                         end_filter = pi;
-                    } else if !is_symbol(c) {
+                    } else if !is_symbol(&c) {
                         found = true;
                         end_filter = pi;
                     }
@@ -433,7 +433,7 @@ impl WordEncProvider {
 
             let mut is_symbol_or_not_lowercase_alpha = false;
             for &c in chars.iter().take(number_index).skip(current_index) {
-                if !is_symbol(c) && !is_not_lowercase_alpha(c) {
+                if !is_symbol(&c) && !is_not_lowercase_alpha(&c) {
                     is_symbol_or_not_lowercase_alpha = true;
                 }
             }
@@ -500,11 +500,11 @@ impl WordEncProvider {
 
 // --- character classification helpers ---
 
-fn is_symbol(c: char) -> bool {
+fn is_symbol(c: &char) -> bool {
     !is_alpha(c) && !is_numerical(c)
 }
 
-fn is_not_lowercase_alpha(c: char) -> bool {
+fn is_not_lowercase_alpha(c: &char) -> bool {
     if is_lowercase_alpha(c) {
         matches!(c, 'v' | 'x' | 'j' | 'q' | 'z')
     } else {
@@ -512,25 +512,25 @@ fn is_not_lowercase_alpha(c: char) -> bool {
     }
 }
 
-fn is_alpha(c: char) -> bool {
+fn is_alpha(c: &char) -> bool {
     is_lowercase_alpha(c) || is_uppercase_alpha(c)
 }
 
-fn is_numerical(c: char) -> bool {
+fn is_numerical(c: &char) -> bool {
     c.is_ascii_digit()
 }
 
-fn is_lowercase_alpha(c: char) -> bool {
+fn is_lowercase_alpha(c: &char) -> bool {
     c.is_ascii_lowercase()
 }
 
-fn is_uppercase_alpha(c: char) -> bool {
+fn is_uppercase_alpha(c: &char) -> bool {
     c.is_ascii_uppercase()
 }
 
 fn is_numerical_chars(chars: &[char]) -> bool {
     for &c in chars {
-        if !is_numerical(c) && c != '\0' {
+        if !is_numerical(&c) && c != '\0' {
             return false;
         }
     }
@@ -546,7 +546,7 @@ fn mask_chars(offset: usize, length: usize, chars: &mut [char]) {
 fn masked_count_backwards(chars: &[char], offset: usize) -> usize {
     let mut count = 0;
     let mut i = offset as i32 - 1;
-    while i >= 0 && is_symbol(chars[i as usize]) {
+    while i >= 0 && is_symbol(&chars[i as usize]) {
         if chars[i as usize] == '*' {
             count += 1;
         }
@@ -558,7 +558,7 @@ fn masked_count_backwards(chars: &[char], offset: usize) -> usize {
 fn masked_count_forwards(chars: &[char], offset: usize) -> usize {
     let mut count = 0;
     for &c in chars.iter().skip(offset + 1) {
-        if !is_symbol(c) {
+        if !is_symbol(&c) {
             break;
         }
         if c == '*' {
@@ -583,12 +583,12 @@ fn masked_chars_status(
     if count >= length {
         4
     } else if prefix {
-        if offset >= 1 && is_symbol(chars[offset - 1]) {
+        if offset >= 1 && is_symbol(&chars[offset - 1]) {
             1
         } else {
             0
         }
-    } else if offset + 1 < chars.len() && is_symbol(chars[offset + 1]) {
+    } else if offset + 1 < chars.len() && is_symbol(&chars[offset + 1]) {
         1
     } else {
         0
@@ -606,7 +606,7 @@ fn prefix_symbol_status(
         return 2;
     }
     let mut i = offset as i32 - 1;
-    while i >= 0 && is_symbol(chars[i as usize]) {
+    while i >= 0 && is_symbol(&chars[i as usize]) {
         if symbols.contains(&chars[i as usize]) {
             return 3;
         }
@@ -626,7 +626,7 @@ fn suffix_symbol_status(
         return 2;
     }
     for &c in chars.iter().skip(offset + 1) {
-        if !is_symbol(c) {
+        if !is_symbol(&c) {
             break;
         }
         if symbols.contains(&c) {
@@ -637,11 +637,11 @@ fn suffix_symbol_status(
 }
 
 fn get_index(c: char) -> i8 {
-    if is_lowercase_alpha(c) {
+    if is_lowercase_alpha(&c) {
         (c as i8) - b'a' as i8 + 1
     } else if c == '\'' {
         28
-    } else if is_numerical(c) {
+    } else if is_numerical(&c) {
         (c as i8) - b'0' as i8 + 29
     } else {
         27
@@ -871,7 +871,7 @@ fn find_matching_domain(start_index: usize, domain: &[u8], chars: &[char]) -> (b
             if previous_length > 0 {
                 current_index += previous_length;
             } else {
-                if !is_symbol(current_char) {
+                if !is_symbol(&current_char) {
                     break;
                 }
                 current_index += 1;
@@ -905,7 +905,7 @@ fn process_tlds(chars: &[char], tld: &[u8], mut current_index: usize) -> (usize,
             if previous_length > 0 {
                 current_index += previous_length;
             } else {
-                if !is_symbol(current_char) {
+                if !is_symbol(&current_char) {
                     break;
                 }
                 current_index += 1;
@@ -917,7 +917,7 @@ fn process_tlds(chars: &[char], tld: &[u8], mut current_index: usize) -> (usize,
 
 fn index_of_number(chars: &[char], offset: usize) -> usize {
     for (i, &c) in chars.iter().enumerate().skip(offset) {
-        if is_numerical(c) {
+        if is_numerical(&c) {
             return i;
         }
     }
@@ -926,7 +926,7 @@ fn index_of_number(chars: &[char], offset: usize) -> usize {
 
 fn index_of_non_number(offset: usize, chars: &[char]) -> usize {
     for (i, &c) in chars.iter().enumerate().skip(offset) {
-        if !is_numerical(c) {
+        if !is_numerical(&c) {
             return i;
         }
     }
@@ -940,11 +940,11 @@ fn get_fragment_integer(chars: &[char]) -> i32 {
     let mut value: i32 = 0;
     for i in 0..chars.len() {
         let c = chars[chars.len() - i - 1];
-        if is_lowercase_alpha(c) {
+        if is_lowercase_alpha(&c) {
             value = value * 38 + (c as i32) - ('a' as i32) + 1;
         } else if c == '\'' {
             value = value * 38 + 27;
-        } else if is_numerical(c) {
+        } else if is_numerical(&c) {
             value = value * 38 + (c as i32) - ('0' as i32) + 28;
         } else if c != '\0' {
             return 0;
@@ -978,7 +978,7 @@ fn is_character_allowed(c: char) -> bool {
 
 fn replace_uppercases(chars: &mut [char], comparison: &[char]) {
     for i in 0..comparison.len().min(chars.len()) {
-        if chars[i] != '*' && is_uppercase_alpha(comparison[i]) {
+        if chars[i] != '*' && is_uppercase_alpha(&comparison[i]) {
             chars[i] = comparison[i];
         }
     }
@@ -986,16 +986,15 @@ fn replace_uppercases(chars: &mut [char], comparison: &[char]) {
 
 fn format_uppercases(chars: &mut [char]) {
     let mut flagged = true;
-    for i in 0..chars.len() {
-        let c = chars[i];
-        if !is_alpha(c) {
+    for c in chars.iter_mut() {
+        if !is_alpha(&c) {
             flagged = true;
         } else if flagged {
-            if is_lowercase_alpha(c) {
+            if is_lowercase_alpha(&c) {
                 flagged = false;
             }
-        } else if is_uppercase_alpha(c) {
-            chars[i] = (c as u8 + b'a' - 65) as char;
+        } else if is_uppercase_alpha(&c) {
+            *c = (*c as u8 + b'a' - 65) as char;
         }
     }
 }
