@@ -6,7 +6,7 @@ pub const REVEAL_TICKS: u32 = 100;
 /// Sentinel value indicating that a ground object has no specific receiver (visible to all).
 pub const NO_RECEIVER: u64 = u64::MAX;
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 95 bits wide.
+// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 95 bits wide.
 
 /// Bit offset for the local zone X (`x & 0x7`) within the packed `u128`.
 const LOCAL_X_SHIFT: u32 = 0;

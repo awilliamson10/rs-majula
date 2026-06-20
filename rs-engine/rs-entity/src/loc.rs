@@ -2,7 +2,7 @@ use crate::lifetime::EntityLifeTime;
 use rs_grid::{CoordGrid, ZoneCoordGrid};
 use rs_pack::types::{LocAngle, LocLayer, LocShape};
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 113 bits wide.
+// ---- THE BELOW SECTION IS FOR BUILDING THE ENTIRE PACKED `u128` -- 113 bits wide.
 
 /// Bit offset for the local zone X (`x & 0x7`) within the packed `u128`.
 const LOCAL_X_SHIFT: u32 = 0;
@@ -27,7 +27,7 @@ const INFO_MASK: u128 = 0x1FFFFFFFFF;
 /// "no timer" sentinel. Bits `113..128` of the `u128` are reserved (unused).
 const LAST_CLOCK_MASK: u128 = 0xFFFFFFFF;
 
-/// ---- THE BELOW SECTION IS FOR BUILDING THE INDIVIDUAL INFO BITS `u64` -- 37 bits wide.
+// ---- THE BELOW SECTION IS FOR BUILDING THE INDIVIDUAL INFO BITS `u64` -- 37 bits wide.
 
 /// Bit offset for the loc type id within the info word.
 const ID_SHIFT: u32 = 0;
