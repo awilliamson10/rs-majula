@@ -207,46 +207,7 @@ impl ScriptState {
         args: Option<Vec<ScriptArgument>>,
     ) -> Self {
         let mut state = Self::new(script, args);
-        match subject {
-            Some(ScriptSubject::Player(uid)) => state.active_player = Some(uid),
-            Some(ScriptSubject::Npc(uid)) => state.active_npc = Some(uid),
-            Some(ScriptSubject::Loc(loc)) => state.active_loc = Some(loc),
-            Some(ScriptSubject::Obj(obj)) => state.active_obj = Some(obj),
-            None => {}
-        }
-
-        match target {
-            Some(ScriptSubject::Player(uid)) => {
-                if matches!(&subject, Some(ScriptSubject::Player(_))) {
-                    state.active_player2 = Some(uid);
-                } else {
-                    state.active_player = Some(uid);
-                }
-            }
-            Some(ScriptSubject::Npc(uid)) => {
-                if matches!(&subject, Some(ScriptSubject::Npc(_))) {
-                    state.active_npc2 = Some(uid);
-                } else {
-                    state.active_npc = Some(uid);
-                }
-            }
-            Some(ScriptSubject::Loc(loc)) => {
-                if matches!(&subject, Some(ScriptSubject::Loc(_))) {
-                    state.active_loc2 = Some(loc);
-                } else {
-                    state.active_loc = Some(loc);
-                }
-            }
-            Some(ScriptSubject::Obj(obj)) => {
-                if matches!(&subject, Some(ScriptSubject::Obj(_))) {
-                    state.active_obj2 = Some(obj);
-                } else {
-                    state.active_obj = Some(obj);
-                }
-            }
-            None => {}
-        }
-
+        state.bind_subject_target(subject, target);
         state.sync_pointers();
         state
     }
@@ -351,7 +312,44 @@ impl ScriptState {
         self.active_obj = None;
         self.active_obj2 = None;
 
-        // -- Bind subject --
+        // -- Bind subject and target --
+        self.bind_subject_target(subject, target);
+
+        // -- Misc state --
+        self.last_int = None;
+        self.split_pages = None;
+        self.split_mesanim = None;
+        self.db_table = None;
+        self.db_row = None;
+        self.db_row_query.clear();
+        self.npc_iterator = None;
+        self.loc_iterator = None;
+        self.obj_iterator = None;
+        self.player_iterator = None;
+        self.timespent = None;
+        self.delay = 0;
+
+        // -- Rebuild pointer bitset --
+        self.sync_pointers();
+    }
+
+    /// Binds the `subject` and `target` entities into the active-entity slots.
+    ///
+    /// The subject is placed in the primary slot for its entity type. The target
+    /// is placed in the secondary (`2`) slot when it shares the subject's entity
+    /// type, otherwise in the primary slot for its own type. Shared by
+    /// [`init`](Self::init) and [`reset`](Self::reset).
+    ///
+    /// # Arguments
+    ///
+    /// * `subject` - The primary entity (if any).
+    /// * `target` - The secondary/target entity (if any). If it matches the
+    ///   subject's entity type, it goes into the `2` slot.
+    fn bind_subject_target(
+        &mut self,
+        subject: Option<ScriptSubject>,
+        target: Option<ScriptSubject>,
+    ) {
         match subject {
             Some(ScriptSubject::Player(uid)) => self.active_player = Some(uid),
             Some(ScriptSubject::Npc(uid)) => self.active_npc = Some(uid),
@@ -360,7 +358,6 @@ impl ScriptState {
             None => {}
         }
 
-        // -- Bind target (secondary slot if same entity type as subject) --
         match target {
             Some(ScriptSubject::Player(uid)) => {
                 if matches!(&subject, Some(ScriptSubject::Player(_))) {
@@ -392,23 +389,6 @@ impl ScriptState {
             }
             None => {}
         }
-
-        // -- Misc state --
-        self.last_int = None;
-        self.split_pages = None;
-        self.split_mesanim = None;
-        self.db_table = None;
-        self.db_row = None;
-        self.db_row_query.clear();
-        self.npc_iterator = None;
-        self.loc_iterator = None;
-        self.obj_iterator = None;
-        self.player_iterator = None;
-        self.timespent = None;
-        self.delay = 0;
-
-        // -- Rebuild pointer bitset --
-        self.sync_pointers();
     }
 
     /// Rebuilds the [`pointers`](Self::pointers) bitset from the current
