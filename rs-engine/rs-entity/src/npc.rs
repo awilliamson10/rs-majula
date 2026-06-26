@@ -257,9 +257,11 @@ impl Npc {
         } else {
             self.info.reset();
             self.pathing.walk_step = None;
+            self.pathing.jump = false;
             self.pathing.tele = false;
             self.pathing.walk_dir = -1;
             self.pathing.run_dir = -1;
+            self.pathing.last_coord = self.pathing.coord;
             self.pathing.steps_taken = 0;
             self.state.protect = false;
             self.interaction.ap_range_called = false;
