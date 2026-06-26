@@ -2439,16 +2439,31 @@ impl Engine {
 
         let uid = active.player.uid;
 
-        if active.player.staff_mod_level == StaffModLevel::Normal {
-            let _ = active
-                .handle
-                .outbox
-                .send(vec![LoginResponse::Success as u8]);
-        } else {
-            let _ = active
-                .handle
-                .outbox
-                .send(vec![LoginResponse::SuccessModerator as u8]);
+        match active.player.staff_mod_level {
+            StaffModLevel::Normal => {
+                let _ = active
+                    .handle
+                    .outbox
+                    .send(vec![LoginResponse::SuccessNormal as u8]);
+            }
+            StaffModLevel::PlayerModerator => {
+                let _ = active
+                    .handle
+                    .outbox
+                    .send(vec![LoginResponse::SuccessModerator as u8]);
+            }
+            StaffModLevel::JagexModerator | StaffModLevel::Developer => {
+                #[cfg(rev = "225")]
+                let _ = active
+                    .handle
+                    .outbox
+                    .send(vec![LoginResponse::SuccessModerator as u8]);
+                #[cfg(since_244)]
+                let _ = active
+                    .handle
+                    .outbox
+                    .send(vec![LoginResponse::SuccessJagexModerator as u8]);
+            }
         }
 
         info!(

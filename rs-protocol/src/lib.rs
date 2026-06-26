@@ -45,7 +45,7 @@ impl TryFrom<u8> for ServiceOpcode {
 /// Login response codes
 #[repr(u8)]
 pub enum LoginResponse {
-    Success = 2,
+    SuccessNormal = 2,
     InvalidCredentials = 3,
     AccountDisabled = 4,
     AlreadyLoggedIn = 5,
@@ -62,4 +62,6 @@ pub enum LoginResponse {
     TooManyAttempts = 16,
     MembersArea = 17,
     SuccessModerator = 18,
+    #[cfg(since_244)]
+    SuccessJagexModerator = 19,
 }
