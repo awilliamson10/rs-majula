@@ -1,7 +1,7 @@
 use crate::active_npc::ActiveNpc;
 use crate::active_player::{ActivePlayer, EnginePlayer};
 use crate::clients::client_db::{DbRequest, DbResponse};
-use crate::clients::client_ether::{EtherInbound, EtherOutbound};
+use crate::clients::client_ether::{EtherInbound, EtherOutbound, max_friends_cap};
 use crate::clients::client_game::ClientHandle;
 use crate::game_map::{GameMap, apply_loc_collision};
 use crate::info::{NpcInfo, NpcSnapshot, PlayerInfo, PlayerSnapshot};
@@ -1777,6 +1777,7 @@ impl Engine {
         shape: LocShape,
         angle: LocAngle,
         duration: u64,
+        create_if_missing: bool,
     ) {
         let layer = shape.layer();
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
@@ -1830,6 +1831,10 @@ impl Engine {
             }
             self.track_zone(x, y, z);
         } else {
+            if !create_if_missing {
+                return;
+            }
+
             let (blockwalk, blockrange, width, length) = self
                 .cache
                 .locs
@@ -2209,7 +2214,7 @@ impl Engine {
                 .get_by_id(active.npc.uid.id())
                 .map(|t| t.respawnrate as u64)
                 .unwrap_or(100);
-            active.npc.respawn_at = Some(self.clock + respawnrate as u32);
+            active.npc.respawn_at = Some(respawnrate as u32);
         }
     }
 
@@ -2346,7 +2351,7 @@ impl Engine {
                 .get_by_id(active.npc.uid.id())
                 .map(|t| t.respawnrate as u64)
                 .unwrap_or(100);
-            active.npc.respawn_at = Some(self.clock + respawnrate as u32);
+            active.npc.respawn_at = Some(respawnrate as u32);
         } else {
             self.npc_list.remove(nid);
         }
@@ -2465,9 +2470,9 @@ impl Engine {
         };
         self.add_player(pid, active, key);
 
-        let user37 = if let Some(active) = self.get_player_mut(pid) {
+        let login_info = if let Some(active) = self.get_player_mut(pid) {
             active.on_login();
-            Some(active.uid().username37())
+            Some((active.uid().username37(), active.player.is_member))
         } else {
             None
         };
@@ -2479,10 +2484,11 @@ impl Engine {
             }
         }
 
-        if let (Some(user37), Some(tx)) = (user37, &self.ether_tx) {
+        if let (Some((user37, is_member)), Some(tx)) = (login_info, &self.ether_tx) {
             let _ = tx.send(EtherOutbound::PlayerLogin {
                 user37,
                 pid,
+                max_friends: max_friends_cap(is_member),
                 ip: remote_ip.to_string(),
             });
             let _ = tx.send(EtherOutbound::RequestLists { user37 });
@@ -2602,6 +2608,7 @@ impl Engine {
 
         let user37 = active.uid().username37();
         let private_mode = active.player.private as u8;
+        let is_member = active.player.is_member;
         let username = active.player.uid.username();
 
         for nid in nids {
@@ -2620,6 +2627,7 @@ impl Engine {
                 user37,
                 pid,
                 private_mode,
+                max_friends: max_friends_cap(is_member),
                 ip: request.remote_addr.ip().to_string(),
             });
         }
@@ -3209,10 +3217,25 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Engine::add_or_change_loc` (inherent)
-    fn add_or_change_loc(&mut self, coord: u32, id: u16, shape: u8, angle: u8, duration: u64) {
+    fn add_or_change_loc(
+        &mut self,
+        coord: u32,
+        id: u16,
+        shape: u8,
+        angle: u8,
+        duration: u64,
+        create_if_missing: bool,
+    ) {
         let shape = unsafe { std::mem::transmute::<u8, LocShape>(shape) };
         let angle = unsafe { std::mem::transmute::<u8, LocAngle>(angle) };
-        self.add_or_change_loc(CoordGrid::from(coord), id, shape, angle, duration);
+        self.add_or_change_loc(
+            CoordGrid::from(coord),
+            id,
+            shape,
+            angle,
+            duration,
+            create_if_missing,
+        );
     }
 
     /// Merges a location so that it is only visible to one player within a bounded area.
@@ -4598,8 +4621,20 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `ActivePlayer::midi_jingle`
+    #[cfg(rev = "225")]
     fn midi_jingle(&mut self, length: u16, data: &[u8]) {
         self.midi_jingle(length, data);
+    }
+
+    /// Plays a MIDI jingle (short musical effect) for the player.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptPlayer` trait
+    /// **Calls:** `ActivePlayer::midi_jingle`
+    #[cfg(since_244)]
+    fn midi_jingle(&mut self, id: u16, delay: u16) {
+        self.midi_jingle(id, delay);
     }
 
     /// Starts playing a MIDI song (background music) for the player.
@@ -4608,8 +4643,20 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `ActivePlayer::midi_song`
+    #[cfg(rev = "225")]
     fn midi_song(&mut self, name: &str, crc: i32, len: i32) {
         self.midi_song(name, crc, len);
+    }
+
+    /// Starts playing a MIDI song (background music) for the player.
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptPlayer` trait
+    /// **Calls:** `ActivePlayer::midi_song`
+    #[cfg(since_244)]
+    fn midi_song(&mut self, id: u16) {
+        self.midi_song(id);
     }
 
     /// Makes the player face a specific tile.
@@ -5587,8 +5634,8 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `ActiveNpc::change_type`
-    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u32) {
-        self.change_type(new_type, duration, reset, clock);
+    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool) {
+        self.change_type(new_type, duration, reset);
     }
 
     /// Returns whether the NPC's current target is within its max range

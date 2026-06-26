@@ -8,7 +8,6 @@ use crate::{NpcUid, ScriptError, active_npc, handlers, none};
 use crate::{active_npc_mut, iterators};
 use rs_grid::CoordGrid;
 use rs_pack::ParamValue;
-use rs_pack::cache::provider::CacheType;
 use rs_pack::cache::script::*;
 use rs_pack::types::{HuntCheckVis, NpcMode};
 
@@ -98,14 +97,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_npc_mut!(m, NPC_CHANGETYPE_KEEPALL => |s, npc| {
             let duration = s.pop_int();
             let npc_type = pop_npc(s)?;
-            npc.change_type(npc_type.id, duration as u64, false, engine::<E>().clock());
+            npc.change_type(npc_type.id, duration as u64, false);
         });
 
         // 2507
         active_npc_mut!(m, NPC_CHANGETYPE => |s, npc| {
             let duration = s.pop_int();
             let npc_type = pop_npc(s)?;
-            npc.change_type(npc_type.id, duration as u64, true, engine::<E>().clock());
+            npc.change_type(npc_type.id, duration as u64, true);
         });
 
         // 2508
@@ -626,6 +625,26 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2548
         active_npc!(m, NPC_DESTINATION => |s, npc| {
             s.push_int(npc.destination() as i32);
+        });
+
+        // 2549
+        // TODO: this is duplicated with `NPC_FINDNEXT`
+        none!(m, NPC_HUNTNEXT => |s| {
+            let iter = match s.npc_iterator.as_mut() {
+                Some(iter) => iter,
+                None => {
+                    s.push_int(0);
+                    return Ok(());
+                }
+            };
+            if iter.cursor < iter.matches.len() {
+                let npc_ref = iter.matches[iter.cursor];
+                iter.cursor += 1;
+                set_active_npc(s, NpcUid::new(npc_ref.id, npc_ref.nid), s.int_operand() != 0);
+                s.push_int(1);
+            } else {
+                s.push_int(0);
+            }
         });
     }
 }

@@ -3,8 +3,8 @@ use std::path::Path;
 
 use super::pack_registry::PackRegistry;
 use crate::pack::util::media;
-use rs_io::jag::JagFile;
-use tracing::info;
+use rs_io::jag::{JagCompression, JagFile};
+use tracing::debug;
 
 pub fn pack_textures_jag(registry: &PackRegistry, content_dir: &Path) -> Vec<u8> {
     let tex_dir = content_dir.join("textures");
@@ -70,6 +70,6 @@ pub fn pack_textures_jag(registry: &PackRegistry, content_dir: &Path) -> Vec<u8>
         }
     }
 
-    info!("Packed {} textures into textures Jag", dat_map.len());
-    jag.build()
+    debug!("Packed {} textures into textures Jag", dat_map.len());
+    jag.build(JagCompression::PerFile)
 }

@@ -262,8 +262,19 @@ pub trait ScriptEngine {
     /// * `id` - The location type identifier.
     /// * `shape` - The location shape (e.g. wall, centrepiece, ground decor).
     /// * `angle` - The rotation angle (0--3).
-    /// * `duration` - The tick at which the location should revert.
-    fn add_or_change_loc(&mut self, coord: u32, id: u16, shape: u8, angle: u8, duration: u64);
+    /// * `duration` - How many ticks until the change reverts (0 = permanent).
+    /// * `create_if_missing` - When `true` (LOC_ADD), a loc is created if none
+    ///   exists on the layer. When `false` (LOC_CHANGE), a missing loc is left
+    ///   untouched so a deleted dynamic loc is never resurrected.
+    fn add_or_change_loc(
+        &mut self,
+        coord: u32,
+        id: u16,
+        shape: u8,
+        angle: u8,
+        duration: u64,
+        create_if_missing: bool,
+    );
 
     /// Merges a location so that it is only visible to one player.
     ///
@@ -839,8 +850,7 @@ pub trait ScriptPlayer {
     ///
     /// The body slot is derived from the idk's body type (adjusted for gender);
     /// the color is applied to the matching appearance color slot
-    /// (hair/torso/legs/feet) — hands are not recolored. Not visible until the
-    /// appearance is rebuilt.
+    /// (hair/torso/legs/feet).
     ///
     /// # Arguments
     /// * `idk_type` - The idk body type index (0-6 male, 7-13 female).
@@ -1038,7 +1048,16 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `length` - The playback length in client ticks.
     /// * `data` - The raw MIDI data bytes.
+    #[cfg(rev = "225")]
     fn midi_jingle(&mut self, length: u16, data: &[u8]);
+
+    /// Plays a MIDI jingle (short musical effect) for the player.
+    ///
+    /// # Arguments
+    /// * `id` - The id of the midi from idx(3).
+    /// * `delay` - The playback delay.
+    #[cfg(since_244)]
+    fn midi_jingle(&mut self, id: u16, delay: u16);
 
     /// Starts playing a MIDI song (background music) for the player.
     ///
@@ -1046,7 +1065,15 @@ pub trait ScriptPlayer {
     /// * `name` - The song name.
     /// * `crc` - The CRC checksum of the song data.
     /// * `len` - The length of the song data.
+    #[cfg(rev = "225")]
     fn midi_song(&mut self, name: &str, crc: i32, len: i32);
+
+    /// Starts playing a MIDI song (background music) for the player.
+    ///
+    /// # Arguments
+    /// * `id` - The id of the midi from idx(3).
+    #[cfg(since_244)]
+    fn midi_song(&mut self, id: u16);
 
     /// Makes the player face a specific tile.
     ///
@@ -1662,10 +1689,9 @@ pub trait ScriptNpc {
     ///
     /// # Arguments
     /// * `new_type` - The NPC type ID to transform into.
-    /// * `duration` - The tick at which the transformation should revert.
+    /// * `duration` - How many ticks the transformation lasts before reverting.
     /// * `reset` - Whether to reset the NPC's state upon transformation.
-    /// * `clock` - The current game tick.
-    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u32);
+    fn change_type(&mut self, new_type: u16, duration: u64, reset: bool);
 
     /// Returns whether the NPC's current target is within its max range.
     fn inrange(&self) -> bool;

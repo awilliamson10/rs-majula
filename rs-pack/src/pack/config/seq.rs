@@ -1,3 +1,4 @@
+use crate::config_crc;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
 use crate::pack::packed_data::PackedData;
@@ -5,7 +6,7 @@ use crate::pack::util::{parse_anim, parse_bool, parse_number, parse_obj};
 use anyhow::Result;
 use rs_io::crc;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::debug;
 
 pub fn pack_seqs(
     file_cache: &FileCache,
@@ -16,10 +17,10 @@ pub fn pack_seqs(
     let pack = &registry.seq;
 
     let files = file_cache.collect("seq");
-    info!("  Found {} .seq files", files.len());
+    debug!("  Found {} .seq files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "seq", constants);
-    info!("  Parsed {} seq configs", configs.len());
+    debug!("  Parsed {} seq configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -147,8 +148,59 @@ pub fn pack_seqs(
                     server.p1(v);
                 }),
 
+                // 9
+                #[cfg(since_244)]
+                "preanim_move" => {
+                    let v: u8 = match value.as_str() {
+                        "delaymove" => 0,
+                        "delayanim" => 1,
+                        "merge" => 2,
+                        other => other
+                            .parse()
+                            .unwrap_or_else(|_| panic!("Invalid preanim_move: {other}")),
+                    };
+                    client.p1(9);
+                    client.p1(v);
+                    server.p1(9);
+                    server.p1(v);
+                }
+
+                // 10
+                #[cfg(since_244)]
+                "postanim_move" => {
+                    let v: u8 = match value.as_str() {
+                        "delaymove" => 0,
+                        "abortanim" => 1,
+                        "merge" => 2,
+                        other => other
+                            .parse()
+                            .unwrap_or_else(|_| panic!("Invalid postanim_move: {other}")),
+                    };
+                    client.p1(10);
+                    client.p1(v);
+                    server.p1(10);
+                    server.p1(v);
+                }
+
+                // 11
+                #[cfg(since_244)]
+                "duplicatebehavior" => {
+                    // TODO: this has to be in british spelling
+                    let v: u8 = match value.as_str() {
+                        "reset" => 1,
+                        "reset_loop" => 2,
+                        other => other
+                            .parse()
+                            .unwrap_or_else(|_| panic!("Invalid duplicatebehavior: {other}")),
+                    };
+                    client.p1(11);
+                    client.p1(v);
+                    server.p1(11);
+                    server.p1(v);
+                }
+
                 // not found
-                _ => panic!("Unrecognized flo config key: {key}"),
+                _ => panic!("Unrecognized seq config key: {key}"),
             }
         }
 
@@ -192,10 +244,9 @@ pub fn pack_seqs(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = 1638136604;
-
+        let expected = config_crc::SEQ;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['seq']: Got: {crc}, Expected: {expected}");
         }
     }
 

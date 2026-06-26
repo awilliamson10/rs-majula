@@ -1,3 +1,4 @@
+use crate::config_crc;
 use crate::pack::config::param::parse_params;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
@@ -9,7 +10,7 @@ use crate::types::{BlockWalk, MoveRestrict, NpcMode};
 use anyhow::Result;
 use rs_io::crc;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::debug;
 
 pub fn pack_npcs(
     file_cache: &FileCache,
@@ -21,10 +22,10 @@ pub fn pack_npcs(
     let pack = &registry.npc;
 
     let files = file_cache.collect("npc");
-    info!("  Found {} .npc files", files.len());
+    debug!("  Found {} .npc files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "npc", constants);
-    info!("  Parsed {} npc configs", configs.len());
+    debug!("  Parsed {} npc configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -250,6 +251,42 @@ pub fn pack_npcs(
                     server.p2(v);
                 }),
 
+                // 99
+                #[cfg(since_244)]
+                "alwaysontop" => parse_bool(value, |v| {
+                    if v {
+                        client.p1(99);
+                        server.p1(99);
+                    }
+                }),
+
+                // 100
+                #[cfg(since_244)]
+                "ambient" => parse_number(value, |v: i8| {
+                    client.p1(100);
+                    client.p1(v as u8);
+                    server.p1(100);
+                    server.p1(v as u8);
+                }),
+
+                // 101
+                #[cfg(since_244)]
+                "contrast" => parse_number(value, |v: i8| {
+                    client.p1(101);
+                    client.p1(v as u8);
+                    server.p1(101);
+                    server.p1(v as u8);
+                }),
+
+                // 102
+                #[cfg(since_244)]
+                "headicon" => parse_number(value, |v| {
+                    client.p1(102);
+                    client.p2(v);
+                    server.p1(102);
+                    server.p2(v);
+                }),
+
                 // 200
                 "wanderrange" => parse_number(value, |v| {
                     server.p1(200);
@@ -442,10 +479,9 @@ pub fn pack_npcs(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = -2140681882;
-
+        let expected = config_crc::NPC;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['npc']: Got: {crc}, Expected: {expected}");
         }
     }
 

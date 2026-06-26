@@ -9,9 +9,66 @@ pub type ObjTypeProvider = TypeProvider<ObjType>;
 
 pub struct ObjContext {
     pub members: bool,
+    pub autodisable_params: Box<[bool]>,
 }
 
 pub struct ObjType {
+    pub id: u16,
+    pub name: Option<Box<str>>,
+    pub desc: Option<Box<str>>,
+    pub stackable: bool,
+    pub cost: i32,
+    pub wearpos: Option<WearPos>,
+    pub wearpos2: Option<WearPos>,
+    pub members: bool,
+    pub wearpos3: Option<WearPos>,
+    pub op: Option<Box<[Option<Box<str>>]>>,
+    pub iop: Option<Box<[Option<Box<str>>]>>,
+    pub weight: i16,
+    pub category: Option<u16>,
+    pub dummyitem: DummyItem,
+    pub certlink: Option<u16>,
+    pub certtemplate: Option<u16>,
+    pub tradeable: bool,
+    pub respawnrate: u16,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
+    debugname: Option<Box<str>>,
+}
+
+impl ObjType {
+    pub fn debugname(&self) -> Option<&str> {
+        self.debugname.as_deref()
+    }
+}
+
+impl From<ObjTypeRaw> for ObjType {
+    fn from(raw: ObjTypeRaw) -> Self {
+        ObjType {
+            id: raw.id,
+            name: raw.name,
+            desc: raw.desc,
+            stackable: raw.stackable,
+            cost: raw.cost,
+            wearpos: raw.wearpos,
+            wearpos2: raw.wearpos2,
+            members: raw.members,
+            wearpos3: raw.wearpos3,
+            op: raw.op,
+            iop: raw.iop,
+            weight: raw.weight,
+            category: raw.category,
+            dummyitem: raw.dummyitem,
+            certlink: raw.certlink,
+            certtemplate: raw.certtemplate,
+            tradeable: raw.tradeable,
+            respawnrate: raw.respawnrate,
+            params: raw.params,
+            debugname: raw.debugname,
+        }
+    }
+}
+
+pub struct ObjTypeRaw {
     pub id: u16,
     pub model: u16,
     pub name: Option<Box<str>>,
@@ -53,13 +110,23 @@ pub struct ObjType {
     pub certtemplate: Option<u16>,
     pub countobj: Option<Box<[u16]>>,
     pub countco: Option<Box<[u16]>>,
+    #[cfg(since_244)]
+    pub resizex: Option<u16>,
+    #[cfg(since_244)]
+    pub resizey: Option<u16>,
+    #[cfg(since_244)]
+    pub resizez: Option<u16>,
+    #[cfg(since_244)]
+    pub ambient: i8,
+    #[cfg(since_244)]
+    pub contrast: i8,
     pub tradeable: bool,
     pub respawnrate: u16,
     pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
     debugname: Option<Box<str>>,
 }
 
-impl ObjType {
+impl ObjTypeRaw {
     #[allow(clippy::too_many_arguments)]
     fn cert_template(
         &mut self,
@@ -98,22 +165,34 @@ impl ObjType {
         }
     }
 
-    fn disable(&mut self, members: bool) {
-        if !members && self.members {
+    fn disable(&mut self, ctx: &ObjContext) {
+        if !ctx.members && self.members {
             self.tradeable = false;
-            self.op = None;
-            self.iop = None;
+            self.op = Some(Box::new([None, None, Some("Take".into()), None, None]));
+            self.iop = Some(Box::new([None, None, None, None, Some("Drop".into())]));
+            self.category = None;
 
-            // TODO: autodisable params here
+            if let Some(params) = &mut self.params {
+                params.retain(|key, _| {
+                    !usize::try_from(*key)
+                        .ok()
+                        .and_then(|id| ctx.autodisable_params.get(id))
+                        .copied()
+                        .unwrap_or(false)
+                });
+                if params.is_empty() {
+                    self.params = None;
+                }
+            }
         }
     }
 }
 
-impl CacheType for ObjType {
+impl CacheType for ObjTypeRaw {
     type Context = ObjContext;
 
     fn new(id: u16) -> Self {
-        ObjType {
+        ObjTypeRaw {
             id,
             model: 0,
             name: None,
@@ -155,6 +234,16 @@ impl CacheType for ObjType {
             certtemplate: None,
             countobj: None,
             countco: None,
+            #[cfg(since_244)]
+            resizex: None,
+            #[cfg(since_244)]
+            resizey: None,
+            #[cfg(since_244)]
+            resizez: None,
+            #[cfg(since_244)]
+            ambient: 0,
+            #[cfg(since_244)]
+            contrast: 0,
             tradeable: true,
             respawnrate: 100,
             params: None,
@@ -247,6 +336,16 @@ impl CacheType for ObjType {
                         .get_or_insert_with(|| vec![0; 10].into_boxed_slice())
                         [code as usize - 100] = buf.g2();
                 }
+                #[cfg(since_244)]
+                110 => self.resizex = Some(buf.g2()),
+                #[cfg(since_244)]
+                111 => self.resizey = Some(buf.g2()),
+                #[cfg(since_244)]
+                112 => self.resizez = Some(buf.g2()),
+                #[cfg(since_244)]
+                113 => self.ambient = buf.g1s(),
+                #[cfg(since_244)]
+                114 => self.contrast = buf.g1s(),
                 201 => self.respawnrate = buf.g2(),
                 249 => ParamType::decode_params(
                     buf,
@@ -300,7 +399,7 @@ impl CacheType for ObjType {
             }
 
             if let Some(obj) = objs.get_mut(id) {
-                obj.disable(ctx.members);
+                obj.disable(ctx);
             }
         }
     }

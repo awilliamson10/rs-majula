@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::config_crc;
 use crate::pack::pack::collect_if_files;
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
 use crate::pack::packed_data::PackedData;
@@ -8,7 +9,7 @@ use crate::pack::util::parse_hex;
 use crate::types::{Font, IfButtonType, IfComparator, IfComponentType, IfScriptOp, PlayerStat};
 use anyhow::Result;
 use rs_io::crc;
-use tracing::info;
+use tracing::debug;
 
 fn name_to_type(name: &str) -> IfComponentType {
     IfComponentType::from_config_str(name)
@@ -152,7 +153,7 @@ pub fn pack_interfaces(
     }
 
     let if_files = collect_if_files(source_dir);
-    info!("  Found {} .if files", if_files.len());
+    debug!("  Found {} .if files", if_files.len());
 
     for (if_name, lines) in &if_files {
         let if_id = registry
@@ -300,6 +301,8 @@ pub fn pack_interfaces(
         client.p2(clientcode);
         client.p2(width);
         client.p2(height);
+        #[cfg(since_244)]
+        client.p1(get_num::<u8>(src.get("trans"), 0));
         server.p2(clientcode);
         server.p2(width);
         server.p2(height);
@@ -427,8 +430,16 @@ pub fn pack_interfaces(
             server.p2(get_num(src.get("scroll"), 0));
             server.pbool(get_bool(src.get("hide")));
 
-            client.p1(com.children.len() as u8);
-            server.p1(com.children.len() as u8);
+            #[cfg(rev = "225")]
+            {
+                client.p1(com.children.len() as u8);
+                server.p1(com.children.len() as u8);
+            }
+            #[cfg(since_244)]
+            {
+                client.p2(com.children.len() as u16);
+                server.p2(com.children.len() as u16);
+            }
             for &child_id in &com.children {
                 let child_src = &components[&child_id].src;
                 client.p2(child_id);
@@ -660,10 +671,9 @@ pub fn pack_interfaces(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = -2146838800;
-
+        let expected = config_crc::INTERFACE;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['interface']: Got: {crc}, Expected: {expected}");
         }
     }
 

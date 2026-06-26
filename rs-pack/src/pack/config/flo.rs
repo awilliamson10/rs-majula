@@ -1,3 +1,4 @@
+use crate::config_crc;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
 use crate::pack::packed_data::PackedData;
@@ -5,7 +6,7 @@ use crate::pack::util::{parse_bool, parse_hex, parse_texture};
 use anyhow::Result;
 use rs_io::crc;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::debug;
 
 pub fn pack_flos(
     file_cache: &FileCache,
@@ -16,10 +17,10 @@ pub fn pack_flos(
     let pack = &registry.flo;
 
     let files = file_cache.collect("flo");
-    info!("  Found {} .flo files", files.len());
+    debug!("  Found {} .flo files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "flo", constants);
-    info!("  Parsed {} flo configs", configs.len());
+    debug!("  Parsed {} flo configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -91,10 +92,9 @@ pub fn pack_flos(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = 1976597026;
-
+        let expected = config_crc::FLO;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['flo']: Got: {crc}, Expected: {expected}");
         }
     }
 

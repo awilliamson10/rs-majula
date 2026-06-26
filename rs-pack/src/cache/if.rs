@@ -7,6 +7,40 @@ pub struct IfType {
     pub root_layer: i32,
     pub com_name: Option<Box<str>>,
     pub overlay: bool,
+    pub button_type: IfButtonType,
+    pub width: u16,
+    pub height: u16,
+    pub draggable: bool,
+    pub operable: bool,
+    pub usable: bool,
+    pub iop: Option<Box<[Option<Box<str>>]>>,
+    pub action_target: u16,
+}
+
+impl From<IfTypeRaw> for IfType {
+    fn from(raw: IfTypeRaw) -> Self {
+        IfType {
+            id: raw.id,
+            root_layer: raw.root_layer,
+            com_name: raw.com_name,
+            overlay: raw.overlay,
+            button_type: raw.button_type,
+            width: raw.width,
+            height: raw.height,
+            draggable: raw.draggable,
+            operable: raw.operable,
+            usable: raw.usable,
+            iop: raw.iop,
+            action_target: raw.action_target,
+        }
+    }
+}
+
+pub struct IfTypeRaw {
+    pub id: u16,
+    pub root_layer: i32,
+    pub com_name: Option<Box<str>>,
+    pub overlay: bool,
     pub com_type: IfComponentType,
     pub button_type: IfButtonType,
     pub client_code: u16,
@@ -75,7 +109,7 @@ impl IfTypeProvider {
                 id = buf.g2();
             }
 
-            let mut com = IfType {
+            let mut com = IfTypeRaw {
                 id,
                 root_layer,
                 com_name: None,
@@ -170,7 +204,10 @@ impl IfTypeProvider {
                     com.scroll = buf.g2();
                     com.hide = buf.g1() == 1;
 
+                    #[cfg(rev = "225")]
                     let child_count = buf.g1() as usize;
+                    #[cfg(since_244)]
+                    let child_count = buf.g2() as usize;
                     let mut child_x = Vec::with_capacity(child_count);
                     let mut child_y = Vec::with_capacity(child_count);
                     for _ in 0..child_count {
@@ -298,7 +335,7 @@ impl IfTypeProvider {
             }
 
             if (id as usize) < types.len() {
-                types[id as usize] = Some(Box::new(com));
+                types[id as usize] = Some(Box::new(IfType::from(com)));
             }
         }
 

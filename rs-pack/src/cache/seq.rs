@@ -5,6 +5,30 @@ pub type SeqTypeProvider = TypeProvider<SeqType>;
 
 pub struct SeqType {
     pub id: u16,
+    pub duration: u32,
+    pub priority: u8,
+    debugname: Option<Box<str>>,
+}
+
+impl SeqType {
+    pub fn debugname(&self) -> Option<&str> {
+        self.debugname.as_deref()
+    }
+}
+
+impl From<SeqTypeRaw> for SeqType {
+    fn from(raw: SeqTypeRaw) -> Self {
+        SeqType {
+            id: raw.id,
+            duration: raw.duration,
+            priority: raw.priority,
+            debugname: raw.debugname,
+        }
+    }
+}
+
+pub struct SeqTypeRaw {
+    pub id: u16,
     pub frames: Option<Box<[u16]>>,
     pub iframes: Option<Box<[Option<u16>]>>,
     pub delays: Option<Box<[u16]>>,
@@ -15,15 +39,21 @@ pub struct SeqType {
     pub replaceheldleft: Option<u16>,
     pub replaceheldright: Option<u16>,
     pub maxloops: u8,
+    #[cfg(since_244)]
+    pub preanim_move: Option<u8>,
+    #[cfg(since_244)]
+    pub postanim_move: Option<u8>,
+    #[cfg(since_244)]
+    pub duplicatebehaviour: Option<u8>,
     pub duration: u32,
     debugname: Option<Box<str>>,
 }
 
-impl CacheType for SeqType {
+impl CacheType for SeqTypeRaw {
     type Context = Box<[u8]>;
 
     fn new(id: u16) -> Self {
-        SeqType {
+        SeqTypeRaw {
             id,
             frames: None,
             iframes: None,
@@ -35,6 +65,12 @@ impl CacheType for SeqType {
             replaceheldleft: None,
             replaceheldright: None,
             maxloops: 99,
+            #[cfg(since_244)]
+            preanim_move: None,
+            #[cfg(since_244)]
+            postanim_move: None,
+            #[cfg(since_244)]
+            duplicatebehaviour: None,
             duration: 0,
             debugname: None,
         }
@@ -75,6 +111,12 @@ impl CacheType for SeqType {
                 6 => self.replaceheldleft = Some(buf.g2()),
                 7 => self.replaceheldright = Some(buf.g2()),
                 8 => self.maxloops = buf.g1(),
+                #[cfg(since_244)]
+                9 => self.preanim_move = Some(buf.g1()),
+                #[cfg(since_244)]
+                10 => self.postanim_move = Some(buf.g1()),
+                #[cfg(since_244)]
+                11 => self.duplicatebehaviour = Some(buf.g1()),
                 250 => self.debugname = Some(buf.gjstr(10).into_boxed_str()),
                 _ => panic!("Unrecognized seq config code: {code}"),
             }
@@ -97,6 +139,22 @@ impl CacheType for SeqType {
                     duration += delays[i] as u32;
                 }
                 seq.duration = duration;
+            }
+
+            #[cfg(since_244)]
+            {
+                if seq.frames.is_none() {
+                    seq.frames = Some(Box::new([u16::MAX]));
+                    seq.iframes = Some(Box::new([None]));
+                    seq.delays = Some(Box::new([u16::MAX]));
+                }
+                let walk_default = if seq.walkmerge.is_none() { 0 } else { 2 };
+                if seq.preanim_move.is_none() {
+                    seq.preanim_move = Some(walk_default);
+                }
+                if seq.postanim_move.is_none() {
+                    seq.postanim_move = Some(walk_default);
+                }
             }
         }
     }

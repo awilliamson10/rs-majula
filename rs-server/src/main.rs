@@ -30,7 +30,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{self, Duration};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::{Bytes, Message};
-use tracing::{Level, error, info};
+use tracing::{Level, debug, error, info};
 use tracing_subscriber::Layer;
 use tracing_subscriber::util::SubscriberInitExt;
 use watch::{Receiver, Sender, channel};
@@ -117,13 +117,14 @@ struct DbEnv {
     cluster: String,
 }
 
+/// Server revision, taken from the `REV` build env var (see `.cargo/config.toml`).
+pub const REVISION: &str = env!("REV");
+
 /// Command line arguments
 #[derive(Parser, Debug)]
 #[command(name = "rs-server")]
 #[command(about = "RuneScape Private Server (Rev 225)")]
 struct Args {
-    #[arg(long, default_value = "225")]
-    version: u16,
     #[arg(long, default_value = "0.0.0.0")]
     host: String,
     /// HTTP port. Defaults to 8070 + node_id (8080 for node 10).
@@ -187,14 +188,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Honor RUST_LOG if set; otherwise default to INFO globally but
-    // silence the chatty save + protocol logs that would otherwise
-    // flood during stress testing.
+    // silence the chatty save + protocol logs and tokio-postgres'
+    // schema-migration NOTICEs that would otherwise flood at startup.
     let make_filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
             tracing_subscriber::EnvFilter::new(
                 "info,\
                      rs_engine::player_save=warn,\
-                     rs_protocol=warn",
+                     rs_protocol=warn,\
+                     tokio_postgres=warn",
             )
         })
     };
@@ -285,7 +287,7 @@ async fn bootstrap(
     let http_port = args.http_port.unwrap_or(8070 + args.node_id as u16);
     let tcp_port = args.tcp_port.unwrap_or(43584 + args.node_id as u16);
 
-    info!("RuneScape Private Server (Rev {}) starting", args.version);
+    info!("RuneScape Private Server (Rev {}) starting", REVISION);
     info!("Host: {}", args.host);
     info!("Node ID: {}", args.node_id);
     info!("HTTP Port: {}", http_port);
@@ -293,8 +295,12 @@ async fn bootstrap(
     info!("RSA: {:?}", args.private_key);
 
     info!("Packing content sources & building CacheStore...");
-    let (store, scripts) =
-        rs_pack::pack_all(Path::new("content"), Path::new("content/pack"), args.verify)?;
+    let (store, scripts) = rs_pack::pack_all(
+        Path::new(rs_pack::CONTENT_DIR),
+        Path::new(rs_pack::PACK_DIR),
+        args.verify,
+        args.members,
+    )?;
     let cache_ptr_val = Box::into_raw(store) as usize;
     let cache: &'static CacheStore = unsafe { &*(cache_ptr_val as *const CacheStore) };
 
@@ -386,6 +392,7 @@ async fn bootstrap(
     #[cfg(debug_assertions)]
     tokio::spawn(reload_coordinator(
         args.verify,
+        args.members,
         trigger_rx,
         reload_tx,
         reload_world_rx,
@@ -402,7 +409,6 @@ async fn bootstrap(
     let guard = ConnectionGuard::new();
 
     tokio::spawn(http::serve(
-        args.version,
         args.host.to_string(),
         http_port,
         args.node_id.to_string(),
@@ -431,7 +437,7 @@ async fn bootstrap(
         let server_state = server_state.clone();
         let guard = guard.clone();
         tokio::spawn(async move {
-            let connection = Socket::from_tcp(stream, addr, server_state, args.version, guard);
+            let connection = Socket::from_tcp(stream, addr, server_state, guard);
             if let Err(e) = handshake(connection).await {
                 info!("TCP connection {} closed: {}", addr, e);
             }
@@ -523,7 +529,7 @@ async fn supervise_ether_sidecar(node_id: u8, ether_port: u16, node_name: String
                         use std::io::BufRead;
                         let reader = std::io::BufReader::new(stdout);
                         for line in reader.lines().map_while(Result::ok) {
-                            info!(target: "ether", "{}", line);
+                            debug!(target: "ether", "{}", line);
                         }
                     });
                 }
@@ -536,7 +542,7 @@ async fn supervise_ether_sidecar(node_id: u8, ether_port: u16, node_name: String
                             if line.contains("erroneous line, SKIPPED") {
                                 continue;
                             }
-                            info!(target: "ether", "{}", line);
+                            debug!(target: "ether", "{}", line);
                         }
                     });
                 }
@@ -615,6 +621,7 @@ fn kill_ether_sidecar(pid: u32) {
 #[cfg(debug_assertions)]
 async fn reload_coordinator(
     verify: bool,
+    members: bool,
     mut trigger_rx: UnboundedReceiver<()>,
     result_tx: UnboundedSender<(Box<CacheStore>, ScriptProvider)>,
     mut reload_world_rx: UnboundedReceiver<()>,
@@ -636,7 +643,7 @@ async fn reload_coordinator(
             }
         };
 
-        let content = Path::new("content");
+        let content = Path::new(rs_pack::CONTENT_DIR);
         if let Ok(entries) = std::fs::read_dir(content) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -646,7 +653,10 @@ async fn reload_coordinator(
             }
         }
 
-        info!("File watcher active on content/ (excluding pack/)");
+        info!(
+            "File watcher active on {} (excluding pack/)",
+            content.display()
+        );
 
         while notify_rx.recv().is_ok() {
             std::thread::sleep(Duration::from_millis(300));
@@ -667,7 +677,12 @@ async fn reload_coordinator(
         let start = std::time::Instant::now();
 
         let result = tokio::task::spawn_blocking(move || {
-            rs_pack::pack_all(Path::new("content"), Path::new("content/pack"), verify)
+            rs_pack::pack_all(
+                Path::new(rs_pack::CONTENT_DIR),
+                Path::new(rs_pack::PACK_DIR),
+                verify,
+                members,
+            )
         })
         .await;
 
@@ -769,7 +784,6 @@ pub struct Socket {
     socket_type: SocketType,
     pub addr: SocketAddr,
     pub server_io: ServerIO,
-    pub version: u16,
     pub guard: ConnectionGuard,
 }
 
@@ -786,14 +800,12 @@ impl Socket {
         stream: TcpStream,
         addr: SocketAddr,
         server_io: ServerIO,
-        version: u16,
         guard: ConnectionGuard,
     ) -> Self {
         Self {
             socket_type: SocketType::Tcp(stream),
             addr,
             server_io,
-            version,
             guard,
         }
     }
@@ -802,14 +814,12 @@ impl Socket {
         stream: WebSocketStream<TcpStream>,
         addr: SocketAddr,
         server_state: ServerIO,
-        version: u16,
         guard: ConnectionGuard,
     ) -> Self {
         Self {
             socket_type: SocketType::WebSocket(Box::new(stream)),
             addr,
             server_io: server_state,
-            version,
             guard,
         }
     }

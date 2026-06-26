@@ -2,7 +2,7 @@
 
 use crate::unpack;
 use rs_io::jag::JagFile;
-use tracing::info;
+use tracing::debug;
 
 const MEDIA_NAMES: &[&str] = &[
     "backbase1",
@@ -40,6 +40,12 @@ const MEDIA_NAMES: &[&str] = &[
     "mapflag",
     "mapfunction",
     "mapscene",
+    #[cfg(since_244)]
+    "mapedge",
+    #[cfg(since_244)]
+    "mapmarker",
+    #[cfg(since_244)]
+    "mod_icons",
     "miscgraphics",
     "miscgraphics2",
     "miscgraphics3",
@@ -122,7 +128,7 @@ pub fn unpack_media(jag: &JagFile, output_dir: &Path) -> anyhow::Result<()> {
     let sprite_order_content = sprite_order_entries.join("\n") + "\n";
     std::fs::write(meta_dir.join("sprite.order"), &sprite_order_content)?;
 
-    info!(
+    debug!(
         "Unpacked {} sprite groups from media JAG",
         index_order.len()
     );

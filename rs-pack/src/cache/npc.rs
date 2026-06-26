@@ -14,6 +14,80 @@ pub struct NpcPatrol {
 
 pub struct NpcType {
     pub id: u16,
+    pub name: Option<Box<str>>,
+    pub desc: Option<Box<str>>,
+    pub size: u8,
+    pub category: Option<u16>,
+    pub op: Option<Box<[Option<Box<str>>]>>,
+    pub attack: u16,
+    pub defence: u16,
+    pub strength: u16,
+    pub hitpoints: u16,
+    pub ranged: u16,
+    pub magic: u16,
+    pub vislevel: Option<u16>,
+    pub wanderrange: u16,
+    pub maxrange: u16,
+    pub huntrange: u8,
+    pub timer: Option<u16>,
+    pub respawnrate: u16,
+    pub moverestrict: MoveRestrict,
+    pub attackrange: u16,
+    pub blockwalk: BlockWalk,
+    pub huntmode: Option<u16>,
+    pub defaultmode: NpcMode,
+    pub members: bool,
+    pub patrol: Option<Box<[NpcPatrol]>>,
+    pub givechase: bool,
+    pub regenrate: u16,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
+    debugname: Option<Box<str>>,
+}
+
+impl NpcType {
+    pub fn debugname(&self) -> Option<&str> {
+        self.debugname.as_deref()
+    }
+}
+
+impl From<NpcTypeRaw> for NpcType {
+    fn from(raw: NpcTypeRaw) -> Self {
+        NpcType {
+            id: raw.id,
+            name: raw.name,
+            desc: raw.desc,
+            size: raw.size,
+            category: raw.category,
+            op: raw.op,
+            attack: raw.attack,
+            defence: raw.defence,
+            strength: raw.strength,
+            hitpoints: raw.hitpoints,
+            ranged: raw.ranged,
+            magic: raw.magic,
+            vislevel: raw.vislevel,
+            wanderrange: raw.wanderrange,
+            maxrange: raw.maxrange,
+            huntrange: raw.huntrange,
+            timer: raw.timer,
+            respawnrate: raw.respawnrate,
+            moverestrict: raw.moverestrict,
+            attackrange: raw.attackrange,
+            blockwalk: raw.blockwalk,
+            huntmode: raw.huntmode,
+            defaultmode: raw.defaultmode,
+            members: raw.members,
+            patrol: raw.patrol,
+            givechase: raw.givechase,
+            regenrate: raw.regenrate,
+            params: raw.params,
+            debugname: raw.debugname,
+        }
+    }
+}
+
+pub struct NpcTypeRaw {
+    pub id: u16,
     pub models: Option<Box<[u16]>>,
     pub name: Option<Box<str>>,
     pub desc: Option<Box<str>>,
@@ -42,6 +116,14 @@ pub struct NpcType {
     pub vislevel: Option<u16>,
     pub resizeh: u16,
     pub resizev: u16,
+    #[cfg(since_244)]
+    pub alwaysontop: bool,
+    #[cfg(since_244)]
+    pub ambient: i8,
+    #[cfg(since_244)]
+    pub contrast: i8,
+    #[cfg(since_244)]
+    pub headicon: Option<u16>,
     pub wanderrange: u16,
     pub maxrange: u16,
     pub huntrange: u8,
@@ -60,11 +142,11 @@ pub struct NpcType {
     debugname: Option<Box<str>>,
 }
 
-impl CacheType for NpcType {
+impl CacheType for NpcTypeRaw {
     type Context = ();
 
     fn new(id: u16) -> Self {
-        NpcType {
+        NpcTypeRaw {
             id,
             models: None,
             name: None,
@@ -94,6 +176,14 @@ impl CacheType for NpcType {
             vislevel: None,
             resizeh: 128,
             resizev: 128,
+            #[cfg(since_244)]
+            alwaysontop: false,
+            #[cfg(since_244)]
+            ambient: 0,
+            #[cfg(since_244)]
+            contrast: 0,
+            #[cfg(since_244)]
+            headicon: None,
             wanderrange: 5,
             maxrange: 7,
             huntrange: 0,
@@ -178,6 +268,14 @@ impl CacheType for NpcType {
                 95 => self.vislevel = Some(buf.g2()),
                 97 => self.resizeh = buf.g2(),
                 98 => self.resizev = buf.g2(),
+                #[cfg(since_244)]
+                99 => self.alwaysontop = true,
+                #[cfg(since_244)]
+                100 => self.ambient = buf.g1s(),
+                #[cfg(since_244)]
+                101 => self.contrast = buf.g1s(),
+                #[cfg(since_244)]
+                102 => self.headicon = Some(buf.g2()),
                 200 => self.wanderrange = buf.g2(),
                 201 => self.maxrange = buf.g2(),
                 202 => self.huntrange = buf.g1(),

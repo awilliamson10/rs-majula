@@ -670,8 +670,7 @@ impl Player {
     /// Opens a side-panel modal interface.
     ///
     /// Unlike the main and chat openers, this does not close any conflicting
-    /// modal — the side panel coexists with whatever is currently open, so the
-    /// `MODAL_SIDE` bit is simply added on top.
+    /// modal.
     ///
     /// # Arguments
     /// * `com` - The interface component ID to open as the side modal.
@@ -854,7 +853,11 @@ impl Player {
         }
 
         if self.pathing.steps_taken < 2 {
+            #[cfg(rev = "225")]
             let recovered = self.stats.base_levels[PlayerStat::Agility as usize] as u16 / 9 + 8;
+            #[cfg(since_244)]
+            // https://runescape.wiki/w/Update:Agility_improved_and_bug_fixes
+            let recovered = self.stats.base_levels[PlayerStat::Agility as usize] as u16 / 6 + 8;
             self.runenergy = (self.runenergy + recovered).min(10000);
         } else {
             let weight_kg = self.runweight as f64 / 1000.0;
@@ -1649,9 +1652,13 @@ mod energy_tests {
         p.runenergy = 5000;
         p.pathing.steps_taken = 0;
         p.stats.base_levels[PlayerStat::Agility as usize] = 99;
-        // recovered = 99/9 + 8 = 11 + 8 = 19
+        // recovered = 99/9 + 8 = 19 (rev 225); 99/6 + 8 = 24 (since 244, June rate)
+        #[cfg(rev = "225")]
+        let recovered = 99 / 9 + 8;
+        #[cfg(since_244)]
+        let recovered = 99 / 6 + 8;
         p.update_energy();
-        assert_eq!(p.runenergy, 5019);
+        assert_eq!(p.runenergy, 5000 + recovered);
     }
 
     #[test]

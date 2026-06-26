@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::config_crc;
 use crate::pack::config::param::parse_params;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
@@ -11,7 +12,7 @@ use crate::pack::util::{
 use crate::types::{ForceApproach, LocShape};
 use anyhow::Result;
 use rs_io::crc;
-use tracing::info;
+use tracing::debug;
 
 struct LocModelShape {
     model: u16,
@@ -28,10 +29,10 @@ pub fn pack_locs(
     let pack = &registry.loc;
 
     let files = file_cache.collect("loc");
-    info!("  Found {} .loc files", files.len());
+    debug!("  Found {} .loc files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "loc", constants);
-    info!("  Parsed {} loc configs", configs.len());
+    debug!("  Parsed {} loc configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -423,10 +424,9 @@ pub fn pack_locs(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = 891497087;
-
+        let expected = config_crc::LOC;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['loc']: Got: {crc}, Expected: {expected}");
         }
     }
 

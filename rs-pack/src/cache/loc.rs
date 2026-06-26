@@ -14,6 +14,48 @@ pub struct LocModelShape {
 
 pub struct LocType {
     pub id: u16,
+    pub name: Option<Box<str>>,
+    pub desc: Option<Box<str>>,
+    pub width: u8,
+    pub length: u8,
+    pub blockwalk: bool,
+    pub blockrange: bool,
+    pub active: Option<bool>,
+    pub op: Option<Box<[Option<Box<str>>]>>,
+    pub category: Option<u16>,
+    pub forceapproach: ForceApproach,
+    pub params: Option<Box<FxHashMap<i32, ParamValue>>>,
+    debugname: Option<Box<str>>,
+}
+
+impl LocType {
+    pub fn debugname(&self) -> Option<&str> {
+        self.debugname.as_deref()
+    }
+}
+
+impl From<LocTypeRaw> for LocType {
+    fn from(raw: LocTypeRaw) -> Self {
+        LocType {
+            id: raw.id,
+            name: raw.name,
+            desc: raw.desc,
+            width: raw.width,
+            length: raw.length,
+            blockwalk: raw.blockwalk,
+            blockrange: raw.blockrange,
+            active: raw.active,
+            op: raw.op,
+            category: raw.category,
+            forceapproach: raw.forceapproach,
+            params: raw.params,
+            debugname: raw.debugname,
+        }
+    }
+}
+
+pub struct LocTypeRaw {
+    pub id: u16,
     pub models: Option<Box<[LocModelShape]>>,
     pub name: Option<Box<str>>,
     pub desc: Option<Box<str>>,
@@ -50,11 +92,11 @@ pub struct LocType {
     debugname: Option<Box<str>>,
 }
 
-impl CacheType for LocType {
+impl CacheType for LocTypeRaw {
     type Context = ();
 
     fn new(id: u16) -> Self {
-        LocType {
+        LocTypeRaw {
             id,
             models: None,
             name: None,
@@ -121,17 +163,17 @@ impl CacheType for LocType {
                 24 => self.anim = Some(buf.g2()),
                 25 => self.hasalpha = true,
                 28 => self.wallwidth = buf.g1(),
-                29 => self.ambient = buf.g1() as i8,
+                29 => self.ambient = buf.g1s(),
                 30..=34 => {
                     self.op
                         .get_or_insert_with(|| vec![None; 5].into_boxed_slice())
                         [code as usize - 30] = Some(buf.gjstr(10).into_boxed_str())
                 }
-                39 => self.contrast = buf.g1() as i8,
+                39 => self.contrast = buf.g1s(),
                 40 => {
                     let count = buf.g1() as usize;
-                    let mut recol_s = vec![0u16; count];
-                    let mut recol_d = vec![0u16; count];
+                    let mut recol_s = vec![0; count];
+                    let mut recol_d = vec![0; count];
                     for i in 0..count {
                         recol_s[i] = buf.g2();
                         recol_d[i] = buf.g2();

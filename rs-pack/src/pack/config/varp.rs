@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::config_crc;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
 use crate::pack::packed_data::PackedData;
@@ -7,7 +8,7 @@ use crate::pack::util::{parse_bool, parse_number, parse_script_var_type};
 use crate::types::VarPlayerScope;
 use anyhow::Result;
 use rs_io::crc;
-use tracing::info;
+use tracing::debug;
 
 pub fn pack_varps(
     file_cache: &FileCache,
@@ -18,10 +19,10 @@ pub fn pack_varps(
     let pack = &registry.varp;
 
     let files = file_cache.collect("varp");
-    info!("  Found {} .varp files", files.len());
+    debug!("  Found {} .varp files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "varp", constants);
-    info!("  Parsed {} varp configs", configs.len());
+    debug!("  Parsed {} varp configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -93,10 +94,9 @@ pub fn pack_varps(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = 705633567;
-
+        let expected = config_crc::VARP;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['varp']: Got: {crc}, Expected: {expected}");
         }
     }
 

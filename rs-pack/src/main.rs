@@ -15,17 +15,16 @@ enum Commands {
     /// Compile text config files and build an in-memory CacheStore
     Pack {
         /// Source directory containing config files (.npc, .hunt, etc.)
-        #[arg(short, long, default_value = "content")]
+        #[arg(short, long, default_value = rs_pack::CONTENT_DIR)]
         source: PathBuf,
         /// Pack directory for name-id resolution
-        #[arg(long, default_value = "content/pack")]
+        #[arg(long, default_value = rs_pack::PACK_DIR)]
         pack: PathBuf,
         /// Strict verification mode
-        #[arg(long)]
+        #[arg(long, default_value = "true")]
         verify: bool,
-        /// Force rebuild all types
-        #[arg(long)]
-        force: bool,
+        #[arg(long, default_value = "true")]
+        members: bool,
     },
     /// Extract original JAG archives into content files for re-packing
     Unpack {
@@ -35,15 +34,6 @@ enum Commands {
         /// Output directory for unpacked content
         #[arg(short, long, default_value = "content_unpack")]
         output: PathBuf,
-    },
-    /// Verify roundtrip: unpack → pack → compare CRCs
-    Verify {
-        /// Directory containing expected JAG files
-        #[arg(short, long, default_value = "expected")]
-        expected: PathBuf,
-        /// Directory with unpacked content to pack from
-        #[arg(short, long, default_value = "content_unpack")]
-        unpacked: PathBuf,
     },
 }
 
@@ -62,10 +52,10 @@ fn main() -> Result<()> {
             source,
             pack,
             verify,
-            force,
+            members,
         } => {
-            let (store, scripts) = rs_pack::pack_all(&source, &pack, verify)?;
-            tracing::info!(
+            let (store, scripts) = rs_pack::pack_all(&source, &pack, verify, members)?;
+            tracing::debug!(
                 "CacheStore: {} packs, {} jingles, {} maps, {} songs, {} objs, {} invs, {} varps, {} scripts",
                 store.jags.len(),
                 store.jingles.count(),
@@ -80,9 +70,6 @@ fn main() -> Result<()> {
         Commands::Unpack { expected, output } => {
             let pack = output.join("pack");
             rs_pack::unpack::unpack_all(&expected, &output, &pack)?;
-        }
-        Commands::Verify { expected, unpacked } => {
-            rs_pack::unpack::verify::verify_roundtrip(&expected, &unpacked)?;
         }
     }
 

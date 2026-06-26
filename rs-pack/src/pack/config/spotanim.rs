@@ -1,3 +1,4 @@
+use crate::config_crc;
 use crate::pack::pack::{FileCache, parse_config_sections_cached};
 use crate::pack::pack_registry::{PackRegistry, PackedFile};
 use crate::pack::packed_data::PackedData;
@@ -6,7 +7,7 @@ use crate::pack::util::{parse_bool, parse_model, parse_number, parse_recol, pars
 use anyhow::Result;
 use rs_io::crc;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::debug;
 
 pub fn pack_spotanims(
     file_cache: &FileCache,
@@ -17,10 +18,10 @@ pub fn pack_spotanims(
     let pack = &registry.spotanim;
 
     let files = file_cache.collect("spotanim");
-    info!("  Found {} .spotanim files", files.len());
+    debug!("  Found {} .spotanim files", files.len());
 
     let configs = parse_config_sections_cached(file_cache, "spotanim", constants);
-    info!("  Parsed {} spotanim configs", configs.len());
+    debug!("  Parsed {} spotanim configs", configs.len());
 
     let mut server = PackedData::new(pack.max);
     let mut client = PackedData::new(pack.max);
@@ -135,10 +136,9 @@ pub fn pack_spotanims(
 
     if verify {
         let crc = crc::getcrc(&client.dat, 0, client.dat.len());
-        let expected = -1279835623;
-
+        let expected = config_crc::SPOTANIM;
         if crc != expected {
-            panic!("CRC mismatch: Got: {crc}, Expected: {expected}");
+            panic!("CRC mismatch ['spotanim']: Got: {crc}, Expected: {expected}");
         }
     }
 

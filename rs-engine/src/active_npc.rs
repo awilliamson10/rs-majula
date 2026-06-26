@@ -122,17 +122,34 @@ impl ActiveNpc {
     ///   mask for the next info update.
     pub fn damage(&mut self, amount: u8, damage_type: u8) {
         let current = self.npc.stats.levels[NpcStat::Hitpoints as usize];
-        if current.saturating_sub(amount) == 0 {
+        let taken = if current.saturating_sub(amount) == 0 {
             self.npc.stats.levels[NpcStat::Hitpoints as usize] = 0;
-            self.npc.info.damage_taken = Some(current);
+            current
         } else {
             self.npc.stats.levels[NpcStat::Hitpoints as usize] = current.saturating_sub(amount);
-            self.npc.info.damage_taken = Some(amount);
+            amount
+        };
+        let remaining = self.npc.stats.levels[NpcStat::Hitpoints as usize];
+        let base = self.npc.stats.base_levels[NpcStat::Hitpoints as usize];
+
+        #[cfg(since_244)]
+        if self.npc.info.apply_damage2(
+            taken,
+            damage_type,
+            remaining,
+            base,
+            NpcInfoProt::Damage2 as u16,
+        ) {
+            return;
         }
-        self.npc.info.damage_type = Some(damage_type);
-        self.npc.info.damage_current = Some(self.npc.stats.levels[NpcStat::Hitpoints as usize]);
-        self.npc.info.damage_base = Some(self.npc.stats.base_levels[NpcStat::Hitpoints as usize]);
-        self.npc.info.masks |= NpcInfoProt::Damage as u16;
+
+        self.npc.info.apply_damage(
+            taken,
+            damage_type,
+            remaining,
+            base,
+            NpcInfoProt::Damage as u16,
+        );
     }
 
     /// Configures a recurring timer on this NPC.
@@ -190,15 +207,15 @@ impl ActiveNpc {
     /// * `duration` - How many ticks the morph lasts. If less than 1, the call
     ///   is a no-op.
     /// * `reset` - Whether to recalculate combat stats from the new type.
-    /// * `clock` - The current game tick, used to compute the revert deadline.
     ///
     /// # Side Effects
     /// * Updates `npc.current_type`, `npc.uid`, and sets the
     ///   `NpcInfoProt::ChangeType` mask.
     /// * When `reset` is true, adjusts `npc.levels` and `npc.base_levels` to
     ///   match the new type's stats.
-    /// * Schedules a revert at `clock + duration` (stored in `npc.revert_at`).
-    pub fn change_type(&mut self, new_type: u16, duration: u64, reset: bool, clock: u32) {
+    /// * Schedules a revert `duration` ticks from now (a relative countdown
+    ///   stored in `npc.revert_at`, decremented only while the NPC is processed).
+    pub fn change_type(&mut self, new_type: u16, duration: u64, reset: bool) {
         if duration < 1 {
             return;
         }
@@ -226,7 +243,7 @@ impl ActiveNpc {
         if new_type == self.npc.base_type && self.npc.lifecycle == EntityLifeTime::Respawn {
             self.npc.revert_at = None;
         } else {
-            self.npc.revert_at = Some(clock + duration as u32);
+            self.npc.revert_at = Some(duration as u32);
             self.npc.revert_reset = reset;
         }
     }
