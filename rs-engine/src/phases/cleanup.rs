@@ -102,7 +102,7 @@ impl Engine {
             let Some(active) = self.player_list.players[pid as usize].as_mut() else {
                 continue;
             };
-            active.player.reset_pathing_entity(false);
+            active.player.reset_pathing_entity();
             for inv in active.player.invs.values_mut() {
                 if inv.dirty {
                     inv.clear_dirty();

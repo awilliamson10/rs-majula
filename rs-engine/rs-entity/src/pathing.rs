@@ -456,6 +456,17 @@ impl PathingEntity {
 
         None
     }
+
+    /// Resets the pathing state for this entity.
+    pub fn reset(&mut self) {
+        self.walk_step = None;
+        self.jump = false;
+        self.tele = false;
+        self.walk_dir = -1;
+        self.run_dir = -1;
+        self.last_coord = self.coord;
+        self.steps_taken = 0;
+    }
 }
 
 /// Free-to-play–aware wrapper over [`rsmod::can_travel`].

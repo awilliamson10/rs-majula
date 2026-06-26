@@ -784,25 +784,13 @@ impl Player {
     /// ap_range_called flag, and movement speed (based on the `run` flag).
     /// Also calls `set_face_entity` to update the face-entity mask.
     ///
-    /// # Arguments
-    /// * `respawn` - `true` for a respawn reset (also unfocuses), `false` for a normal tick reset.
-    ///
     /// # Side Effects
     /// * Mutates pathing, info, state, and interaction fields.
     /// * Calls `unfocus` (if respawning) and `set_face_entity`.
-    pub fn reset_pathing_entity(&mut self, respawn: bool) {
-        if respawn {
-            self.unfocus();
-        }
+    pub fn reset_pathing_entity(&mut self) {
         self.info.reset();
-        self.pathing.walk_step = None;
-        self.pathing.jump = false;
-        self.pathing.tele = false;
+        self.pathing.reset();
         self.path = None;
-        self.pathing.walk_dir = -1;
-        self.pathing.run_dir = -1;
-        self.pathing.last_coord = self.pathing.coord;
-        self.pathing.steps_taken = 0;
         self.state.protect = false;
         self.opcalled = false;
         self.interaction.ap_range_called = false;
@@ -1160,7 +1148,7 @@ mod interaction_tests {
     fn reset_clears_ap_range_called() {
         let mut p = make_player();
         p.interaction.ap_range_called = true;
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert!(!p.interaction.ap_range_called);
     }
 
@@ -1168,7 +1156,7 @@ mod interaction_tests {
     fn reset_clears_opcalled() {
         let mut p = make_player();
         p.opcalled = true;
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert!(!p.opcalled);
     }
 
@@ -1176,7 +1164,7 @@ mod interaction_tests {
     fn reset_clears_steps_taken() {
         let mut p = make_player();
         p.pathing.steps_taken = 5;
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert_eq!(p.pathing.steps_taken, 0);
     }
 
@@ -1184,7 +1172,7 @@ mod interaction_tests {
     fn reset_clears_walk_dir() {
         let mut p = make_player();
         p.pathing.walk_dir = 4;
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert_eq!(p.pathing.walk_dir, -1);
     }
 
@@ -1192,7 +1180,7 @@ mod interaction_tests {
     fn reset_does_not_clear_interaction() {
         let mut p = make_player();
         p.set_interaction(obj_target(), ServerTriggerType::ApObj1 as u8, true);
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert!(p.interaction.target.is_some());
     }
 
@@ -1201,7 +1189,7 @@ mod interaction_tests {
         let mut p = make_player();
         p.pathing.queue_waypoint(3225, 3222);
         assert!(p.pathing.has_waypoints());
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert!(p.pathing.has_waypoints());
     }
 
@@ -1380,7 +1368,7 @@ mod interaction_tests {
                 p.interaction.target.is_some(),
                 "interaction should persist via p_opobj"
             );
-            p.reset_pathing_entity(false); // between ticks
+            p.reset_pathing_entity(); // between ticks
         }
 
         // Tick 4: fire succeeds, script calls world_delay (no p_opobj)
@@ -1422,7 +1410,7 @@ mod interaction_tests {
         assert!(p.interaction.target.is_some());
 
         // Between ticks: reset
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
         assert!(
             !p.interaction.ap_range_called,
             "reset should clear ap_range_called"
@@ -1466,7 +1454,7 @@ mod interaction_tests {
         );
 
         // Between ticks
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
 
         // Tick 2: arrive, OP fires, script runs (pickup)
         p.pathing.steps_taken = 0;
@@ -1489,7 +1477,7 @@ mod interaction_tests {
         simulate_interaction_cleanup(&mut p, true);
         assert!(p.interaction.target.is_some(), "p_oploc chains interaction");
 
-        p.reset_pathing_entity(false);
+        p.reset_pathing_entity();
 
         // Tick 2: OP fires again, script finishes without p_oploc
         p.next_target = None;

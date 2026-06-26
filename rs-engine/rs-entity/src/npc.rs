@@ -252,17 +252,12 @@ impl Npc {
             self.state.queues.queue.clear();
             self.pathing.clear_waypoints();
             self.pathing.tele = true;
+            self.pathing.jump = true;
             self.revert_at = None;
             self.revert_reset = false;
         } else {
             self.info.reset();
-            self.pathing.walk_step = None;
-            self.pathing.jump = false;
-            self.pathing.tele = false;
-            self.pathing.walk_dir = -1;
-            self.pathing.run_dir = -1;
-            self.pathing.last_coord = self.pathing.coord;
-            self.pathing.steps_taken = 0;
+            self.pathing.reset();
             self.state.protect = false;
             self.interaction.ap_range_called = false;
             self.set_face_entity();
