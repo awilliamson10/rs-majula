@@ -10,8 +10,6 @@ license.workspace = true
 rs-io = { workspace = true }
 rs-protocol-macros = { workspace = true }
 
-thiserror = { workspace = true }
-
 [build-dependencies]
 rev-cfg = { workspace = true }
 

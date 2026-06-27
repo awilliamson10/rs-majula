@@ -281,7 +281,7 @@ mod tests {
 
         let mut count = 0;
         let mut h = q.queue.head();
-        while let Some(idx) = h {
+        while let Some(_) = h {
             count += 1;
             h = q.queue.next();
         }
