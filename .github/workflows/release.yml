@@ -9,9 +9,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate:
+  revs:
     runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: read
+        name: Read supported revisions from rev-cfg
+        run: |
+          revs=$(sed -n '/REVS/s/.*= *&\[\(.*\)\].*/\1/p' rev-cfg/src/lib.rs | tr -d ' ')
+          if [ -z "$revs" ]; then
+            echo "::error file=rev-cfg/src/lib.rs::could not parse REVS list"
+            exit 1
+          fi
+          echo "Revisions: [$revs]"
+          echo "list=[$revs]" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: revs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rev: ${{ fromJSON(needs.revs.outputs.list) }}
     env:
+      REV: ${{ matrix.rev }}
       RUSTFLAGS: "-C target-cpu=x86-64-v3"
     steps:
       - uses: actions/checkout@v4
@@ -21,42 +45,29 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: validate
+          key: validate-${{ matrix.rev }}
 
       - name: Compile and pack content
         run: cargo run --release -p rs-pack -- pack
 
   build:
-    needs: validate
+    needs: [ validate, revs ]
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            ext: .exe
-            rustflags: "-C target-cpu=x86-64-v3"
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            ext: .exe
-            rustflags: ""
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            ext: ""
-            rustflags: "-C target-cpu=x86-64-v3"
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            ext: ""
-            rustflags: ""
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            ext: ""
-            rustflags: "-C target-cpu=x86-64-v3"
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            ext: ""
-            rustflags: ""
+        rev: ${{ fromJSON(needs.revs.outputs.list) }}
+        target:
+          - { triple: x86_64-pc-windows-msvc,    os: windows-latest, ext: .exe, rustflags: "-C target-cpu=x86-64-v3" }
+          - { triple: aarch64-pc-windows-msvc,   os: windows-latest, ext: .exe, rustflags: "" }
+          - { triple: x86_64-unknown-linux-gnu,  os: ubuntu-latest,  ext: "",   rustflags: "-C target-cpu=x86-64-v3" }
+          - { triple: aarch64-unknown-linux-gnu, os: ubuntu-latest,  ext: "",   rustflags: "" }
+          - { triple: x86_64-apple-darwin,       os: macos-latest,   ext: "",   rustflags: "-C target-cpu=x86-64-v3" }
+          - { triple: aarch64-apple-darwin,      os: macos-latest,   ext: "",   rustflags: "" }
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.target.os }}
+
+    env:
+      REV: ${{ matrix.rev }}
 
     steps:
       - uses: actions/checkout@v4
@@ -66,42 +77,43 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target.triple }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.rev }}-${{ matrix.target.triple }}
 
       - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.target.triple == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p rs-server
+        run: cargo build --release --target ${{ matrix.target.triple }} -p rs-server
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          RUSTFLAGS: ${{ matrix.rustflags }}
+          RUSTFLAGS: ${{ matrix.target.rustflags }}
 
       - name: Package
         shell: bash
         run: |
-          mkdir -p staging/rs-majula
-          cp target/${{ matrix.target }}/release/rs-server${{ matrix.ext }} staging/rs-majula/
-          cp -r content staging/rs-majula/
+          mkdir -p staging/rs-majula/content staging/rs-majula/public
+          cp target/${{ matrix.target.triple }}/release/rs-server${{ matrix.target.ext }} staging/rs-majula/
+          # The binary reads content/<REV>/ at runtime, so ship only the matching rev.
+          cp -r content/${{ matrix.rev }} staging/rs-majula/content/
+          cp -r public/${{ matrix.rev }} staging/rs-majula/public/
           cp -r .keys staging/rs-majula/
-          cp -r public staging/rs-majula/
           cp -r rs-ether staging/rs-majula/
           rm -rf staging/rs-majula/rs-ether/.git
           cp docker-compose.yml staging/rs-majula/
-          tar -czf rs-majula-${{ matrix.target }}.tar.gz -C staging rs-majula
+          tar -czf rs-majula-${{ matrix.rev }}-${{ matrix.target.triple }}.tar.gz -C staging rs-majula
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rs-majula-${{ matrix.target }}
-          path: rs-majula-${{ matrix.target }}.tar.gz
+          name: rs-majula-${{ matrix.rev }}-${{ matrix.target.triple }}
+          path: rs-majula-${{ matrix.rev }}-${{ matrix.target.triple }}.tar.gz
 
   release:
     needs: build
