@@ -2,6 +2,7 @@ pub mod config;
 pub mod map;
 pub mod media;
 pub mod model;
+mod namecrack;
 pub mod report;
 pub mod song;
 pub mod sound;
@@ -23,7 +24,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tracing::debug;
 
-const CONFIG_TYPE_CRCS: [(&str, i32); 8] = [
+const CONFIG_TYPE_CRCS: &[(&str, i32)] = &[
     ("seq", config_crc::SEQ),
     ("loc", config_crc::LOC),
     ("flo", config_crc::FLO),
@@ -32,6 +33,8 @@ const CONFIG_TYPE_CRCS: [(&str, i32); 8] = [
     ("npc", config_crc::NPC),
     ("idk", config_crc::IDK),
     ("varp", config_crc::VARP),
+    #[cfg(since_254)]
+    ("varbit", config_crc::VARBIT),
 ];
 
 const CONFIG_ENTRY_NAMES: &[&str] = &[
@@ -51,6 +54,10 @@ const CONFIG_ENTRY_NAMES: &[&str] = &[
     "idk.idx",
     "varp.dat",
     "varp.idx",
+    #[cfg(since_254)]
+    "varbit.dat",
+    #[cfg(since_254)]
+    "varbit.idx",
 ];
 
 const INTERFACE_ENTRY_NAMES: &[&str] = &["data"];
@@ -165,13 +172,15 @@ pub fn unpack_all(expected_dir: &Path, output_dir: &Path, pack_dir: &Path) -> an
 
         for (name, expected) in CONFIG_TYPE_CRCS {
             if let Some(dat) = jag.read(&format!("{name}.dat")) {
-                crc_report.config(name, &dat.data, expected);
+                crc_report.config(name, &dat.data, *expected);
             }
         }
 
         let raw_dir = output_dir.join("_raw").join("config");
         let entries = dump_jag_entries(&jag, &raw_dir, CONFIG_ENTRY_NAMES)?;
         debug!("  Dumped {} raw config entries", entries.len());
+
+        std::fs::write(pack_dir.join("config.order"), entries.join("\n") + "\n")?;
 
         leftover.add_config_leftovers(packs.leftovers, packs.dat_trailing);
         model_categories = packs.model_categories;
@@ -361,6 +370,7 @@ pub fn unpack_all(expected_dir: &Path, output_dir: &Path, pack_dir: &Path) -> an
     }
 
     crc_report.write(output_dir)?;
+    leftover.crack_unknown_names();
     leftover.write(output_dir)?;
 
     debug!("Unpack complete.");

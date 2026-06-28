@@ -18,6 +18,8 @@ use rs_protocol::network::game::client::anticheat_cyclelogic3::AnticheatCycleLog
 use rs_protocol::network::game::client::anticheat_cyclelogic4::AnticheatCycleLogic4;
 use rs_protocol::network::game::client::anticheat_cyclelogic5::AnticheatCycleLogic5;
 use rs_protocol::network::game::client::anticheat_cyclelogic6::AnticheatCycleLogic6;
+#[cfg(since_254)]
+use rs_protocol::network::game::client::anticheat_cyclelogic7::AnticheatCycleLogic7;
 use rs_protocol::network::game::client::anticheat_oplogic1::AnticheatOpLogic1;
 use rs_protocol::network::game::client::anticheat_oplogic2::AnticheatOpLogic2;
 use rs_protocol::network::game::client::anticheat_oplogic3::AnticheatOpLogic3;
@@ -30,8 +32,14 @@ use rs_protocol::network::game::client::anticheat_oplogic9::AnticheatOpLogic9;
 use rs_protocol::network::game::client::chat_setmode::ChatSetMode;
 use rs_protocol::network::game::client::client_cheat::ClientCheat;
 use rs_protocol::network::game::client::close_modal::CloseModal;
-#[cfg(rev = "225")]
+#[cfg(since_254)]
+use rs_protocol::network::game::client::event_applet_focus::EventAppletFocus;
+#[cfg(any(rev = "225", since_254))]
 use rs_protocol::network::game::client::event_camera_position::EventCameraPosition;
+#[cfg(since_254)]
+use rs_protocol::network::game::client::event_mouse_click::EventMouseClick;
+#[cfg(since_254)]
+use rs_protocol::network::game::client::event_mouse_move::EventMouseMove;
 use rs_protocol::network::game::client::friendlist_add::FriendListAdd;
 use rs_protocol::network::game::client::friendlist_del::FriendListDel;
 use rs_protocol::network::game::client::idk_savedesign::IdkSaveDesign;
@@ -45,6 +53,8 @@ use rs_protocol::network::game::client::inv_button3::InvButton3;
 use rs_protocol::network::game::client::inv_button4::InvButton4;
 use rs_protocol::network::game::client::inv_button5::InvButton5;
 use rs_protocol::network::game::client::inv_buttond::InvButtonD;
+#[cfg(since_254)]
+use rs_protocol::network::game::client::map_build_complete::MapBuildComplete;
 use rs_protocol::network::game::client::message_private::MessagePrivate;
 use rs_protocol::network::game::client::message_public::MessagePublic;
 use rs_protocol::network::game::client::move_gameclick::MoveGameClick;
@@ -83,6 +93,8 @@ use rs_protocol::network::game::client::opplayer1::OpPlayer1;
 use rs_protocol::network::game::client::opplayer2::OpPlayer2;
 use rs_protocol::network::game::client::opplayer3::OpPlayer3;
 use rs_protocol::network::game::client::opplayer4::OpPlayer4;
+#[cfg(since_254)]
+use rs_protocol::network::game::client::opplayer5::OpPlayer5;
 use rs_protocol::network::game::client::opplayert::OpPlayerT;
 use rs_protocol::network::game::client::opplayeru::OpPlayerU;
 #[cfg(rev = "225")]
@@ -737,6 +749,24 @@ impl ActivePlayer {
         self.write(rs_protocol::network::game::server::if_openoverlay::IfOpenOverlay { com });
     }
 
+    /// Sets (or clears, when `value` is empty) a right-click option shown to
+    /// other players on this player's context menu.
+    #[cfg(since_254)]
+    pub fn set_player_op(&mut self, op: u8, value: &str, primary: u8) {
+        self.write(
+            rs_protocol::network::game::server::set_player_op::SetPlayerOp { op, value, primary },
+        );
+    }
+
+    /// Tells the client the loading state of its friend list (`1` connecting,
+    /// `2` loaded/online).
+    #[cfg(since_254)]
+    pub fn friendlist_loaded(&mut self, status: u8) {
+        self.write(
+            rs_protocol::network::game::server::friendlist_loaded::FriendListLoaded { status },
+        );
+    }
+
     /// Recolors an interface component model, remapping `src` color to `dst`.
     #[cfg(before_245_2)]
     pub fn if_setrecol(&mut self, com: u16, src: u16, dst: u16) {
@@ -970,7 +1000,7 @@ impl ActivePlayer {
             rs_protocol::network::game::server::update_stat::UpdateStat {
                 stat: stat as u8,
                 exp: self.player.stats.xp[stat] / 10,
-                lvl: self.player.stats.levels[stat],
+                lvl: self.player.stats.levels[stat] as u8,
             },
         );
     }
@@ -1423,17 +1453,18 @@ impl ActivePlayer {
     ///   tick fills the `damage2_*` fields and sets `PlayerInfoProt::Damage2`
     ///   instead, alternating via the per-tick `damage_slot` counter.
     pub fn damage(&mut self, amount: u8, damage_type: u8) {
+        let amount = amount as u16;
         let current = self.player.stats.levels[PlayerStat::Hitpoints as usize];
         let taken = if current.saturating_sub(amount) == 0 {
             self.player.stats.levels[PlayerStat::Hitpoints as usize] = 0;
-            current
+            current as u8
         } else {
             self.player.stats.levels[PlayerStat::Hitpoints as usize] =
                 current.saturating_sub(amount);
-            amount
+            amount as u8
         };
-        let remaining = self.player.stats.levels[PlayerStat::Hitpoints as usize];
-        let base = self.player.stats.base_levels[PlayerStat::Hitpoints as usize];
+        let remaining = self.player.stats.levels[PlayerStat::Hitpoints as usize] as u8;
+        let base = self.player.stats.base_levels[PlayerStat::Hitpoints as usize] as u8;
 
         #[cfg(since_244)]
         if self.player.info.apply_damage2(
@@ -1875,6 +1906,8 @@ impl EnginePlayer for ActivePlayer {
                 ClientProt::AnticheatCycleLogic4 => AnticheatCycleLogic4::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatCycleLogic5 => AnticheatCycleLogic5::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatCycleLogic6 => AnticheatCycleLogic6::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::AnticheatCycleLogic7 => AnticheatCycleLogic7::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatOpLogic1 => AnticheatOpLogic1::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatOpLogic2 => AnticheatOpLogic2::decode(&mut buf, len).handle(self),
                 ClientProt::AnticheatOpLogic3 => AnticheatOpLogic3::decode(&mut buf, len).handle(self),
@@ -1887,8 +1920,16 @@ impl EnginePlayer for ActivePlayer {
                 ClientProt::ChatSetMode => ChatSetMode::decode(&mut buf, len).handle(self),
                 ClientProt::ClientCheat => ClientCheat::decode(&mut buf, len).handle(self),
                 ClientProt::CloseModal => CloseModal::decode(&mut buf, len).handle(self),
-                #[cfg(rev = "225")]
+                #[cfg(any(rev = "225", since_254))]
                 ClientProt::EventCameraPosition => EventCameraPosition::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::EventAppletFocus => EventAppletFocus::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::EventMouseClick => EventMouseClick::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::EventMouseMove => EventMouseMove::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::MapBuildComplete => MapBuildComplete::decode(&mut buf, len).handle(self),
                 ClientProt::FriendListAdd => FriendListAdd::decode(&mut buf, len).handle(self),
                 ClientProt::FriendListDel => FriendListDel::decode(&mut buf, len).handle(self),
                 ClientProt::IdkSaveDesign => IdkSaveDesign::decode(&mut buf, len).handle(self),
@@ -1940,6 +1981,8 @@ impl EnginePlayer for ActivePlayer {
                 ClientProt::OpPlayer2 => OpPlayer2::decode(&mut buf, len).handle(self),
                 ClientProt::OpPlayer3 => OpPlayer3::decode(&mut buf, len).handle(self),
                 ClientProt::OpPlayer4 => OpPlayer4::decode(&mut buf, len).handle(self),
+                #[cfg(since_254)]
+                ClientProt::OpPlayer5 => OpPlayer5::decode(&mut buf, len).handle(self),
                 ClientProt::OpPlayerT => OpPlayerT::decode(&mut buf, len).handle(self),
                 ClientProt::OpPlayerU => OpPlayerU::decode(&mut buf, len).handle(self),
                 #[cfg(rev = "225")]
@@ -1998,6 +2041,12 @@ impl EnginePlayer for ActivePlayer {
             self.player.private as u8,
             self.player.trade as u8,
         );
+        #[cfg(since_254)]
+        if engine().ether_tx.is_some() {
+            self.friendlist_loaded(1);
+        } else {
+            self.friendlist_loaded(2);
+        }
         self.if_close();
         self.update_pid(self.player.uid.pid());
         self.reset_client_varcache();

@@ -165,6 +165,8 @@ pub fn unpack_config(
         ("seq", decode_seq_entries),
         ("loc", decode_loc_entries),
         ("varp", decode_varp_entries),
+        #[cfg(since_254)]
+        ("varbit", decode_varbit_entries),
     ];
 
     for (name, decoder) in types {
@@ -731,9 +733,7 @@ fn decode_loc_entries(
                     let count = buf.g1() as usize;
                     let mut pairs: Vec<(u16, u8)> = Vec::new();
                     for _ in 0..count {
-                        let model_id = buf.g2();
-                        let shape = buf.g1();
-                        pairs.push((model_id, shape));
+                        pairs.push((buf.g2(), buf.g1()));
                     }
                     let base = format!("model_loc_{id}");
                     for &(mid, shape) in &pairs {
@@ -746,6 +746,21 @@ fn decode_loc_entries(
                 }
                 2 => props.push(("name".into(), buf.gjstr(10))),
                 3 => props.push(("desc".into(), buf.gjstr(10))),
+                5 => {
+                    let count = buf.g1() as usize;
+                    let mut pairs: Vec<(u16, u8)> = Vec::new();
+                    for _ in 0..count {
+                        pairs.push((buf.g2(), LocShape::CentrepieceStraight as u8));
+                    }
+                    let base = format!("model_loc_{id}");
+                    for &(mid, shape) in &pairs {
+                        let suffix = LocShape::try_from(shape)
+                            .expect("unknown loc shape")
+                            .suffix();
+                        packs.name_model(mid, format!("{base}{suffix}"), ModelCategory::Loc);
+                    }
+                    props.push(("model".into(), base));
+                }
                 14 => props.push(("width".into(), buf.g1().to_string())),
                 15 => props.push(("length".into(), buf.g1().to_string())),
                 17 => props.push(("blockwalk".into(), "no".into())),
@@ -800,6 +815,11 @@ fn decode_loc_entries(
                 73 => props.push(("forcedecor".into(), "yes".into())),
                 #[cfg(since_245_2)]
                 74 => props.push(("breakroutefinding".into(), "yes".into())),
+                #[cfg(since_254)]
+                75 => {
+                    let v = if buf.g1() == 1 { "yes" } else { "no" };
+                    props.push(("raiseobject".into(), v.into()));
+                }
                 _ => panic!("Unrecognized loc config code: {code}"),
             }
         }
@@ -1081,6 +1101,48 @@ fn decode_obj_entries(
         if !props.is_empty() {
             results.push((id, props));
         }
+    }
+    results
+}
+
+#[cfg(since_254)]
+fn decode_varbit_entries(
+    dat: &[u8],
+    idx: &[u8],
+    _reverse_hsl: &HashMap<u16, u16>,
+    packs: &mut UnpackedPacks,
+) -> Vec<(u16, Vec<(String, String)>)> {
+    let raw = read_entries(dat, idx);
+    let mut results = Vec::new();
+
+    for (id, data) in raw {
+        if data.is_empty() {
+            continue;
+        }
+        let mut buf = Packet::from(data);
+        let mut props = Vec::new();
+
+        while buf.remaining() > 0 {
+            let code: u8 = buf.g1();
+            match code {
+                0 => break,
+                1 => {
+                    props.push(("basevar".into(), buf.g2().to_string()));
+                    props.push(("startbit".into(), buf.g1().to_string()));
+                    props.push(("endbit".into(), buf.g1().to_string()));
+                }
+                10 => props.push(("debugname".into(), buf.gjstr(10))),
+                _ => panic!("Unrecognized varbit config code: {code}"),
+            }
+        }
+        if buf.remaining() > 0 {
+            packs.leftovers.push(RecordLeftover {
+                config_type: "varbit",
+                id,
+                bytes: buf.remaining() as usize,
+            });
+        }
+        results.push((id, props));
     }
     results
 }

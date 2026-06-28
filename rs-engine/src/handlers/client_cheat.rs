@@ -276,6 +276,7 @@ fn cheat_debugproc(
             ScriptVarType::PlayerUid => {}
             ScriptVarType::NpcUid => {}
             ScriptVarType::DbRow => {}
+            ScriptVarType::Midi => {}
         }
     }
 
@@ -351,8 +352,8 @@ fn cheat_set_stat(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(
             .unwrap_or(1)
             .clamp(1, 99) as u8;
         let stat = stat as usize;
-        active.player.stats.base_levels[stat] = level;
-        active.player.stats.levels[stat] = level;
+        active.player.stats.base_levels[stat] = level as u16;
+        active.player.stats.levels[stat] = level as u16;
         active.player.stats.xp[stat] = get_exp_by_level(level);
         active.recalc_combat_and_appearance();
     })
@@ -393,8 +394,8 @@ fn cheat_minme(active: &mut ActivePlayer) -> Result<(), ScriptError> {
         } else {
             1
         };
-        active.player.stats.base_levels[stat] = level;
-        active.player.stats.levels[stat] = level;
+        active.player.stats.base_levels[stat] = level as u16;
+        active.player.stats.levels[stat] = level as u16;
         active.player.stats.xp[stat] = get_exp_by_level(level);
     }
     active.recalc_combat_and_appearance();

@@ -425,6 +425,8 @@ impl Player {
     /// # Side Effects
     /// * Sets `self.state.active_script` to `None` if the script's execution state
     ///   is `CountDialog` or `PauseButton`.
+    /// * Clears `self.resume_buttons`, since the resume targets belonged to the
+    ///   script being discarded.
     pub fn clear_suspended_script(&mut self) {
         if let Some(s) = &self.state.active_script
             && matches!(
@@ -433,6 +435,7 @@ impl Player {
             )
         {
             self.state.active_script = None;
+            self.resume_buttons = None;
         }
     }
 
@@ -678,10 +681,12 @@ impl Player {
     /// # Side Effects
     /// * Sets `MODAL_SIDE` and `self.modal_side`.
     /// * Sets `self.refresh_modal` to `true`.
+    /// * Calls `clear_suspended_script` to cancel any pending dialog input.
     pub fn open_side_modal(&mut self, com: u16) {
         self.modal_state |= MODAL_SIDE;
         self.modal_side = Some(com);
         self.refresh_modal = true;
+        self.clear_suspended_script();
     }
 
     /// Records a tutorial interface as the active tutorial modal.
@@ -842,10 +847,10 @@ impl Player {
 
         if self.pathing.steps_taken < 2 {
             #[cfg(rev = "225")]
-            let recovered = self.stats.base_levels[PlayerStat::Agility as usize] as u16 / 9 + 8;
+            let recovered = self.stats.base_levels[PlayerStat::Agility as usize] / 9 + 8;
             #[cfg(since_244)]
             // https://runescape.wiki/w/Update:Agility_improved_and_bug_fixes
-            let recovered = self.stats.base_levels[PlayerStat::Agility as usize] as u16 / 6 + 8;
+            let recovered = self.stats.base_levels[PlayerStat::Agility as usize] / 6 + 8;
             self.runenergy = (self.runenergy + recovered).min(10000);
         } else {
             let weight_kg = self.runweight as f64 / 1000.0;
@@ -915,7 +920,7 @@ mod combat_level_tests {
         let mut player = Player::new(uid, CoordGrid::new(3222, 0, 3222), varps, false);
         // [Attack, Defence, Strength, Hitpoints, Ranged, Prayer, Magic]
         for (i, &lvl) in levels.iter().enumerate() {
-            player.stats.base_levels[i] = lvl;
+            player.stats.base_levels[i] = lvl as u16;
         }
         player
     }

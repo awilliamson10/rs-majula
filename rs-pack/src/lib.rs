@@ -31,6 +31,8 @@ use cache::provider::TypeProvider;
 use cache::seq::{SeqType, SeqTypeRaw};
 use cache::spotanim::{SpotAnimType, SpotAnimTypeRaw};
 use cache::r#struct::StructType;
+#[cfg(since_254)]
+use cache::varbit::VarbitType;
 use cache::varn::VarnType;
 use cache::varp::VarPlayerType;
 use cache::vars::VarsType;
@@ -94,6 +96,19 @@ pub(crate) mod jag_crc {
     pub const VERSIONLIST: Option<i32> = Some(-1979342254);
 }
 
+#[cfg(rev = "254")]
+pub(crate) mod jag_crc {
+    pub const TITLE: Option<i32> = Some(1187152444);
+    pub const CONFIG: Option<i32> = Some(1524313696);
+    pub const INTERFACE: Option<i32> = Some(531876099);
+    pub const MEDIA: Option<i32> = Some(-374324307);
+    pub const MODELS: Option<i32> = None;
+    pub const TEXTURES: Option<i32> = Some(-1826159457);
+    pub const WORDENC: Option<i32> = Some(1385372455);
+    pub const SOUNDS: Option<i32> = Some(392114586);
+    pub const VERSIONLIST: Option<i32> = Some(-128580638);
+}
+
 #[cfg(rev = "225")]
 pub(crate) mod config_crc {
     pub const SEQ: i32 = 1638136604;
@@ -131,6 +146,20 @@ pub(crate) mod config_crc {
     pub const OBJ: i32 = 344600333;
     pub const SPOTANIM: i32 = 96621343;
     pub const INTERFACE: i32 = 587792799;
+}
+
+#[cfg(rev = "254")]
+pub(crate) mod config_crc {
+    pub const SEQ: i32 = -716271600;
+    pub const LOC: i32 = -826309209;
+    pub const FLO: i32 = -1566957964;
+    pub const IDK: i32 = -359342366;
+    pub const VARP: i32 = 1039564548;
+    pub const NPC: i32 = 1077655221;
+    pub const OBJ: i32 = 535204494;
+    pub const SPOTANIM: i32 = -555849646;
+    pub const INTERFACE: i32 = 1728499832;
+    pub const VARBIT: i32 = -1387031023;
 }
 
 #[cfg(rev = "225")]
@@ -285,7 +314,7 @@ pub fn pack_all(
         &mut crcs,
         &mut jags,
         "config",
-        assemble_config_jag(&mut assets),
+        assemble_config_jag(&mut assets, pack),
         jag_crc::CONFIG,
         verify,
     );
@@ -375,6 +404,8 @@ pub fn pack_all(
     );
     let invs = build_type_provider::<InvType>(&assets, "inv", ());
     let varps = build_type_provider::<VarPlayerType>(&assets, "varp", ());
+    #[cfg(since_254)]
+    let varbits = build_type_provider::<VarbitType>(&assets, "varbit", ());
     let dbrows = build_type_provider::<DbRowType>(&assets, "dbrow", ());
     let dbtables = build_type_provider::<DbTableType>(&assets, "dbtable", ());
     let db_index = DbTableIndex::build(&dbtables, &dbrows);
@@ -484,6 +515,8 @@ pub fn pack_all(
         objs,
         invs,
         varps,
+        #[cfg(since_254)]
+        varbits,
         dbrows,
         dbtables,
         db_index,
@@ -573,16 +606,41 @@ where
     TypeProvider::from_bytes::<Raw>(&packed_file.server.dat, ctx)
 }
 
-fn assemble_config_jag(assets: &mut HashMap<String, pack::pack_registry::PackedFile>) -> Vec<u8> {
-    let config_types = ["seq", "loc", "flo", "spotanim", "obj", "npc", "idk", "varp"];
+fn assemble_config_jag(
+    assets: &mut HashMap<String, pack::pack_registry::PackedFile>,
+    pack_dir: &Path,
+) -> Vec<u8> {
+    let order: Vec<String> = std::fs::read_to_string(pack_dir.join("config.order"))
+        .expect("Missing config.order")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let mut clients: HashMap<&str, _> = HashMap::new();
+    for entry in &order {
+        let kind = entry.split_once('.').map_or(entry.as_str(), |(k, _)| k);
+        if !clients.contains_key(kind)
+            && let Some(client) = assets.get_mut(kind).and_then(|pf| pf.client.take())
+        {
+            clients.insert(kind, client);
+        }
+    }
+
     let mut jag = JagFile::new();
     let mut has_data = false;
-    for name in config_types {
-        if let Some(packed_file) = assets.get_mut(name)
-            && let Some(client) = packed_file.client.take()
-        {
-            jag.write(&format!("{name}.dat"), client.dat);
-            jag.write(&format!("{name}.idx"), client.idx);
+    for entry in &order {
+        let Some((kind, ext)) = entry.split_once('.') else {
+            continue;
+        };
+        if let Some(client) = clients.get_mut(kind) {
+            let data = if ext == "idx" {
+                std::mem::take(&mut client.idx)
+            } else {
+                std::mem::take(&mut client.dat)
+            };
+            jag.write(entry, data);
             has_data = true;
         }
     }

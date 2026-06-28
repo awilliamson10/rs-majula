@@ -620,8 +620,8 @@ pub trait ScriptPlayer {
     /// * `stat` - The stat index.
     ///
     /// # Returns
-    /// The effective level as `u8`.
-    fn stat(&self, stat: usize) -> u8;
+    /// The effective level as `u16`.
+    fn stat(&self, stat: usize) -> u16;
 
     /// Returns the player's base (unboosted) level in the given stat.
     ///
@@ -629,8 +629,8 @@ pub trait ScriptPlayer {
     /// * `stat` - The stat index.
     ///
     /// # Returns
-    /// The base level as `u8`.
-    fn stat_base(&self, stat: usize) -> u8;
+    /// The base level as `u16`.
+    fn stat_base(&self, stat: usize) -> u16;
 
     /// Returns the sum of all base (unboosted) stat levels.
     fn stat_total(&self) -> i32;
@@ -787,7 +787,20 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `buttons` - `Some(Vec<i32>)` with the allowed component IDs, or
     ///   `None` to clear the resume button set.
+    #[cfg(before_254)]
     fn if_setresumebuttons(&mut self, buttons: Option<Vec<i32>>);
+
+    /// Appends a single component ID to the player's resume button set, lazily
+    /// creating the set if it does not yet exist.
+    ///
+    /// This is the incremental counterpart to `if_setresumebuttons`: the resume
+    /// set is reset whenever a suspended dialog script is cleared, so a dialog
+    /// accumulates its buttons one `if_addresumebutton` call at a time.
+    ///
+    /// # Arguments
+    /// * `button` - The component ID to add as a valid resume target.
+    #[cfg(since_254)]
+    fn if_addresumebutton(&mut self, button: i32);
 
     /// Initiates a player logout.
     ///
@@ -1022,6 +1035,16 @@ pub trait ScriptPlayer {
     /// Opens a modal overlay interface component.
     #[cfg(since_244)]
     fn if_openoverlay(&mut self, com: u16);
+
+    /// Sets (or clears, when `value` is empty) a right-click option shown on
+    /// this player's context menu for other players.
+    ///
+    /// # Arguments
+    /// * `op` - The option slot index.
+    /// * `value` - The option text (empty clears the slot).
+    /// * `primary` - Whether this is a primary (left-click) option.
+    #[cfg(since_254)]
+    fn set_player_op(&mut self, op: u8, value: &str, primary: u8);
 
     /// Recolors an interface component model, remapping one color to another.
     ///
@@ -1595,11 +1618,11 @@ pub trait ScriptNpc {
     /// * `stat` - The NPC stat index.
     ///
     /// # Returns
-    /// The effective level as `u8`.
-    fn stat(&self, stat: usize) -> u8;
+    /// The effective level as `u16`.
+    fn stat(&self, stat: usize) -> u16;
 
     /// Returns the NPC's base (unmodified) level in the given stat.
-    fn basestat(&self, stat: usize) -> u8;
+    fn basestat(&self, stat: usize) -> u16;
 
     /// Applies damage to the NPC and displays a hitsplat.
     ///

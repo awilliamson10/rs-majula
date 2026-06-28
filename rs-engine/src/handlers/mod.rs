@@ -2,8 +2,8 @@ pub mod anticheat;
 pub mod chat_setmode;
 pub mod client_cheat;
 pub mod close_modal;
-#[cfg(rev = "225")]
-pub mod event_camera_position;
+#[cfg(any(rev = "225", since_254))]
+pub mod event;
 pub mod friendlist_add;
 pub mod friendlist_del;
 pub mod idk_savedesign;
@@ -13,6 +13,7 @@ pub mod ignorelist_add;
 pub mod ignorelist_del;
 pub mod inv_button;
 pub mod inv_buttond;
+pub mod map_build_complete;
 pub mod message_private;
 pub mod message_public;
 pub mod move_click;
