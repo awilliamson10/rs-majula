@@ -167,7 +167,7 @@ Simply change the `REV` located in `/.cargo/config.toml` and rebuild.
 
 ```toml
 [env]
-REV = "254"
+REV = "274"
 ```
 
 ### 225 (2004-05-18)
@@ -198,6 +198,20 @@ REV = "254"
 - https://runescape.wiki/w/Update:Troll_Stronghold_Quest
 - https://runescape.wiki/w/Update:Herblore_Additions
 - https://runescape.wiki/w/Update:Situation_in_the_Sands
+
+### 274 (2004-11-24)
+
+- https://runescape.wiki/w/Update:Tai_Bwo_Wannai_Trio
+- https://runescape.wiki/w/Update:Plague_City_Part_4_Released
+- https://runescape.wiki/w/Update:Skills,_Duels_and_the_Kalphite
+- https://runescape.wiki/w/Update:Eadgars_Ruse
+- https://runescape.wiki/w/Update:Morytania_Expansion
+- https://runescape.wiki/w/Update:Mortton_Shades_and_Mage_Armour
+- https://runescape.wiki/w/Update:Mage_Armour_Updated
+- https://runescape.wiki/w/Update:Treasure_Trails_and_Changes
+- https://runescape.wiki/w/Update:The_Fremennik_Trials
+- https://runescape.wiki/w/Update:Horror_From_The_Deep
+- https://runescape.wiki/w/Update:Burthorpe_Games_Room
 
 ----
 
