@@ -21,7 +21,7 @@ pub fn pack_assets(
     debug!("Packing param configs...");
     results.insert(
         "param".to_string(),
-        param::pack_params(&fc, registry, &constants)?,
+        param::pack_params(&fc, registry, &constants, verify)?,
     );
     debug!("Packing dbtable configs...");
     results.insert(
@@ -51,7 +51,7 @@ pub fn pack_assets(
     debug!("Packing mesanim configs...");
     results.insert(
         "mesanim".to_string(),
-        mesanim::pack_mesanims(&fc, registry, &constants)?,
+        mesanim::pack_mesanims(&fc, registry, &constants, verify)?,
     );
     debug!("Packing struct configs...");
     results.insert(
@@ -86,7 +86,7 @@ pub fn pack_assets(
     debug!("Packing hunt configs...");
     results.insert(
         "hunt".to_string(),
-        hunt::pack_hunts(&fc, registry, &constants)?,
+        hunt::pack_hunts(&fc, registry, &constants, verify)?,
     );
     debug!("Packing varn configs...");
     results.insert(
@@ -116,12 +116,18 @@ pub fn pack_assets(
     debug!("Packing categories...");
     results.insert("category".to_string(), category::pack_categories(registry)?);
     #[cfg(since_254)]
-    debug!("Packing varbit configs...");
-    #[cfg(since_254)]
-    results.insert(
-        "varbit".to_string(),
-        varbit::pack_varbits(&fc, registry, &constants, verify)?,
-    );
+    {
+        debug!("Packing varbit configs...");
+        results.insert(
+            "varbit".to_string(),
+            varbit::pack_varbits(&fc, registry, &constants, verify)?,
+        );
+    }
+    #[cfg(since_274)]
+    {
+        debug!("Packing mes configs...");
+        results.insert("mes".to_string(), mes::pack_mes(&fc, &constants, verify)?);
+    }
     Ok(results)
 }
 

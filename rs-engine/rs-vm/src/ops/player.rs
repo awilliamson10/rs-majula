@@ -404,10 +404,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2045
         active_player_mut!(m, IF_SETPOSITION => |s, player| {
-            let y = s.pop_int_as::<u16>()?;
-            let x = s.pop_int_as::<u16>()?;
+            let y = s.pop_int();
+            let x = s.pop_int();
             let com = s.pop_int_as::<u16>()?;
-            player.if_setposition(com, x, y);
+            player.if_setposition(com, x as u16, y as u16);
         });
 
         // 2046
@@ -1410,6 +1410,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         #[cfg(since_254)]
         active_player_mut!(m, IF_ADDRESUMEBUTTON => |s, player| {
             player.if_addresumebutton(s.pop_int());
+        });
+
+        // 2150
+        #[cfg(since_274)]
+        active_player_mut!(m, MINIMAP_TOGGLE => |s, player| {
+            player.minimap_toggle(s.pop_int_as::<u8>()?);
+        });
+
+        // 2151
+        #[cfg(since_274)]
+        active_player_mut!(m, SET_SKILL_LEVEL => |s, player| {
+            player.set_skill_level(s.pop_int_as::<u16>()?);
         });
     }
 }

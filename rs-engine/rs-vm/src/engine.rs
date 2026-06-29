@@ -376,6 +376,19 @@ pub trait ScriptEngine {
     /// `true` if the coordinate is flagged as unsafe for location placement.
     fn locaddunsafe(&self, coord: CoordGrid) -> bool;
 
+    /// Checks whether an active loc occupies the given coordinate.
+    ///
+    /// Like [`locaddunsafe`](Self::locaddunsafe), but invisible wall locs still
+    /// count (they are not skipped).
+    ///
+    /// # Arguments
+    /// * `coord` - The coordinate to test.
+    ///
+    /// # Returns
+    /// `true` if an active loc covers the coordinate.
+    #[cfg(since_274)]
+    fn map_loc(&self, coord: CoordGrid) -> bool;
+
     /// Returns a mutable reference to the engine's random number generator.
     ///
     /// # Returns
@@ -1045,6 +1058,21 @@ pub trait ScriptPlayer {
     /// * `primary` - Whether this is a primary (left-click) option.
     #[cfg(since_254)]
     fn set_player_op(&mut self, op: u8, value: &str, primary: u8);
+
+    /// Sets the client minimap state.
+    ///
+    /// # Arguments
+    /// * `minimap_type` - `0` normal, `1` disable click, `2` blacked out.
+    #[cfg(since_274)]
+    fn minimap_toggle(&mut self, minimap_type: u8);
+
+    /// Sets the player's appearance "skill level", shown by the client
+    /// alongside the combat level.
+    ///
+    /// # Arguments
+    /// * `level` - The skill level value (`0` = unset).
+    #[cfg(since_274)]
+    fn set_skill_level(&mut self, level: u16);
 
     /// Recolors an interface component model, remapping one color to another.
     ///

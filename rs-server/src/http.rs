@@ -50,6 +50,7 @@ enum ClientTemplate {
 #[cfg_attr(rev = "244", template(path = "public/244/client.ejs"))]
 #[cfg_attr(rev = "245.2", template(path = "public/245.2/client.ejs"))]
 #[cfg_attr(rev = "254", template(path = "public/254/client.ejs"))]
+#[cfg_attr(rev = "274", template(path = "public/274/client.ejs"))]
 struct TypeScriptClient {
     plugin: String,
     nodeid: String,
@@ -63,6 +64,7 @@ struct TypeScriptClient {
 #[cfg_attr(rev = "244", template(path = "public/244/java.ejs"))]
 #[cfg_attr(rev = "245.2", template(path = "public/245.2/java.ejs"))]
 #[cfg_attr(rev = "254", template(path = "public/254/java.ejs"))]
+#[cfg_attr(rev = "274", template(path = "public/274/java.ejs"))]
 struct JavaClient {
     plugin: String,
     nodeid: String,
@@ -333,9 +335,9 @@ fn matches_cache(path: &str) -> bool {
         "/crc",
         #[cfg(since_244)]
         "/versionlist",
-        #[cfg(since_244)]
+        #[cfg(all(since_244, before_274))]
         "/ondemand.zip",
-        #[cfg(since_244)]
+        #[cfg(all(since_244, before_274))]
         "/build",
     ]
     .iter()
@@ -347,12 +349,12 @@ fn read_cache(path: &str, cache: &'static CacheStore) -> Option<Body> {
         return Some(Body::Shared(Arc::clone(&cache.crctable_bytes)));
     }
 
-    #[cfg(since_244)]
+    #[cfg(all(since_244, before_274))]
     if path.starts_with("/ondemand.zip") {
         return Some(Body::Shared(Arc::clone(&cache.ondemand_zip)));
     }
 
-    #[cfg(since_244)]
+    #[cfg(all(since_244, before_274))]
     if path.starts_with("/build") {
         return Some(Body::Shared(Arc::clone(&cache.build)));
     }

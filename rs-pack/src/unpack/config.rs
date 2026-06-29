@@ -167,6 +167,14 @@ pub fn unpack_config(
         ("varp", decode_varp_entries),
         #[cfg(since_254)]
         ("varbit", decode_varbit_entries),
+        #[cfg(since_274)]
+        ("mesanim", decode_mesanim_entries),
+        #[cfg(since_274)]
+        ("mes", decode_mes_entries),
+        #[cfg(since_274)]
+        ("param", decode_param_entries),
+        #[cfg(since_274)]
+        ("hunt", decode_hunt_entries),
     ];
 
     for (name, decoder) in types {
@@ -1138,6 +1146,138 @@ fn decode_varbit_entries(
         if buf.remaining() > 0 {
             packs.leftovers.push(RecordLeftover {
                 config_type: "varbit",
+                id,
+                bytes: buf.remaining() as usize,
+            });
+        }
+        results.push((id, props));
+    }
+    results
+}
+
+#[cfg(since_274)]
+fn decode_mesanim_entries(
+    dat: &[u8],
+    idx: &[u8],
+    _reverse_hsl: &HashMap<u16, u16>,
+    packs: &mut UnpackedPacks,
+) -> Vec<(u16, Vec<(String, String)>)> {
+    let raw = read_entries(dat, idx);
+    let mut results = Vec::new();
+
+    for (id, data) in raw {
+        if data.is_empty() {
+            continue;
+        }
+        let mut buf = Packet::from(data);
+        let props = Vec::new();
+
+        let code: u8 = buf.g1();
+        if code != 0 {
+            panic!("Unrecognized mesanim config code: {code}");
+        }
+        if buf.remaining() > 0 {
+            packs.leftovers.push(RecordLeftover {
+                config_type: "mesanim",
+                id,
+                bytes: buf.remaining() as usize,
+            });
+        }
+        results.push((id, props));
+    }
+    results
+}
+
+#[cfg(since_274)]
+fn decode_mes_entries(
+    dat: &[u8],
+    idx: &[u8],
+    _reverse_hsl: &HashMap<u16, u16>,
+    packs: &mut UnpackedPacks,
+) -> Vec<(u16, Vec<(String, String)>)> {
+    let raw = read_entries(dat, idx);
+    let mut results = Vec::new();
+
+    for (id, data) in raw {
+        if data.is_empty() {
+            continue;
+        }
+        let mut buf = Packet::from(data);
+        let props = Vec::new();
+
+        let code: u8 = buf.g1();
+        if code != 0 {
+            panic!("Unrecognized mes config code: {code}");
+        }
+        if buf.remaining() > 0 {
+            packs.leftovers.push(RecordLeftover {
+                config_type: "mes",
+                id,
+                bytes: buf.remaining() as usize,
+            });
+        }
+        results.push((id, props));
+    }
+    results
+}
+
+#[cfg(since_274)]
+fn decode_param_entries(
+    dat: &[u8],
+    idx: &[u8],
+    _reverse_hsl: &HashMap<u16, u16>,
+    packs: &mut UnpackedPacks,
+) -> Vec<(u16, Vec<(String, String)>)> {
+    let raw = read_entries(dat, idx);
+    let mut results = Vec::new();
+
+    for (id, data) in raw {
+        if data.is_empty() {
+            continue;
+        }
+        let mut buf = Packet::from(data);
+        let props = Vec::new();
+
+        let code: u8 = buf.g1();
+        if code != 0 {
+            panic!("Unrecognized param config code: {code}");
+        }
+        if buf.remaining() > 0 {
+            packs.leftovers.push(RecordLeftover {
+                config_type: "param",
+                id,
+                bytes: buf.remaining() as usize,
+            });
+        }
+        results.push((id, props));
+    }
+    results
+}
+
+#[cfg(since_274)]
+fn decode_hunt_entries(
+    dat: &[u8],
+    idx: &[u8],
+    _reverse_hsl: &HashMap<u16, u16>,
+    packs: &mut UnpackedPacks,
+) -> Vec<(u16, Vec<(String, String)>)> {
+    let raw = read_entries(dat, idx);
+    let mut results = Vec::new();
+
+    for (id, data) in raw {
+        if data.is_empty() {
+            continue;
+        }
+        let mut buf = Packet::from(data);
+        let props = Vec::new();
+
+        let code: u8 = buf.g1();
+        if code != 0 {
+            panic!("Unrecognized hunt config code: {code}");
+        }
+        if buf.remaining() > 0 {
+            packs.leftovers.push(RecordLeftover {
+                config_type: "hunt",
                 id,
                 bytes: buf.remaining() as usize,
             });
