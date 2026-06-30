@@ -45,8 +45,6 @@ pub mod loc_add_change;
 pub mod loc_anim;
 pub mod loc_del;
 pub mod loc_merge;
-#[cfg(since_289)]
-pub mod loc_sound;
 pub mod logout;
 pub mod map_anim;
 pub mod map_projanim;
@@ -69,6 +67,8 @@ pub mod reset_client_varcache;
 pub mod set_multiway;
 #[cfg(since_254)]
 pub mod set_player_op;
+#[cfg(since_289)]
+pub mod sound_area;
 pub mod synth_sound;
 pub mod tut_flash;
 pub mod tut_open;
