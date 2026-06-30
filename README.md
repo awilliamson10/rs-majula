@@ -17,11 +17,12 @@
 > Rust** -- and the first private server to build its game cache from source assets
 > to CRCs that perfectly match the original Jagex game cache.
 
-`rs-majula` is the project, Cargo workspace, and canonical engine name: a
-from-scratch Rust reimplementation of a **RuneScape 2** game server, with
-byte-identical protocol and content emulation, a single-threaded deterministic game
-loop, and an async `tokio` host. The stock client connects and plays against
-unmodified cache content.
+> [!IMPORTANT]  
+> `rs-majula` is the project, Cargo workspace, and canonical engine name: a
+> from-scratch Rust reimplementation of a **RuneScape 2** game server, with
+> byte-identical protocol and content emulation, a single-threaded deterministic game
+> loop, and an async `tokio` host. The stock client connects and plays against
+> unmodified cache content.
 
 ----
 
@@ -51,6 +52,7 @@ The workspace is 19 crates organized by responsibility:
 | **Elixir** + `mix`      | `~> 1.15`                               | **Required to log in.** Runs the `rs-ether` sidecar, which the login flow depends on (cross-world login checks). The server boots and serves the web client without it, but every login attempt returns *login server offline*. Auto-spawned via `cmd /c` (Windows); on Linux/macOS start it from `rs-ether/` yourself. |
 | **Git**                 | --                                      | `rs-ether` is a submodule -- clone with `--recursive`.                                                                                                                                                                                                                                                                  |
 
+> [!NOTE]
 > **To actually log in you need both Postgres (Docker) up and the ether sidecar
 > connected.** If Postgres is down or the sidecar fails to start (e.g. Elixir
 > isn't installed), the server still serves the web client, but the client will
@@ -87,10 +89,12 @@ cargo run -p rs-server
 #    http://localhost:8080/rs2.cgi
 ```
 
+> [!TIP]
 > First build compiles the whole workspace and takes a while. For running a
 > populated world locally, prefer the `dev-opt` profile (near-release speed,
 > still has debuginfo): `cargo run --profile dev-opt -p rs-server`.
 
+> [!TIP]
 > For **maximum performance** (production or benchmarking), run in release mode --
 > `cargo run --release -p rs-server` -- for full optimizations and fat LTO, at the
 > cost of the longest compile.
@@ -140,9 +144,10 @@ All configuration is via CLI flags (clap). This is the complete set -- run
 | `--cluster <CLUSTER>`         | `""`                        | Comma-separated cluster node list (e.g. `world10@127.0.0.1,world11@127.0.0.1`), forwarded to the sidecar mesh. |
 | `--pepper <PEPPER>`           | `localhost`                 | Server-side pepper for password hashing.                                                                       |
 
-`--members`, `--client-pathfinder`, `--no-tui`, and `--verify` are boolean flags
+> [!NOTE]
+> `--members`, `--client-pathfinder`, `--no-tui`, and `--verify` are boolean flags
 (defaults shown). The `--db-*` defaults match `docker-compose.yml`, so the server
-connects with no extra flags.
+> connects with no extra flags.
 
 ----
 
@@ -160,6 +165,33 @@ Defined in `.cargo/config.toml`:
 
 ----
 
+## How to Play
+
+There are two ways to play the server.
+
+### 1. The original shipped Java client
+
+Depending on your targeted revision, navigate to the respective `/public/{REV}/client.jar` file.
+Run the following command:
+
+```bash
+java -cp client.jar client 10 0 highmem members 10
+```
+
+> [!NOTE]
+> Usage: node-id, port-offset, [lowmem/highmem], [free/members], storeid
+
+### 2. The ported JavaScript browser client
+
+Navigate to the following address on any modern web browser:
+
+http://localhost:8080/
+
+> [!NOTE]
+> Any browser should be supported as long as it supports WebAssembly. This includes any mobile browser as well.
+
+----
+
 ## Multi-Revision
 
 The engine supports multiple revision targets. The ones listed below can be targeted to your choice.
@@ -167,7 +199,7 @@ Simply change the `REV` located in `/.cargo/config.toml` and rebuild.
 
 ```toml
 [env]
-REV = "274"
+REV = "289"
 ```
 
 ### 225 (2004-05-18)
@@ -212,6 +244,21 @@ REV = "274"
 - https://runescape.wiki/w/Update:The_Fremennik_Trials
 - https://runescape.wiki/w/Update:Horror_From_The_Deep
 - https://runescape.wiki/w/Update:Burthorpe_Games_Room
+
+### 289 (2005-01-17)
+
+- https://runescape.wiki/w/Update:Throne_Of_Miscellania
+- https://runescape.wiki/w/Update:Monkey_Madness
+- https://runescape.wiki/w/Update:Various_Small_Changes.
+- https://runescape.wiki/w/Update:More_Small_Changes
+- https://runescape.wiki/w/Update:Castle_Wars
+- https://runescape.wiki/w/Update:Changes_to_Castle_Wars
+- https://runescape.wiki/w/Update:Santa,_Flax_and_Castlewars
+- https://runescape.wiki/w/Update:The_Haunted_Mine
+- https://runescape.wiki/w/Update:Troll_Romance,_Banks_and_Chat
+- https://runescape.wiki/w/Update:In_Search_Of_The_Myreque
+- https://runescape.wiki/w/Update:Trawler_Game_Update
+- https://runescape.wiki/w/Update:Karamja_Dungeon
 
 ----
 
