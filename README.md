@@ -272,6 +272,10 @@ that could be had, whether CPU or RAM optimizations.
 - I am using a Windows machine and am unable to validate the project under Linux or MacOS myself, relying on Github
   actions.
 
+> [!TIP]
+> When you open or push to a PR, a Github action will run jobs to validate that all revisions build,
+> compile content and test. You do not have to manually validate every supported revision yourself.
+
 ----
 
 *Bearer of the curse, seek misery.*
