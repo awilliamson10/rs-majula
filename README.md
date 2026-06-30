@@ -262,4 +262,16 @@ REV = "289"
 
 ----
 
+## Contributing
+
+All are welcome to help contribute to the project. I especially am always looking for performance opportunities
+that could be had, whether CPU or RAM optimizations.
+
+- Please provide benchmarks of a before & after if you open a PR for any performance improvements.
+- Please provide sources of any additional engine or content changes you open a PR for.
+- I am using a Windows machine and am unable to validate the project under Linux or MacOS myself, relying on Github
+  actions.
+
+----
+
 *Bearer of the curse, seek misery.*
