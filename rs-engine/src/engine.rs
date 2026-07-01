@@ -4685,6 +4685,12 @@ impl ScriptPlayer for ActivePlayer {
         self.set_skill_level(level);
     }
 
+    /// Disguises the player as an npc, or clears the disguise when `npc` is `None`.
+    #[cfg(since_254)]
+    fn transmogrify(&mut self, npc: Option<u16>) {
+        self.transmogrify(npc);
+    }
+
     /// Recolors an interface component model.
     ///
     /// # Call Stack

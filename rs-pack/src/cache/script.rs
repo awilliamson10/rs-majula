@@ -452,6 +452,7 @@ pub const SET_PLAYER_OP: u16 = 2148;
 pub const IF_ADDRESUMEBUTTON: u16 = 2149;
 pub const MINIMAP_TOGGLE: u16 = 2150;
 pub const SET_SKILL_LEVEL: u16 = 2151;
+pub const P_TRANSMOGRIFY: u16 = 2152;
 
 // ── Npc ops (2500-2999) ─────────────────────────────────────────────────────
 

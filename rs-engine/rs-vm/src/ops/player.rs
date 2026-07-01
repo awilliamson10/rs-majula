@@ -1423,5 +1423,15 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, SET_SKILL_LEVEL => |s, player| {
             player.set_skill_level(s.pop_int_as::<u16>()?);
         });
+
+        // 2152
+        #[cfg(since_254)]
+        active_player_mut!(m, P_TRANSMOGRIFY => |s, player| {
+            let id = s.pop_int();
+            if id < -1 || id >= cache().npcs.count() as i32 {
+                return Err(ScriptError::NpcNotFound(id));
+            }
+            player.transmogrify(if id == -1 { None } else { Some(id as u16) });
+        });
     }
 }

@@ -183,6 +183,8 @@
 [command,p_opnpc](int $op)
 // info: Requires protected access - cast a spell on the active_npc
 [command,p_opnpct](component $spell)
+// info: Disguise the active_player as an npc (RuneScript P_TRANSMOGRIFY); pass null to clear the disguise
+[command,p_transmogrify](npc $npc)
 // info: Requires protected access - open a "Click here to continue" dialog
 [command,p_pausebutton]
 // info: Requires protected access - open a "Click here to continue" dialog for the secondary player
@@ -1051,7 +1053,6 @@
 // [command,controller_queue](int $id, int $type, int $delay)
 // [command,controller_findexact](regioncoord $coord, int $type)(boolean)
 // [command,region_getcoord](int $int1, int $int2, int $int3)(regioncoord)
-// [command,p_transmogrify](npc $npc)
 // [command,if_setevents](component $component, int $int1, int $int2, boolean $boolean1, int $int3, int $int4, int $int5, boolean $boolean2, boolean $boolean3)
 // [command,runclientscript](string $string)
 // [command,obj_getvar]

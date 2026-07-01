@@ -1089,6 +1089,11 @@ pub trait ScriptPlayer {
     #[cfg(since_274)]
     fn set_skill_level(&mut self, level: u16);
 
+    /// Disguises the active player as the given npc type, or clears the disguise
+    /// when `npc` is `None` (RuneScript `P_TRANSMOGRIFY`).
+    #[cfg(since_254)]
+    fn transmogrify(&mut self, npc: Option<u16>);
+
     /// Recolors an interface component model, remapping one color to another.
     ///
     /// # Arguments

@@ -55,6 +55,7 @@
 1021=world_delay
 1022=midi_length
 1023=map_loc
+1024=sound_area
 2000=afk_event
 2001=allowdesign
 2002=anim
@@ -207,6 +208,7 @@
 2149=if_addresumebutton
 2150=minimap_toggle
 2151=set_skill_level
+2152=p_transmogrify
 2500=npc_add
 2501=npc_anim
 2502=npc_arrivedelay

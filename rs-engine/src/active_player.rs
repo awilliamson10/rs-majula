@@ -1459,6 +1459,17 @@ impl ActivePlayer {
         }
     }
 
+    /// Disguises the player as the given npc type (RuneScript `P_TRANSMOGRIFY`),
+    /// or clears the disguise when `npc` is `None`, then rebuilds the appearance
+    /// so the change is reflected to other players.
+    #[cfg(since_254)]
+    pub fn transmogrify(&mut self, npc: Option<u16>) {
+        self.player.transmog = npc;
+        if let Some(appearance) = self.player.info.appearance {
+            self.buildappearance(appearance);
+        }
+    }
+
     /// Applies damage to this player, clamping hitpoints to zero if the damage
     /// exceeds the current value.
     ///
@@ -1581,44 +1592,15 @@ impl ActivePlayer {
             buf.p1(self.player.gender);
             buf.p1(self.player.headicons);
 
-            let mut skipped_slots = [false; 12];
-            if let Some(worn) = self
-                .player
-                .invs
-                .get(&self.player.info.appearance.unwrap_or(0))
-            {
-                for item in worn.slots.iter().flatten() {
-                    if let Some(obj) = cache().objs.get_by_id(item.obj) {
-                        if let Some(wp2) = obj.wearpos2.filter(|&w| (w as usize) < 12) {
-                            skipped_slots[wp2 as usize] = true;
-                        }
-                        if let Some(wp3) = obj.wearpos3.filter(|&w| (w as usize) < 12) {
-                            skipped_slots[wp3 as usize] = true;
-                        }
-                    }
-                }
-            }
+            #[cfg(before_254)]
+            self.put_appearance_inv(buf);
 
-            let worn_inv_id = self.player.info.appearance.unwrap_or(0);
-            for slot in 0..12u16 {
-                if skipped_slots[slot as usize] {
-                    buf.p1(0);
-                    continue;
-                }
-                let equip = self
-                    .player
-                    .invs
-                    .get(&worn_inv_id)
-                    .and_then(|inv| inv.get(slot));
-                if let Some(item) = equip {
-                    buf.p2(0x200 + item.obj);
-                } else {
-                    let appearance_value = self.get_appearance_in_slot(slot as usize);
-                    if appearance_value < 1 {
-                        buf.p1(0);
-                    } else {
-                        buf.p2(appearance_value as u16);
-                    }
+            #[cfg(since_254)]
+            match self.player.transmog {
+                None => self.put_appearance_inv(buf),
+                Some(transmog) => {
+                    buf.p2(u16::MAX);
+                    buf.p2(transmog);
                 }
             }
 
@@ -1643,6 +1625,79 @@ impl ActivePlayer {
 
         self.player.info.last_appearance = Some(clock);
         self.player.info.last_appearance_info = Some(appearance);
+    }
+
+    /// Encodes the twelve on-model equipment slots (`WearPos::Hat` through
+    /// `WearPos::Jaw`) of this player's appearance into `buf`, one entry per
+    /// slot in wear-position order. (`Ring` and `Quiver` are not drawn on the
+    /// model and so are excluded.)
+    ///
+    /// Each slot is written in one of three forms, matching the client's
+    /// appearance decoder:
+    /// - **Worn item:** `0x200 + obj` as a `u16`; the `0x200` flag marks the
+    ///   value as an equipped object id.
+    /// - **Bare body part:** the kit value from `get_appearance_in_slot`
+    ///   (`0x100 + body_part`) as a `u16`, used when the slot holds no item but
+    ///   the character model has a body part there (hair, torso, arms, ...).
+    /// - **Empty:** a single `0` byte, for slots with neither an item nor a
+    ///   visible body part.
+    ///
+    /// Items can cover more than their primary slot: an obj's `wearpos2` /
+    /// `wearpos3` name the extra slots it visually hides (e.g. a full helm hides
+    /// the hair and jaw, a platebody hides the arms). A first pass flags every
+    /// such covered slot so the encoding pass emits an empty `0` for it, keeping
+    /// the body part beneath from poking through the worn item.
+    ///
+    /// The worn equipment is read from the inventory named by
+    /// `player.info.appearance` (defaulting to inventory `0`).
+    ///
+    /// # Arguments
+    /// * `buf` - The appearance buffer to append the twelve slot entries to.
+    ///
+    /// # Side Effects
+    /// Advances `buf.pos` by 12 to 24 bytes (1 byte per empty slot, 2 per
+    /// filled slot).
+    fn put_appearance_inv(&mut self, buf: &mut Packet) {
+        let mut skipped_slots = [false; 12];
+        if let Some(worn) = self
+            .player
+            .invs
+            .get(&self.player.info.appearance.unwrap_or(0))
+        {
+            for item in worn.slots.iter().flatten() {
+                if let Some(obj) = cache().objs.get_by_id(item.obj) {
+                    if let Some(wp2) = obj.wearpos2.filter(|&w| (w as usize) < 12) {
+                        skipped_slots[wp2 as usize] = true;
+                    }
+                    if let Some(wp3) = obj.wearpos3.filter(|&w| (w as usize) < 12) {
+                        skipped_slots[wp3 as usize] = true;
+                    }
+                }
+            }
+        }
+
+        let worn_inv_id = self.player.info.appearance.unwrap_or(0);
+        for slot in 0..12 {
+            if skipped_slots[slot as usize] {
+                buf.p1(0);
+                continue;
+            }
+            let equip = self
+                .player
+                .invs
+                .get(&worn_inv_id)
+                .and_then(|inv| inv.get(slot));
+            if let Some(item) = equip {
+                buf.p2(0x200 + item.obj);
+            } else {
+                let appearance_value = self.get_appearance_in_slot(slot as usize);
+                if appearance_value < 1 {
+                    buf.p1(0);
+                } else {
+                    buf.p2(appearance_value as u16);
+                }
+            }
+        }
     }
 
     /// Returns the body model kit value for the given equipment slot when

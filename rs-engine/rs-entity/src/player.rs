@@ -209,6 +209,8 @@ pub struct Player {
     pub block_walk: BlockWalk,
     pub gender: u8,
     pub headicons: u8,
+    #[cfg(since_254)]
+    pub transmog: Option<u16>,
     pub body: [i32; 7],
     pub colours: [u8; 5],
     pub invs: FxHashMap<u16, Inventory>,
@@ -313,6 +315,8 @@ impl Player {
             block_walk: BlockWalk::Npc,
             gender: 0,
             headicons: 0,
+            #[cfg(since_254)]
+            transmog: None,
             body: [0, 10, 18, 26, 33, 36, 42],
             colours: [0; 5],
             invs: FxHashMap::default(),
