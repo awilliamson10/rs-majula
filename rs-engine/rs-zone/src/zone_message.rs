@@ -10,6 +10,8 @@ use rs_protocol::network::game::server::obj_add::ObjAdd;
 use rs_protocol::network::game::server::obj_count::ObjCount;
 use rs_protocol::network::game::server::obj_del::ObjDel;
 use rs_protocol::network::game::server::obj_reveal::ObjReveal;
+#[cfg(since_289)]
+use rs_protocol::network::game::server::sound_area::SoundArea;
 
 /// Generates the [`ZoneMessage`] enum and its mechanical `encode_zone` /
 /// `sizeof_zone` matches from a single variant list.
@@ -18,7 +20,7 @@ use rs_protocol::network::game::server::obj_reveal::ObjReveal;
 /// dispatch uniformly over the variants, so the only per-variant information is
 /// the variant name and its payload type.
 macro_rules! zone_messages {
-    ($($variant:ident($payload:ty)),+ $(,)?) => {
+    ($($(#[$meta:meta])* $variant:ident($payload:ty)),+ $(,)?) => {
         /// A protocol message payload representing a zone update to be sent to clients.
         ///
         /// Each variant wraps a specific server protocol message struct. These are
@@ -26,7 +28,7 @@ macro_rules! zone_messages {
         /// into network packets during the zone output phase of each engine tick.
         #[derive(Debug, Clone)]
         pub enum ZoneMessage {
-            $($variant($payload),)+
+            $($(#[$meta])* $variant($payload),)+
         }
 
         impl ZoneMessage {
@@ -46,7 +48,7 @@ macro_rules! zone_messages {
             /// Advances `buf.pos` by `1 + message.sizeof()` bytes.
             pub fn encode_zone(&self, buf: &mut Packet) {
                 match self {
-                    $(Self::$variant(m) => encode(m, buf),)+
+                    $($(#[$meta])* Self::$variant(m) => encode(m, buf),)+
                 }
             }
 
@@ -61,7 +63,7 @@ macro_rules! zone_messages {
             /// The total byte count: `1 + message.sizeof()`.
             pub fn sizeof_zone(&self) -> usize {
                 1 + match self {
-                    $(Self::$variant(m) => m.sizeof(),)+
+                    $($(#[$meta])* Self::$variant(m) => m.sizeof(),)+
                 }
             }
         }
@@ -79,6 +81,8 @@ zone_messages! {
     LocMerge(LocMerge),
     MapAnim(MapAnim),
     MapProjAnim(MapProjAnim),
+    #[cfg(since_289)]
+    SoundArea(SoundArea),
 }
 
 /// Writes a protocol opcode byte followed by the encoded message payload into `buf`.

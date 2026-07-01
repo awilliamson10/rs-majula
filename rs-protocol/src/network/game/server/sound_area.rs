@@ -17,6 +17,7 @@ use rs_protocol_macros::server_prot;
 /// after the sound id packs `range` into bits 4-7 and `loops` into bits 0-2.
 #[cfg(since_289)]
 #[server_prot(SoundArea, Immediate, Fixed)]
+#[derive(Debug, Clone)]
 pub struct SoundArea {
     pub coord: u8,
     pub sound: u16,

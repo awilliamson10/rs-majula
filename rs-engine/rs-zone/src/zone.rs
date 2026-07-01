@@ -1181,6 +1181,27 @@ impl Zone {
     pub fn map_proj_anim(&mut self, message: ZoneMessage) {
         self.queue_event(None, ZoneEventType::Enclosed, None, message);
     }
+
+    /// Queues a tile-anchored sound effect event.
+    ///
+    /// Area sounds are not tied to any entity and are always broadcast to all
+    /// players observing the zone.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` -- The pre-built [`ZoneMessage::SoundArea`] payload.
+    ///
+    /// # Side Effects
+    ///
+    /// Queues an enclosed event with no entity id.
+    ///
+    /// **Called by:** `Engine::sound_area` when scripts trigger area sounds.
+    ///
+    /// **Calls:** [`queue_event`](Self::queue_event).
+    #[cfg(since_289)]
+    pub fn sound_area(&mut self, message: ZoneMessage) {
+        self.queue_event(None, ZoneEventType::Enclosed, None, message);
+    }
 }
 
 /// Clamps an obj count into the `u16` range used by obj protocol messages.

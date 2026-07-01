@@ -3465,6 +3465,31 @@ impl ScriptEngine for Engine {
         self.track_zone(x, y, z);
     }
 
+    /// Plays a sound effect anchored to a tile, broadcast to every player
+    /// observing the zone.
+    ///
+    /// `range` (audible radius, `0..=15`) is packed into the high nibble of the
+    /// wire `info` byte and `loops` (`0..=7`) into the low bits, matching the
+    /// client decode (`range = info >> 4 & 0xF`, `loops = info & 0x7`).
+    ///
+    /// # Call Stack
+    ///
+    /// **Called by:** VM ops via `ScriptEngine` trait
+    /// **Calls:** `Zone::sound_area`, `Engine::track_zone`
+    #[cfg(since_289)]
+    fn sound_area(&mut self, y: u8, x: u16, z: u16, sound: u16, range: u8, loops: u8) {
+        let coord = CoordGrid::packed_zone_coord(x, z);
+        let info = ((range & 0xF) << 4) | (loops & 0x7);
+        let message =
+            ZoneMessage::SoundArea(rs_protocol::network::game::server::sound_area::SoundArea {
+                coord,
+                sound,
+                info,
+            });
+        self.zones.zone_mut(x, y, z).sound_area(message);
+        self.track_zone(x, y, z);
+    }
+
     /// Checks whether adding a location at the given coordinate is unsafe, i.e.
     /// an active loc already occupies the tile. Invisible wall locs are skipped.
     ///

@@ -2152,6 +2152,8 @@ impl EnginePlayer for ActivePlayer {
             ZoneMessage::LocMerge(m) => self.write(m.clone()),
             ZoneMessage::MapAnim(m) => self.write(m.clone()),
             ZoneMessage::MapProjAnim(m) => self.write(m.clone()),
+            #[cfg(since_289)]
+            ZoneMessage::SoundArea(m) => self.write(m.clone()),
         }
     }
 

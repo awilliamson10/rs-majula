@@ -55,6 +55,7 @@
 1021=world_delay
 1022=midi_length
 1023=map_loc
+1024=sound_area
 2000=afk_event
 2001=allowdesign
 2002=anim

@@ -367,6 +367,21 @@ pub trait ScriptEngine {
     /// * `delay` - The delay in client ticks before the animation plays.
     fn anim_map(&mut self, y: u8, x: u16, z: u16, spotanim: u16, height: u8, delay: u16);
 
+    /// Plays a sound effect anchored to a tile, audible to all players observing
+    /// the zone within `range`.
+    ///
+    /// # Arguments
+    /// * `y` - The level (height plane).
+    /// * `x` - The tile X coordinate.
+    /// * `z` - The tile Z coordinate.
+    /// * `sound` - The synth (sound effect) identifier.
+    /// * `range` - Audible radius in tiles (`0..=15`), packed into the high nibble
+    ///   of the wire info byte.
+    /// * `loops` - Number of times the sound repeats (`0..=7`), packed into the
+    ///   low bits of the wire info byte.
+    #[cfg(since_289)]
+    fn sound_area(&mut self, y: u8, x: u16, z: u16, sound: u16, range: u8, loops: u8);
+
     /// Checks whether adding a location at the given coordinate is unsafe.
     ///
     /// # Arguments
