@@ -822,6 +822,18 @@ impl IfComponentType {
             _ => panic!("Unknown component type: {s}"),
         }
     }
+
+    pub const fn config_str(self) -> &'static str {
+        match self {
+            Self::Layer => "layer",
+            Self::Inv => "inv",
+            Self::Rect => "rect",
+            Self::Text => "text",
+            Self::Graphic => "graphic",
+            Self::Model => "model",
+            Self::InvText => "invtext",
+        }
+    }
 }
 
 #[repr(u8)]
@@ -847,6 +859,18 @@ impl IfButtonType {
             "select" => Self::Select,
             "pause" => Self::Pause,
             _ => panic!("Unknown button type: {s}"),
+        }
+    }
+
+    pub const fn config_str(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Normal => "normal",
+            Self::Target => "target",
+            Self::Close => "close",
+            Self::Toggle => "toggle",
+            Self::Select => "select",
+            Self::Pause => "pause",
         }
     }
 }
@@ -958,6 +982,32 @@ impl PlayerStat {
             "stat19" => Self::Stat19,
             "runecraft" => Self::Runecraft,
             _ => panic!("Unknown player stat name: {s}"),
+        }
+    }
+
+    pub const fn config_str(self) -> &'static str {
+        match self {
+            Self::Attack => "attack",
+            Self::Defence => "defence",
+            Self::Strength => "strength",
+            Self::Hitpoints => "hitpoints",
+            Self::Ranged => "ranged",
+            Self::Prayer => "prayer",
+            Self::Magic => "magic",
+            Self::Cooking => "cooking",
+            Self::Woodcutting => "woodcutting",
+            Self::Fletching => "fletching",
+            Self::Fishing => "fishing",
+            Self::Firemaking => "firemaking",
+            Self::Crafting => "crafting",
+            Self::Smithing => "smithing",
+            Self::Mining => "mining",
+            Self::Herblore => "herblore",
+            Self::Agility => "agility",
+            Self::Thieving => "thieving",
+            Self::Stat18 => "stat18",
+            Self::Stat19 => "stat19",
+            Self::Runecraft => "runecraft",
         }
     }
 }

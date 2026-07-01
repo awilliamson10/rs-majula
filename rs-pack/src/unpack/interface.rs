@@ -8,31 +8,7 @@ use tracing::{debug, warn};
 
 use crate::pack::pack_registry::PackRegistry;
 use crate::pack::util::walk;
-use crate::types::Font;
-
-const STAT_NAMES: [&str; 21] = [
-    "attack",
-    "defence",
-    "strength",
-    "hitpoints",
-    "ranged",
-    "prayer",
-    "magic",
-    "cooking",
-    "woodcutting",
-    "fletching",
-    "fishing",
-    "firemaking",
-    "crafting",
-    "smithing",
-    "mining",
-    "herblore",
-    "agility",
-    "thieving",
-    "stat18",
-    "stat19",
-    "runecraft",
-];
+use crate::types::{Font, IfButtonType, IfComponentType, PlayerStat};
 
 #[derive(Default)]
 struct Component {
@@ -377,42 +353,6 @@ fn build_names(
     names
 }
 
-fn type_name(com_type: u8) -> &'static str {
-    match com_type {
-        0 => "layer",
-        2 => "inv",
-        3 => "rect",
-        4 => "text",
-        5 => "graphic",
-        6 => "model",
-        7 => "invtext",
-        other => panic!("Unknown interface component type {other}"),
-    }
-}
-
-fn button_name(button_type: u8) -> &'static str {
-    match button_type {
-        1 => "normal",
-        2 => "target",
-        3 => "close",
-        4 => "toggle",
-        5 => "select",
-        6 => "pause",
-        other => panic!("Unknown interface button type {other}"),
-    }
-}
-
-fn font_name(font: u8) -> &'static str {
-    let f = match font {
-        0 => Font::P11,
-        1 => Font::P12,
-        2 => Font::B12,
-        3 => Font::Q8,
-        other => panic!("Unknown interface font {other}"),
-    };
-    f.name()
-}
-
 fn action_target_names(flags: u16) -> String {
     let mut targets = Vec::new();
     if flags & 0x1 != 0 {
@@ -439,6 +379,12 @@ fn next_op(ops: &[u16], idx: &mut usize) -> u16 {
     v
 }
 
+fn stat_name(id: u16) -> &'static str {
+    PlayerStat::try_from(id as u8)
+        .expect("unknown player stat")
+        .config_str()
+}
+
 fn export_scripts(lines: &mut Vec<String>, com: &Component, ctx: &Ctx) {
     for (i, ops) in com.scripts.iter().enumerate() {
         let j = i + 1;
@@ -455,22 +401,16 @@ fn export_scripts(lines: &mut Vec<String>, com: &Component, ctx: &Ctx) {
             let op = ops[idx];
             idx += 1;
             let body = match op {
-                1 => format!("stat_level,{}", STAT_NAMES[next_op(ops, &mut idx) as usize]),
-                2 => format!(
-                    "stat_base_level,{}",
-                    STAT_NAMES[next_op(ops, &mut idx) as usize]
-                ),
-                3 => format!("stat_xp,{}", STAT_NAMES[next_op(ops, &mut idx) as usize]),
+                1 => format!("stat_level,{}", stat_name(next_op(ops, &mut idx))),
+                2 => format!("stat_base_level,{}", stat_name(next_op(ops, &mut idx))),
+                3 => format!("stat_xp,{}", stat_name(next_op(ops, &mut idx))),
                 4 => {
                     let inv = next_op(ops, &mut idx);
                     let obj = next_op(ops, &mut idx);
                     format!("inv_count,{},{}", ctx.iface(inv), ctx.obj(obj))
                 }
                 5 => format!("pushvar,{}", ctx.varp(next_op(ops, &mut idx))),
-                6 => format!(
-                    "stat_xp_remaining,{}",
-                    STAT_NAMES[next_op(ops, &mut idx) as usize]
-                ),
+                6 => format!("stat_xp_remaining,{}", stat_name(next_op(ops, &mut idx))),
                 7 => "op7".to_string(),
                 8 => "op8".to_string(),
                 9 => "op9".to_string(),
@@ -538,11 +478,21 @@ fn export_component(
     if !parent.is_empty() {
         lines.push(format!("layer={parent}"));
     }
-    lines.push(format!("type={}", type_name(com.com_type)));
+    lines.push(format!(
+        "type={}",
+        IfComponentType::try_from(com.com_type)
+            .expect("unknown interface component type")
+            .config_str()
+    ));
     lines.push(format!("x={x}"));
     lines.push(format!("y={y}"));
     if com.button_type != 0 {
-        lines.push(format!("buttontype={}", button_name(com.button_type)));
+        lines.push(format!(
+            "buttontype={}",
+            IfButtonType::try_from(com.button_type)
+                .expect("unknown interface button type")
+                .config_str()
+        ));
     }
     if com.client_code != 0 {
         lines.push(format!("clientcode={}", com.client_code));
@@ -641,7 +591,12 @@ fn export_type_specific(lines: &mut Vec<String>, com: &Component, ctx: &Ctx) {
             if com.center {
                 lines.push("center=yes".to_string());
             }
-            lines.push(format!("font={}", font_name(com.font)));
+            lines.push(format!(
+                "font={}",
+                Font::try_from(com.font)
+                    .expect("unknown interface font")
+                    .name()
+            ));
             if com.shadowed {
                 lines.push("shadowed=yes".to_string());
             }
@@ -688,7 +643,12 @@ fn export_type_specific(lines: &mut Vec<String>, com: &Component, ctx: &Ctx) {
             if com.center {
                 lines.push("center=yes".to_string());
             }
-            lines.push(format!("font={}", font_name(com.font)));
+            lines.push(format!(
+                "font={}",
+                Font::try_from(com.font)
+                    .expect("unknown interface font")
+                    .name()
+            ));
             if com.shadowed {
                 lines.push("shadowed=yes".to_string());
             }
