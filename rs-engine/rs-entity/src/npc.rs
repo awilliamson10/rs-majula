@@ -6,7 +6,7 @@ use crate::state::EntityState;
 use rs_grid::CoordGrid;
 use rs_hero::HeroPoints;
 use rs_info::{EntityMasks, FocusKind};
-use rs_pack::types::{MoveRestrict, NpcMode};
+use rs_pack::types::{BlockWalk, MoveRestrict, NpcMode};
 use rs_stat::Stats;
 use rs_var::VarSet;
 pub use rs_vm::NpcUid;
@@ -24,8 +24,13 @@ pub struct Npc {
     pub state: EntityState,
     pub spawn_coord: CoordGrid,
     pub default_mode: NpcMode,
-    pub wander_range: u8,
+    pub wander_range: u16,
     pub max_range: u16,
+    pub attack_range: u16,
+    pub regen_rate: u16,
+    pub category: Option<u16>,
+    pub block_walk: BlockWalk,
+    pub vis_level: Option<u16>,
     pub stuck_counter: u16,
     pub info: EntityMasks,
     pub interaction: InteractionState,
@@ -80,6 +85,11 @@ impl Npc {
             default_mode: NpcMode::None,
             wander_range: 0,
             max_range: 0,
+            attack_range: 0,
+            regen_rate: 0,
+            category: None,
+            block_walk: BlockWalk::Npc,
+            vis_level: None,
             stuck_counter: 0,
             info: EntityMasks::new(),
             interaction: InteractionState::new(),

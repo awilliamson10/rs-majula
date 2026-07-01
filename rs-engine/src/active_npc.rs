@@ -2,6 +2,7 @@ use rs_entity::{EntityLifeTime, Npc, NpcUid};
 use rs_grid::CoordGrid;
 use rs_info::FocusKind;
 use rs_pack::cache::CacheStore;
+use rs_pack::cache::npc::NpcType;
 use rs_pack::types::{BlockWalk, MoveRestrict, NpcStat};
 use rs_protocol::network::game::info_prot::NpcInfoProt;
 use rs_var::VarSet;
@@ -58,7 +59,7 @@ impl ActiveNpc {
             npc.interaction.target_op = Some(npc_type.defaultmode as u8);
             npc.hunt_mode = npc_type.huntmode;
             npc.hunt_range = npc_type.huntrange;
-            npc.pathing.move_restrict = npc_type.moverestrict;
+            Self::apply_type_config(&mut npc, npc_type);
         }
 
         let mut active = Self { npc };
@@ -176,11 +177,27 @@ impl ActiveNpc {
     /// The [`MoveRestrict`] from the NPC type definition, or
     /// [`MoveRestrict::Normal`] if the type is not found in the cache.
     pub fn move_restrict(&self) -> MoveRestrict {
-        cache()
-            .npcs
-            .get_by_id(self.npc.uid.id())
-            .map(|t| t.moverestrict)
-            .unwrap_or(MoveRestrict::Normal)
+        self.npc.pathing.move_restrict
+    }
+
+    /// Copies the type-config values the per-tick NPC phase reads onto the NPC,
+    /// so those hot paths never touch the scattered NPC type table. Must be
+    /// called on every change to the NPC's type identity: spawn, morph
+    /// ([`change_type`](Self::change_type)), revert
+    /// ([`revert_type`](Self::revert_type)), and respawn
+    /// ([`Engine::respawn_npc`]). Covers only pure type config that gameplay
+    /// never independently mutates; live AI state (`hunt_mode`, `hunt_range`,
+    /// `timer_interval`) and combat stats are maintained by their own paths.
+    pub(crate) fn apply_type_config(npc: &mut Npc, npc_type: &NpcType) {
+        npc.default_mode = npc_type.defaultmode;
+        npc.wander_range = npc_type.wanderrange;
+        npc.max_range = npc_type.maxrange;
+        npc.attack_range = npc_type.attackrange;
+        npc.regen_rate = npc_type.regenrate;
+        npc.category = npc_type.category;
+        npc.block_walk = npc_type.blockwalk;
+        npc.vis_level = npc_type.vislevel;
+        npc.pathing.move_restrict = npc_type.moverestrict;
     }
 
     /// Returns the block-walk collision mode for this NPC's current type.
@@ -189,11 +206,7 @@ impl ActiveNpc {
     /// The [`BlockWalk`] from the NPC type definition, or
     /// [`BlockWalk::Npc`] if the type is not found in the cache.
     pub fn block_walk(&self) -> BlockWalk {
-        cache()
-            .npcs
-            .get_by_id(self.npc.uid.id())
-            .map(|t| t.blockwalk)
-            .unwrap_or(BlockWalk::Npc)
+        self.npc.block_walk
     }
 
     /// Temporarily morphs this NPC into a different type for a given duration.
@@ -225,19 +238,24 @@ impl ActiveNpc {
         self.npc.info.changetype = Some(new_type);
         self.npc.info.masks |= NpcInfoProt::ChangeType as u16;
 
-        if reset && let Some(npc_type) = cache().npcs.get_by_id(new_type) {
-            let stats = [
-                npc_type.attack,
-                npc_type.defence,
-                npc_type.strength,
-                npc_type.hitpoints,
-                npc_type.ranged,
-                npc_type.magic,
-            ];
-            for (i, &base) in stats.iter().enumerate() {
-                let delta = self.npc.stats.levels[i] as i32 - self.npc.stats.base_levels[i] as i32;
-                self.npc.stats.levels[i] = (base as i32 + delta).clamp(0, 65535) as u16;
-                self.npc.stats.base_levels[i] = base;
+        if let Some(npc_type) = cache().npcs.get_by_id(new_type) {
+            Self::apply_type_config(&mut self.npc, npc_type);
+
+            if reset {
+                let stats = [
+                    npc_type.attack,
+                    npc_type.defence,
+                    npc_type.strength,
+                    npc_type.hitpoints,
+                    npc_type.ranged,
+                    npc_type.magic,
+                ];
+                for (i, &base) in stats.iter().enumerate() {
+                    let delta =
+                        self.npc.stats.levels[i] as i32 - self.npc.stats.base_levels[i] as i32;
+                    self.npc.stats.levels[i] = (base as i32 + delta).clamp(0, 65535) as u16;
+                    self.npc.stats.base_levels[i] = base;
+                }
             }
         }
 
@@ -267,6 +285,11 @@ impl ActiveNpc {
         self.npc.uid = NpcUid::new(self.npc.base_type, self.npc.uid.nid());
         self.npc.info.changetype = Some(self.npc.base_type);
         self.npc.info.masks |= NpcInfoProt::ChangeType as u16;
+
+        // Restore the type-config fields for the base type (see `change_type`).
+        if let Some(npc_type) = cache().npcs.get_by_id(self.npc.base_type) {
+            Self::apply_type_config(&mut self.npc, npc_type);
+        }
 
         if self.npc.revert_reset {
             if let Some(npc_type) = cache().npcs.get_by_id(self.npc.base_type) {

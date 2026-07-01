@@ -200,6 +200,7 @@ impl Engine {
             active.npc.stats.base_levels[NpcStat::Hitpoints as usize] = npc_type.hitpoints;
             active.npc.stats.base_levels[NpcStat::Ranged as usize] = npc_type.ranged;
             active.npc.stats.base_levels[NpcStat::Magic as usize] = npc_type.magic;
+            ActiveNpc::apply_type_config(&mut active.npc, npc_type);
         }
 
         active.npc.reset_pathing_entity(true);
@@ -272,10 +273,8 @@ impl Engine {
     #[inline(always)]
     fn npc_process_regen(active: *mut ActiveNpc) {
         let active = unsafe { &mut *active };
-        let Some(npc_type) = cache().npcs.get_by_id(active.npc.uid.id()) else {
-            return;
-        };
-        if npc_type.regenrate == 0 {
+        let regen_rate = active.npc.regen_rate;
+        if regen_rate == 0 {
             return;
         }
 
@@ -284,7 +283,7 @@ impl Engine {
             return;
         }
 
-        active.npc.regen_clock = npc_type.regenrate as i16;
+        active.npc.regen_clock = regen_rate as i16;
 
         if active.npc.stats.levels[NpcStat::Hitpoints as usize]
             < active.npc.stats.base_levels[NpcStat::Hitpoints as usize]
@@ -327,11 +326,7 @@ impl Engine {
 
         let uid = active.npc.uid;
         let type_id = uid.id();
-        let category = cache()
-            .npcs
-            .get_by_id(type_id)
-            .and_then(|t| t.category)
-            .map(|c| c as i32);
+        let category = active.npc.category.map(|c| c as i32);
         let trigger = (ServerTriggerType::AiTimer, Some(type_id), category);
         if engine()
             .script_by_key(trigger.0, trigger.1, trigger.2)
@@ -570,8 +565,6 @@ impl Engine {
         let cache = cache();
         let clock = engine.clock as i32;
 
-        let npc_type = cache.npcs.get_by_id(active.npc.uid.id());
-
         for zx in ((center_zx - radius)..=(center_zx + radius)).rev() {
             for zz in ((center_zz - radius)..=(center_zz + radius)).rev() {
                 if zx < 0 || zz < 0 {
@@ -614,13 +607,11 @@ impl Engine {
                     }
 
                     if hunt.check_nottoostrong == HuntCheckNotTooStrong::OutsideWilderness {
-                        if let Some(nt) = npc_type {
-                            let vislevel = nt.vislevel.unwrap_or(0);
-                            if !player_coord.is_in_wilderness()
-                                && player.player.combat_level as u16 > vislevel * 2
-                            {
-                                continue;
-                            }
+                        let vislevel = active.npc.vis_level.unwrap_or(0);
+                        if !player_coord.is_in_wilderness()
+                            && player.player.combat_level as u16 > vislevel * 2
+                        {
+                            continue;
                         }
                     }
 
@@ -1104,9 +1095,7 @@ impl Engine {
 
         // Failsafe: if target_op is somehow invalid, reset to default
         if target_op.is_none() && active.npc.interaction.target.is_none() {
-            let npc_type = cache().npcs.get_by_id(active.npc.uid.id());
-            let default = npc_type.map(|t| t.defaultmode).unwrap_or(NpcMode::None);
-            active.npc.interaction.target_op = Some(default as u8);
+            active.npc.interaction.target_op = Some(active.npc.default_mode as u8);
         }
 
         let mode = active
@@ -1190,15 +1179,13 @@ impl Engine {
     #[inline(always)]
     fn npc_wander_mode(active: *mut ActiveNpc) {
         let active = unsafe { &mut *active };
-        let Some(npc_type) = cache().npcs.get_by_id(active.npc.uid.id()) else {
-            return;
-        };
 
-        if npc_type.moverestrict != MoveRestrict::NoMove {
-            if engine_mut().random.next_int_bound(8) == 0 {
-                let range = npc_type.wanderrange as i32;
-                let dx = engine_mut().random.next_int_bound(range * 2 + 1) - range;
-                let dz = engine_mut().random.next_int_bound(range * 2 + 1) - range;
+        if active.npc.pathing.move_restrict != MoveRestrict::NoMove {
+            let range = active.npc.wander_range as i32;
+            let engine = engine_mut();
+            if engine.random.next_int_bound(8) == 0 {
+                let dx = engine.random.next_int_bound(range * 2 + 1) - range;
+                let dz = engine.random.next_int_bound(range * 2 + 1) - range;
                 let dest_x = (active.npc.spawn_coord.x() as i32 + dx) as u16;
                 let dest_z = (active.npc.spawn_coord.z() as i32 + dz) as u16;
                 if dest_x != active.npc.pathing.coord.x() || dest_z != active.npc.pathing.coord.z()
@@ -1348,10 +1335,7 @@ impl Engine {
         let mx = (coord.x() as i32 + dx as i32) as u16;
         let mz = (coord.z() as i32 + dz as i32) as u16;
 
-        let Some(npc_type) = cache().npcs.get_by_id(active.npc.uid.id()) else {
-            return;
-        };
-        let maxrange = npc_type.maxrange as i32;
+        let maxrange = active.npc.max_range as i32;
 
         let mr = active.move_restrict();
         let collision = || PathingEntity::collision_type(mr).unwrap_or(CollisionType::Normal);
@@ -1581,11 +1565,7 @@ impl Engine {
 
                 if let Some(trigger) = trigger {
                     let type_id = active.npc.uid.id();
-                    let category = cache()
-                        .npcs
-                        .get_by_id(type_id)
-                        .and_then(|t| t.category)
-                        .map(|c| c as i32);
+                    let category = active.npc.category.map(|c| c as i32);
                     if let Err(e) = engine_mut().run_script_by_trigger(
                         (trigger, Some(type_id), category),
                         Some(ScriptSubject::Npc(uid)),
@@ -1601,8 +1581,7 @@ impl Engine {
             }
         } else if is_ap {
             let type_id = active.npc.uid.id();
-            let npc_type = cache().npcs.get_by_id(type_id);
-            let attackrange = npc_type.map(|t| t.attackrange).unwrap_or(0);
+            let attackrange = active.npc.attack_range;
 
             if Self::entity_in_approach_distance(
                 &active.npc.pathing,
@@ -1614,7 +1593,7 @@ impl Engine {
                 let trigger = Self::npc_mode_to_trigger(target_op);
 
                 if let Some(trigger) = trigger {
-                    let category = npc_type.and_then(|t| t.category).map(|c| c as i32);
+                    let category = active.npc.category.map(|c| c as i32);
                     if let Err(e) = engine_mut().run_script_by_trigger(
                         (trigger, Some(type_id), category),
                         Some(ScriptSubject::Npc(uid)),
@@ -1689,11 +1668,7 @@ impl Engine {
             return true;
         }
 
-        let Some(npc_type) = cache().npcs.get_by_id(active.npc.uid.id()) else {
-            return true;
-        };
-
-        let maxrange = npc_type.maxrange as i32;
+        let maxrange = active.npc.max_range as i32;
         let target_coord = Self::target_coord(target);
         let spawn_x = active.npc.spawn_coord.x() as i32;
         let spawn_z = active.npc.spawn_coord.z() as i32;
@@ -1711,7 +1686,7 @@ impl Engine {
             let dist = (target_coord.x() as i32 - spawn_x)
                 .abs()
                 .max((target_coord.z() as i32 - spawn_z).abs());
-            if dist > maxrange + npc_type.attackrange as i32 {
+            if dist > maxrange + active.npc.attack_range as i32 {
                 return false;
             }
         } else if target_op == NpcMode::PlayerEscape as u8 {
