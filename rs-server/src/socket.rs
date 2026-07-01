@@ -12,7 +12,7 @@ use rs_protocol::LoginResponse;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 #[repr(u8)]
 #[derive(TryFromPrimitive)]
