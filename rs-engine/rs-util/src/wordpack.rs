@@ -201,6 +201,10 @@ pub fn to_sentence_case(input: &str) -> String {
         if *c == '.' || *c == '!' {
             punctuation = true;
         }
+        #[cfg(since_289)]
+        if *c == '?' {
+            punctuation = true;
+        }
     }
     chars.into_iter().collect()
 }
