@@ -117,11 +117,15 @@ impl WordEncProvider {
         if bads.len() > chars.len() {
             return;
         }
-        for start_index in 0..=chars.len() - bads.len() {
-            let (current_index, bad_index, has_symbol, has_number, has_digit) =
+        let mut start_index = 0;
+        let limit = chars.len() - bads.len();
+        while start_index <= limit {
+            let (current_index, bad_index, has_symbol, has_number, has_digit, advance) =
                 self.process_bad_characters(chars, bads, start_index);
+            let mut step = advance;
 
             if !(bad_index >= bads.len() && (!has_number || !has_digit)) {
+                start_index += step;
                 continue;
             }
 
@@ -197,21 +201,36 @@ impl WordEncProvider {
             }
 
             if !should_filter {
+                start_index += step;
                 continue;
             }
 
-            let mut numeral_count = 0;
-            let mut alpha_count = 0;
-            for &c in chars.iter().take(current_index).skip(start_index) {
+            let mut numeral_count: i32 = 0;
+            let mut alpha_count: i32 = 0;
+            let mut last_alpha_index: i32 = -1;
+            for (index, &c) in chars
+                .iter()
+                .enumerate()
+                .take(current_index)
+                .skip(start_index)
+            {
                 if is_numerical(&c) {
                     numeral_count += 1;
                 } else if is_alpha(&c) {
                     alpha_count += 1;
+                    last_alpha_index = index as i32;
                 }
+            }
+            if last_alpha_index > -1 {
+                numeral_count -= current_index as i32 - last_alpha_index - 1;
             }
             if numeral_count <= alpha_count {
                 mask_chars(start_index, current_index, chars);
+            } else {
+                step = 1;
             }
+
+            start_index += step;
         }
     }
 
@@ -220,13 +239,14 @@ impl WordEncProvider {
         chars: &[char],
         bads: &[u8],
         start_index: usize,
-    ) -> (usize, usize, bool, bool, bool) {
+    ) -> (usize, usize, bool, bool, bool, usize) {
         let mut index = start_index;
         let mut bad_index: usize = 0;
         let mut count: usize = 0;
         let mut has_symbol = false;
         let mut has_number = false;
         let mut has_digit = false;
+        let mut advance: usize = 1;
 
         while index < chars.len() && !(has_number && has_digit) {
             let current_char = chars[index];
@@ -262,6 +282,9 @@ impl WordEncProvider {
                 get_emulated_bad_char_len(next_char, bads[bad_index - 1] as char, current_char);
             if previous_length > 0 {
                 index += previous_length;
+                if bad_index == 1 {
+                    advance += 1;
+                }
             } else {
                 if bad_index >= bads.len() || !is_not_lowercase_alpha(&current_char) {
                     break;
@@ -280,7 +303,7 @@ impl WordEncProvider {
             }
         }
 
-        (index, bad_index, has_symbol, has_number, has_digit)
+        (index, bad_index, has_symbol, has_number, has_digit, advance)
     }
 
     // --- domains ---
@@ -441,45 +464,47 @@ impl WordEncProvider {
 
     fn filter_fragments(&self, chars: &mut [char]) {
         let mut current_index: usize = 0;
-        let mut start_index: usize = 0;
+        let mut count: usize = 0;
+        let mut run_start: usize = 0;
         loop {
-            let number_index = index_of_number(chars, current_index);
-            if number_index == usize::MAX {
-                return;
-            }
+            loop {
+                let number_index = index_of_number(chars, current_index);
+                if number_index == usize::MAX {
+                    return;
+                }
 
-            let mut is_symbol_or_not_lowercase_alpha = false;
-            for &c in chars.iter().take(number_index).skip(current_index) {
-                if !is_symbol(&c) && !is_not_lowercase_alpha(&c) {
-                    is_symbol_or_not_lowercase_alpha = true;
+                let mut has_gap = false;
+                for &c in chars.iter().take(number_index).skip(current_index) {
+                    if !is_symbol(&c) && !is_not_lowercase_alpha(&c) {
+                        has_gap = true;
+                        break;
+                    }
+                }
+                if has_gap {
+                    count = 0;
+                }
+                if count == 0 {
+                    run_start = number_index;
+                }
+
+                current_index = index_of_non_number(number_index, chars);
+                let mut value: i32 = 0;
+                for &c in chars.iter().take(current_index).skip(number_index) {
+                    value = value.saturating_mul(10).saturating_add(c as i32 - 48);
+                }
+
+                if value <= 255 && current_index - number_index <= 8 {
+                    count += 1;
+                } else {
+                    count = 0;
+                }
+
+                if count == 4 {
+                    break;
                 }
             }
-
-            if is_symbol_or_not_lowercase_alpha {
-                start_index = 0;
-            }
-            if start_index == 0 {
-                start_index = 1;
-                // current_index = number_index;
-            }
-
-            let end = index_of_non_number(number_index, chars);
-            let mut value: i32 = 0;
-            for &c in chars.iter().take(end).skip(number_index) {
-                value = value * 10 + (c as i32 - 48);
-            }
-
-            if value <= 255 && end - number_index <= 8 {
-                start_index += 1;
-            } else {
-                start_index = 0;
-            }
-
-            if start_index == 4 {
-                mask_chars(number_index, end, chars);
-                start_index = 0;
-            }
-            current_index = end;
+            mask_chars(run_start, current_index, chars);
+            count = 0;
         }
     }
 
@@ -711,14 +736,24 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
                 if current_char == '1' && next_char == '3' {
                     return 2;
                 }
+                #[cfg(since_244)]
+                if current_char == 'i' && next_char == '3' {
+                    return 2;
+                }
             }
             'c' => {
                 if matches!(current_char, '(' | '<' | '{' | '[') {
                     return 1;
                 }
             }
-            'd' if current_char == '[' && next_char == ')' => {
-                return 2;
+            'd' => {
+                if current_char == '[' && next_char == ')' {
+                    return 2;
+                }
+                #[cfg(since_244)]
+                if current_char == 'i' && next_char == ')' {
+                    return 2;
+                }
             }
             'e' if current_char == '3' || current_char == '€' => {
                 return 1;
@@ -733,6 +768,10 @@ fn get_emulated_bad_char_len(next_char: char, bad_char: char, current_char: char
             }
             'g' => {
                 if matches!(current_char, '9' | '6') {
+                    return 1;
+                }
+                #[cfg(since_244)]
+                if current_char == 'q' {
                     return 1;
                 }
             }
@@ -1081,4 +1120,41 @@ fn decode_domains(data: &[u8]) -> WordList {
                 .into_boxed_slice()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_provider() -> WordEncProvider {
+        WordEncProvider {
+            bads: Vec::new().into_boxed_slice(),
+            bad_combinations: Vec::new().into_boxed_slice(),
+            fragments: Vec::new().into_boxed_slice(),
+            tlds: Vec::new().into_boxed_slice(),
+            tld_types: Vec::new().into_boxed_slice(),
+            domains: Vec::new().into_boxed_slice(),
+        }
+    }
+
+    #[test]
+    fn masks_ip_like_fragment_runs() {
+        let provider = empty_provider();
+        assert_eq!(provider.filter("1.2.3.4"), "*******");
+        assert_eq!(provider.filter("192.168.0.1"), "***********");
+    }
+
+    #[test]
+    fn leaves_short_or_out_of_range_runs_untouched() {
+        let provider = empty_provider();
+        assert_eq!(provider.filter("255"), "255");
+        assert_eq!(provider.filter("1.2.3"), "1.2.3");
+        assert_eq!(provider.filter("256.256.256.256"), "256.256.256.256");
+    }
+
+    #[test]
+    fn long_digit_run_does_not_panic() {
+        let provider = empty_provider();
+        assert_eq!(provider.filter("999999999999"), "999999999999");
+    }
 }
