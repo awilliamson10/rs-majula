@@ -10,7 +10,7 @@ REV = "289"
 
 [build]
 target-dir = "target"
-rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-cpu=native", "-C", "link-arg=/STACK:8388608"]
 
 [profile.release]
 opt-level = 3
