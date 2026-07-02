@@ -566,12 +566,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             }
             #[cfg(since_244)]
             {
+                #[cfg(before_254)]
                 let delay = s.pop_int();
-                let name = s.pop_string();
-                if player.lowmem() {
-                    return Ok(());
-                }
-                if let Some(id) = jingle_midi_id(&name) {
+                #[cfg(before_254)]
+                let id = jingle_midi_id(&s.pop_string());
+                #[cfg(since_254)]
+                let id = Some(s.pop_int_as::<u16>()?);
+                if !player.lowmem()
+                    && let Some(id) = id
+                {
+                    #[cfg(since_254)]
+                    let delay = midi_tick_length(id as i32)?;
+                    #[allow(clippy::unnecessary_cast)]
                     player.midi_jingle(id, delay as u16);
                 }
             }

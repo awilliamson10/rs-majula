@@ -521,7 +521,7 @@ pub fn pack_all(
         .map(|(id, name)| (name.into_boxed_str(), id))
         .collect();
 
-    #[cfg(since_274)]
+    #[cfg(since_254)]
     let midi_tick_lengths: Box<[Option<u16>]> = {
         let size = midi_ids
             .values()
@@ -628,7 +628,7 @@ pub fn pack_all(
         jingles: midi_jingles,
         #[cfg(since_244)]
         midi_ids,
-        #[cfg(since_274)]
+        #[cfg(since_254)]
         midi_tick_lengths,
         static_assets: load_static_assets(),
         multimap,

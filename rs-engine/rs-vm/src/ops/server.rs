@@ -1,8 +1,8 @@
-#[cfg(since_274)]
-use crate::ScriptError;
 use crate::engine::{ScriptEngine, cache, engine, engine_mut};
 use crate::register::OpsRegistry;
 use crate::state::ExecutionState;
+#[cfg(since_274)]
+use crate::util::midi_tick_length;
 use crate::util::{pop_seq, pop_spotanim};
 use crate::{handlers, none};
 use rs_grid::CoordGrid;
@@ -311,13 +311,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 1022
         #[cfg(since_274)]
         none!(m, MIDI_LENGTH => |s| {
-            let track = s.pop_int();
-            let ticks = cache()
-                .midi_tick_lengths
-                .get(track as usize)
-                .copied()
-                .flatten()
-                .ok_or(ScriptError::SongNotFound(track))?;
+            let id = s.pop_int();
+            let ticks = midi_tick_length(id)?;
             s.push_int(ticks as i32);
         });
 

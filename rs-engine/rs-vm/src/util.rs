@@ -623,12 +623,22 @@ pub(crate) fn song_midi_id(name: &str) -> Option<u16> {
         .copied()
 }
 
-#[cfg(since_244)]
+#[cfg(all(since_244, before_254))]
 pub(crate) fn jingle_midi_id(name: &str) -> Option<u16> {
     cache()
         .midi_ids
         .get(name.to_ascii_lowercase().as_str())
         .copied()
+}
+
+#[cfg(since_254)]
+pub(crate) fn midi_tick_length(id: i32) -> Result<u16> {
+    cache()
+        .midi_tick_lengths
+        .get(id as usize)
+        .copied()
+        .flatten()
+        .ok_or(ScriptError::SongNotFound(id))
 }
 
 /// Pops an integer from the script stack and looks up the corresponding [`NpcType`] from the cache.

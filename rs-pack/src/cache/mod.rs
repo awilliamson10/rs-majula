@@ -106,7 +106,7 @@ pub struct CacheStore {
     pub jingles: MidiProvider,
     #[cfg(since_244)]
     pub midi_ids: HashMap<Box<str>, u16>,
-    #[cfg(since_274)]
+    #[cfg(since_254)]
     pub midi_tick_lengths: Box<[Option<u16>]>,
     pub static_assets: HashMap<Box<str>, Arc<[u8]>>,
     pub multimap: MapSquareCsv,
