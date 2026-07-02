@@ -2012,9 +2012,9 @@ dependencies = [
 
 [[package]]
 name = "rs-pathfinder"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2b1f1f8aac92a17eea7d82aae4be472ce985869afca45df82ac2cd7672abb25"
+checksum = "1e8f76af4b49ac6adcecae027ba5c6e20710cafea83286e61c6c59016f8faa9a"
 dependencies = [
  "once_cell",
  "rand 0.10.1",
