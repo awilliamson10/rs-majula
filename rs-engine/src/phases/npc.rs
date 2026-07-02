@@ -1003,6 +1003,9 @@ impl Engine {
     #[inline(always)]
     fn npc_consume_hunt_target(active: *mut ActiveNpc) {
         let active = unsafe { &mut *active };
+        if active.npc.hunt_target.is_none() {
+            return;
+        }
         let Some(hunt_id) = active.npc.hunt_mode else {
             return;
         };
