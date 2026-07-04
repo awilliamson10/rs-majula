@@ -3550,6 +3550,12 @@ impl ScriptEngine for Engine {
     ///
     /// **Calls:** reads `rsmod::has_line_of_sight()`
     fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+        if src.y() != dst.y() {
+            return false;
+        }
+        if !self.members && !self.cache.is_free(dst.x(), dst.z()) {
+            return false;
+        }
         rsmod::has_line_of_sight(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
     }
 
@@ -3559,6 +3565,12 @@ impl ScriptEngine for Engine {
     ///
     /// **Calls:** reads `rsmod::has_line_of_walk()`
     fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+        if src.y() != dst.y() {
+            return false;
+        }
+        if !self.members && !self.cache.is_free(dst.x(), dst.z()) {
+            return false;
+        }
         rsmod::has_line_of_walk(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
     }
 
@@ -3568,6 +3580,9 @@ impl ScriptEngine for Engine {
     ///
     /// **Calls:** reads `rsmod::is_flagged()`
     fn map_blocked(&self, coord: CoordGrid) -> bool {
+        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
+            return false;
+        }
         rsmod::is_flagged(
             coord.x(),
             coord.z(),
@@ -3582,6 +3597,9 @@ impl ScriptEngine for Engine {
     ///
     /// **Calls:** reads `rsmod::is_flagged()`
     fn map_indoors(&self, coord: CoordGrid) -> bool {
+        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
+            return false;
+        }
         rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::Roof as u32)
     }
 

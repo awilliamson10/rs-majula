@@ -183,6 +183,22 @@ impl LocShape {
             Self::GroundDecor => LocLayer::GroundDecor,
         }
     }
+
+    pub const fn is_roof(self) -> bool {
+        matches!(
+            self,
+            Self::RoofStraight
+                | Self::RoofDiagonalWithRoofEdge
+                | Self::RoofDiagonal
+                | Self::RoofLConcave
+                | Self::RoofLConvex
+                | Self::RoofFlat
+                | Self::RoofEdgeStraight
+                | Self::RoofEdgeDiagonalCorner
+                | Self::RoofEdgeL
+                | Self::RoofEdgeSquareCorner
+        )
+    }
 }
 
 pub fn trailing_shape(name: &str) -> Option<u8> {

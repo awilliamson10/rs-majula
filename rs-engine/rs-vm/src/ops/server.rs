@@ -70,43 +70,20 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, LINEOFSIGHT => |s| {
             let dst = CoordGrid::from(s.pop_int() as u32);
             let src = CoordGrid::from(s.pop_int() as u32);
-            if src.y() != dst.y() {
-                s.push_int(0);
-                return Ok(());
-            }
-            let engine = engine::<E>();
-            if !engine.members() && !cache().is_free(dst.x(), dst.z()) {
-                s.push_int(0);
-                return Ok(());
-            }
-            s.push_int(engine.lineofsight(src, dst) as i32);
+            s.push_int(engine::<E>().lineofsight(src, dst) as i32);
         });
 
         // 1006
         none!(m, LINEOFWALK => |s| {
             let dst = CoordGrid::from(s.pop_int() as u32);
             let src = CoordGrid::from(s.pop_int() as u32);
-            if src.y() != dst.y() {
-                s.push_int(0);
-                return Ok(());
-            }
-            let engine = engine::<E>();
-            if !engine.members() && !cache().is_free(dst.x(), dst.z()) {
-                s.push_int(0);
-                return Ok(());
-            }
-            s.push_int(engine.lineofwalk(src, dst) as i32);
+            s.push_int(engine::<E>().lineofwalk(src, dst) as i32);
         });
 
         // 1007
         none!(m, MAP_BLOCKED => |s| {
             let coord = CoordGrid::from(s.pop_int() as u32);
-            let engine = engine::<E>();
-            if !engine.members() && !cache().is_free(coord.x(), coord.z()) {
-                s.push_int(1);
-                return Ok(());
-            }
-            s.push_int(engine.map_blocked(coord) as i32);
+            s.push_int(engine::<E>().map_blocked(coord) as i32);
         });
 
         // 1008
