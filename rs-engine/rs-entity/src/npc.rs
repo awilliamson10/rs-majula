@@ -268,8 +268,12 @@ impl Npc {
         } else {
             self.info.reset();
             self.pathing.reset();
-            self.state.protect = false;
-            self.interaction.ap_range_called = false;
+            if self.state.protect {
+                self.state.protect = false;
+            }
+            if self.interaction.ap_range_called {
+                self.interaction.ap_range_called = false;
+            }
             self.set_face_entity();
         }
     }

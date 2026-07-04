@@ -340,6 +340,13 @@ impl EntityMasks {
     /// `face_entity`, `orientation_x`, `orientation_z`, `anim_protect`,
     /// `vis`.
     ///
+    /// Returns without touching anything when `masks` is already zero:
+    /// every setter of a temporary field also ORs a mask bit, so a zero
+    /// mask means all temporary fields are still in their cleared state.
+    /// This keeps the per-tick reset from dirtying cache lines on idle
+    /// entities. The invariant is checked by a `debug_assert` in dev
+    /// builds; any new setter of a temporary field must set a mask bit.
+    ///
     /// # Side Effects
     ///
     /// * All temporary fields are set to `None` or `0`.
@@ -348,6 +355,10 @@ impl EntityMasks {
     ///
     /// **Called by:** The engine cleanup phase at the end of each tick.
     pub fn reset(&mut self) {
+        if self.masks == 0 {
+            debug_assert!(self.transients_clear());
+            return;
+        }
         self.masks = 0;
         self.face_x = None;
         self.face_z = None;
@@ -381,6 +392,48 @@ impl EntityMasks {
         self.exactmove_finish = None;
         self.exactmove_dir = None;
         self.changetype = None;
+    }
+
+    /// Check backing the `masks == 0` early-out in [`reset`](Self::reset):
+    /// verifies every temporary field is already in its cleared state. A
+    /// failure means some code path set a temporary field without ORing
+    /// its mask bit into `masks`. Only evaluated by a `debug_assert`, so
+    /// release builds compile it away.
+    fn transients_clear(&self) -> bool {
+        #[cfg(since_244)]
+        let damage2_clear = self.damage2_taken.is_none()
+            && self.damage2_type.is_none()
+            && self.damage2_current.is_none()
+            && self.damage2_base.is_none()
+            && self.damage_slot == 0;
+        #[cfg(before_244)]
+        let damage2_clear = true;
+
+        self.face_x.is_none()
+            && self.face_z.is_none()
+            && self.anim_id.is_none()
+            && self.anim_delay.is_none()
+            && self.say.is_none()
+            && self.damage_taken.is_none()
+            && self.damage_type.is_none()
+            && self.damage_current.is_none()
+            && self.damage_base.is_none()
+            && damage2_clear
+            && self.chat_bytes.is_none()
+            && self.chat_colour.is_none()
+            && self.chat_effects.is_none()
+            && self.chat_ignored.is_none()
+            && self.spotanim.is_none()
+            && self.spotanim_height.is_none()
+            && self.spotanim_delay.is_none()
+            && self.exactmove_start_x.is_none()
+            && self.exactmove_start_z.is_none()
+            && self.exactmove_end_x.is_none()
+            && self.exactmove_end_z.is_none()
+            && self.exactmove_begin.is_none()
+            && self.exactmove_finish.is_none()
+            && self.exactmove_dir.is_none()
+            && self.changetype.is_none()
     }
 
     /// Sets the face-entity target to `id` and marks the corresponding
@@ -867,6 +920,7 @@ mod tests {
     #[test]
     fn spotanim_fields() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.spotanim = Some(500);
         masks.spotanim_height = Some(128);
         masks.spotanim_delay = Some(10);
@@ -882,6 +936,7 @@ mod tests {
     #[test]
     fn chat_fields() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.chat_bytes = Some(vec![0x48, 0x65, 0x6C].into_boxed_slice());
         masks.chat_colour = Some(1);
         masks.chat_effects = Some(2);
@@ -998,6 +1053,7 @@ mod tests {
     #[test]
     fn changetype_is_temporary() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.changetype = Some(42);
         masks.reset();
         assert!(masks.changetype.is_none());
@@ -1006,6 +1062,7 @@ mod tests {
     #[test]
     fn face_coord_is_temporary() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.face_x = Some(100);
         masks.face_z = Some(200);
         masks.reset();
@@ -1016,6 +1073,7 @@ mod tests {
     #[test]
     fn all_exactmove_fields_are_temporary() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.exactmove_start_x = Some(1);
         masks.exactmove_start_z = Some(2);
         masks.exactmove_end_x = Some(3);
@@ -1036,6 +1094,7 @@ mod tests {
     #[test]
     fn all_damage_fields_are_temporary() {
         let mut masks = EntityMasks::new();
+        masks.masks = 1;
         masks.damage_taken = Some(10);
         masks.damage_type = Some(1);
         masks.damage_current = Some(50);
@@ -1052,6 +1111,7 @@ mod tests {
     fn damage2_fields_and_slot_are_temporary() {
         let mut masks = EntityMasks::new();
         assert_eq!(masks.damage_slot, 0);
+        masks.masks = 1;
         masks.damage2_taken = Some(7);
         masks.damage2_type = Some(2);
         masks.damage2_current = Some(40);

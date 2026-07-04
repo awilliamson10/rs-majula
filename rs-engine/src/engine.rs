@@ -383,6 +383,7 @@ pub struct NpcList {
     node_map: Vec<usize>,
     cursor: u16,
     nid_scratch: Vec<u16>,
+    pub despawn_pending: Vec<u16>,
 }
 
 impl NpcList {
@@ -395,6 +396,7 @@ impl NpcList {
             node_map: vec![0; MAX_NPCS],
             cursor: (MAX_NPCS - 2) as u16,
             nid_scratch: Vec::with_capacity(MAX_NPCS),
+            despawn_pending: Vec::new(),
         }
     }
 
@@ -2162,6 +2164,8 @@ impl Engine {
     /// - Removes the NPC from its zone and from the collision map.
     /// - Removes the nid from the NPC renderer.
     /// - Sets `respawn_at` for `Respawn` lifecycle NPCs.
+    /// - Queues `Despawn` lifecycle NPCs on `despawn_pending` so the
+    ///   cleanup phase frees their slots without a full-list scan.
     ///
     /// # Call Stack
     ///
@@ -2217,6 +2221,8 @@ impl Engine {
                 .map(|t| t.respawnrate as u64)
                 .unwrap_or(100);
             active.npc.respawn_at = Some(respawnrate as u32);
+        } else {
+            self.npc_list.despawn_pending.push(nid);
         }
     }
 

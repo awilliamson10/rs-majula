@@ -459,6 +459,16 @@ impl PathingEntity {
 
     /// Resets the pathing state for this entity.
     pub fn reset(&mut self) {
+        if self.walk_step.is_none()
+            && !self.jump
+            && !self.tele
+            && self.walk_dir == -1
+            && self.run_dir == -1
+            && self.last_coord == self.coord
+            && self.steps_taken == 0
+        {
+            return;
+        }
         self.walk_step = None;
         self.jump = false;
         self.tele = false;

@@ -203,9 +203,13 @@ impl InteractionState {
                 InteractionTarget::Npc { nid } => {
                     info.set_face_entity_check(kind, *nid);
                 }
-                _ => info.face_entity = None,
+                _ => {
+                    if info.face_entity.is_some() {
+                        info.face_entity = None;
+                    }
+                }
             }
-        } else {
+        } else if info.face_entity.is_some() {
             info.face_entity = None;
         }
         if temp != info.face_entity {

@@ -71,18 +71,16 @@ impl Engine {
     ///
     /// Temporary entries are used for entities that are only visible for a
     /// single tick (e.g. during initial add). After the output phase has
-    /// transmitted them, they must be cleaned up.
+    /// transmitted them, they must be cleaned up. Each renderer tracks the
+    /// entity indices written this tick and clears only those, so idle
+    /// entities cost nothing here.
     ///
     /// # Side Effects
     ///
     /// * Modifies `self.player_renderer` and `self.npc_renderer`.
     fn reset_renderers(&mut self) {
-        let pids = self.player_list.take_pids();
-        self.player_renderer.remove_temporary(&pids);
-        self.player_list.put_pids(pids);
-        let nids = self.npc_list.take_nids();
-        self.npc_renderer.remove_temporary(&nids);
-        self.npc_list.put_nids(nids);
+        self.player_renderer.remove_temporary();
+        self.npc_renderer.remove_temporary();
     }
 
     /// Resets per-tick pathing-entity state on all active players.
@@ -134,17 +132,19 @@ impl Engine {
     ///
     /// An NPC is considered despawned when it is inactive and has
     /// [`EntityLifeTime::Despawn`] lifecycle (i.e. it was dynamically
-    /// spawned and has completed its death sequence). The slot in
-    /// `self.npcs` is set to `None` and the NPC is removed from
-    /// `self.active_npcs`.
+    /// spawned and has completed its death sequence). `deactivate_npc`
+    /// records such NPCs in `despawn_pending`, so only those candidates
+    /// are visited here instead of scanning the whole list. The condition
+    /// is re-checked per entry because the slot may have been freed (or
+    /// reused by a new spawn) between deactivation and cleanup.
     ///
     /// # Side Effects
     ///
+    /// * Drains `self.npc_list.despawn_pending`.
     /// * Frees NPC slots in `self.npcs`.
     /// * Shrinks `self.active_npcs`.
     fn remove_despawned_npcs(&mut self) {
-        let nids = self.npc_list.take_nids();
-        for &nid in &nids {
+        while let Some(nid) = self.npc_list.despawn_pending.pop() {
             let should_remove = self.npc_list.npcs[nid as usize]
                 .as_ref()
                 .is_some_and(|n| !n.npc.active && n.npc.lifecycle == EntityLifeTime::Despawn);
@@ -152,7 +152,6 @@ impl Engine {
                 self.npc_list.remove(nid);
             }
         }
-        self.npc_list.put_nids(nids);
     }
 
     /// Clears the per-tick change set on every shared (world) inventory.
@@ -207,6 +206,18 @@ impl Engine {
                 continue;
             };
             let allstock = inv_type.allstock;
+
+            // No slot can change unless some configured rate (or the default
+            // allstock rate) divides the current tick; skip the slot loop on
+            // the vast majority of ticks.
+            let allstock_due = allstock && tick.is_multiple_of(INV_STOCKRATE);
+            if !allstock_due
+                && !stockrate
+                    .iter()
+                    .any(|&rate| rate > 0 && tick.is_multiple_of(rate as u32))
+            {
+                continue;
+            }
 
             for index in 0..inv.capacity {
                 let Some(item) = inv.get(index as u16).copied() else {

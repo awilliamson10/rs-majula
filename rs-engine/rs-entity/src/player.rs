@@ -803,14 +803,25 @@ impl Player {
     pub fn reset_pathing_entity(&mut self) {
         self.info.reset();
         self.pathing.reset();
-        self.path = None;
-        self.state.protect = false;
-        self.opcalled = false;
-        self.interaction.ap_range_called = false;
-        if self.run {
-            self.pathing.move_speed = MoveSpeed::Run;
+        if self.path.is_some() {
+            self.path = None;
+        }
+        if self.state.protect {
+            self.state.protect = false;
+        }
+        if self.opcalled {
+            self.opcalled = false;
+        }
+        if self.interaction.ap_range_called {
+            self.interaction.ap_range_called = false;
+        }
+        let move_speed = if self.run {
+            MoveSpeed::Run
         } else {
-            self.pathing.move_speed = MoveSpeed::Walk;
+            MoveSpeed::Walk
+        };
+        if self.pathing.move_speed != move_speed {
+            self.pathing.move_speed = move_speed;
         }
         self.set_face_entity();
     }

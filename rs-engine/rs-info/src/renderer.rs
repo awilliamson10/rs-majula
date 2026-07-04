@@ -233,6 +233,7 @@ pub struct PlayerRenderer {
     high_blocks: Vec<Vec<u8>>,
     highs: Box<[u16; MAX_PLAYERS]>,
     lows: Box<[u16; MAX_PLAYERS]>,
+    written: Vec<u16>,
 }
 
 impl PlayerRenderer {
@@ -260,6 +261,7 @@ impl PlayerRenderer {
             high_blocks: vec![Vec::new(); MAX_PLAYERS],
             highs: Box::new([0; MAX_PLAYERS]),
             lows: Box::new([0; MAX_PLAYERS]),
+            written: Vec::new(),
         }
     }
 
@@ -310,6 +312,7 @@ impl PlayerRenderer {
             return;
         }
 
+        self.written.push(pid as u16);
         unsafe { self.compute_info_inner(pid, masks, info) }
     }
 
@@ -737,7 +740,8 @@ impl PlayerRenderer {
     ///
     /// **Calls:** `Slot::set_p2`.
     #[inline(always)]
-    pub const fn cache_face_entity(&mut self, id: u16, entity: u16) {
+    pub fn cache_face_entity(&mut self, id: u16, entity: u16) {
+        self.written.push(id);
         unsafe {
             let slot = self
                 .fixed
@@ -764,7 +768,8 @@ impl PlayerRenderer {
     ///
     /// `id` must be < `MAX_PLAYERS`.
     #[inline(always)]
-    pub const fn cache_face_coord(&mut self, id: u16, x: u16, z: u16) {
+    pub fn cache_face_coord(&mut self, id: u16, x: u16, z: u16) {
+        self.written.push(id);
         unsafe {
             let slot = self
                 .fixed
@@ -817,31 +822,31 @@ impl PlayerRenderer {
         unsafe { *self.lows.as_ptr().add(id as usize) as usize }
     }
 
-    /// Clears per-tick temporary data for all active players.
+    /// Clears per-tick temporary data for every player written this tick.
     ///
-    /// Resets the high-definition byte-size counter and clears every
-    /// temporary protocol slot (Anim, FaceEntity, Damage, FaceCoord,
-    /// SpotAnim) back to `Slot::EMPTY`. Also clears the variable-length
-    /// Say and Chat buffers. Appearance data and low-definition counters
-    /// are preserved because they persist across ticks.
-    ///
-    /// # Arguments
-    ///
-    /// * `active` - Slice of player indices that were active this tick and
-    ///   need their temporary data cleared.
+    /// Drains the internal `written` list (player indices recorded by
+    /// `compute_info` and `cache_face_*`) and, for each entry, resets the
+    /// high-definition byte-size counter and clears every temporary
+    /// protocol slot (Anim, FaceEntity, Damage, FaceCoord, SpotAnim) back
+    /// to `Slot::EMPTY`. Also clears the variable-length Say and Chat
+    /// buffers. Appearance data and low-definition counters are preserved
+    /// because they persist across ticks. Players that were never written
+    /// this tick cost nothing.
     ///
     /// # Side Effects
     ///
     /// Zeroes `self.highs` and resets fixed slots and variable-length
-    /// buffers for every index in `active`. Does not deallocate
-    /// variable-length buffers; they are cleared in place for reuse.
+    /// buffers for every written index; empties `self.written`. Does not
+    /// deallocate variable-length buffers; they are cleared in place for
+    /// reuse.
     ///
     /// # Call Stack
     ///
     /// **Called by:** Cleanup phase in `rs-engine/src/phases/cleanup.rs`.
     #[inline]
-    pub fn remove_temporary(&mut self, active: &[u16]) {
-        for &pid in active {
+    pub fn remove_temporary(&mut self) {
+        let written = std::mem::take(&mut self.written);
+        for &pid in &written {
             let idx = pid as usize;
             unsafe {
                 *self.highs.get_unchecked_mut(idx) = 0;
@@ -874,6 +879,8 @@ impl PlayerRenderer {
                 self.high_blocks.get_unchecked_mut(idx).clear();
             }
         }
+        self.written = written;
+        self.written.clear();
     }
 
     /// Performs a full cleanup of all renderer data for a player.
@@ -955,6 +962,7 @@ pub struct NpcRenderer {
     high_blocks: Vec<Vec<u8>>,
     highs: Box<[u16; MAX_NPCS]>,
     lows: Box<[u16; MAX_NPCS]>,
+    written: Vec<u16>,
 }
 
 impl NpcRenderer {
@@ -980,6 +988,7 @@ impl NpcRenderer {
             high_blocks: vec![Vec::new(); MAX_NPCS],
             highs: Box::new([0; MAX_NPCS]),
             lows: Box::new([0; MAX_NPCS]),
+            written: Vec::new(),
         }
     }
 
@@ -1029,6 +1038,7 @@ impl NpcRenderer {
             return;
         }
 
+        self.written.push(nid as u16);
         unsafe { self.compute_info_inner(nid, masks, info) }
     }
 
@@ -1320,7 +1330,8 @@ impl NpcRenderer {
     ///
     /// **Calls:** `Slot::set_p2`.
     #[inline(always)]
-    pub const fn cache_face_entity(&mut self, id: u16, entity: u16) {
+    pub fn cache_face_entity(&mut self, id: u16, entity: u16) {
+        self.written.push(id);
         unsafe {
             let slot = self
                 .fixed
@@ -1353,7 +1364,8 @@ impl NpcRenderer {
     /// `rs-engine/src/info.rs`.
     ///
     #[inline(always)]
-    pub const fn cache_face_coord(&mut self, id: u16, x: u16, z: u16) {
+    pub fn cache_face_coord(&mut self, id: u16, x: u16, z: u16) {
+        self.written.push(id);
         unsafe {
             let slot = self
                 .fixed
@@ -1387,31 +1399,31 @@ impl NpcRenderer {
         unsafe { *self.lows.as_ptr().add(id as usize) as usize }
     }
 
-    /// Clears per-tick temporary data for all active NPCs.
+    /// Clears per-tick temporary data for every NPC written this tick.
     ///
-    /// Resets the high-definition byte-size counter and clears every
-    /// temporary protocol slot (Anim, FaceEntity, Damage, ChangeType,
-    /// SpotAnim, FaceCoord) back to `Slot::EMPTY`. Also clears the
-    /// variable-length Say buffer. Low-definition counters are preserved
-    /// because they persist across ticks.
-    ///
-    /// # Arguments
-    ///
-    /// * `active` - Slice of NPC indices that were active this tick and
-    ///   need their temporary data cleared.
+    /// Drains the internal `written` list (NPC indices recorded by
+    /// `compute_info` and `cache_face_*`) and, for each entry, resets the
+    /// high-definition byte-size counter and clears every temporary
+    /// protocol slot (Anim, FaceEntity, Damage, ChangeType, SpotAnim,
+    /// FaceCoord) back to `Slot::EMPTY`. Also clears the variable-length
+    /// Say buffer. Low-definition counters are preserved because they
+    /// persist across ticks. NPCs that were never written this tick cost
+    /// nothing.
     ///
     /// # Side Effects
     ///
     /// Zeroes `self.highs` and resets fixed slots and variable-length
-    /// buffers for every index in `active`. Does not deallocate
-    /// variable-length buffers; they are cleared in place for reuse.
+    /// buffers for every written index; empties `self.written`. Does not
+    /// deallocate variable-length buffers; they are cleared in place for
+    /// reuse.
     ///
     /// # Call Stack
     ///
     /// **Called by:** Cleanup phase in `rs-engine/src/phases/cleanup.rs`.
     #[inline]
-    pub fn remove_temporary(&mut self, active: &[u16]) {
-        for &nid in active {
+    pub fn remove_temporary(&mut self) {
+        let written = std::mem::take(&mut self.written);
+        for &nid in &written {
             let idx = nid as usize;
             unsafe {
                 *self.highs.get_unchecked_mut(idx) = 0;
@@ -1445,6 +1457,8 @@ impl NpcRenderer {
                 self.high_blocks.get_unchecked_mut(idx).clear();
             }
         }
+        self.written = written;
+        self.written.clear();
     }
 
     /// Performs a full cleanup of all renderer data for an NPC.
