@@ -65,8 +65,7 @@ fn decompress_map(data: &[u8]) -> Packet {
 ///
 /// A zone gets marked when it contains (at the bridge-shifted level entities
 /// actually occupy):
-/// * a ground tile with an underlay or overlay, excluding blocked water
-///   (ocean / rivers) -- those read identically from an unallocated zone;
+/// * a ground tile with an underlay or overlay;
 /// * a loc footprint, expanded by one tile because straight walls also flag
 ///   the neighboring tile;
 /// * an NPC spawn footprint (`size` x `size`) or an obj spawn tile;
@@ -208,9 +207,8 @@ impl GameMap {
     /// records which zones hold real content in a [`ZoneMarks`] bitset. The
     /// apply pass then allocates collision zones and applies ground and loc
     /// collision, skipping zones that are entirely empty ("black" void, most
-    /// of levels 1-3) or entirely blocked water (ocean, rivers): unallocated
-    /// zones already read back as blocked, so only walkable content needs
-    /// backing memory.
+    /// of levels 1-3): unallocated zones already read back as blocked, so
+    /// only real content needs backing memory.
     ///
     /// # Arguments
     /// * `members` - Whether members-only content should be loaded.
@@ -240,8 +238,6 @@ impl GameMap {
             .map(|(_, x, z)| (*x, *z))
             .collect();
 
-        let water_flo = cache.flos.get_by_debugname("water").map(|flo| flo.id);
-
         let mut marks = ZoneMarks::new();
         let mut squares = Vec::with_capacity(mapsquare_keys.len());
 
@@ -262,7 +258,6 @@ impl GameMap {
                 Self::decode_ground(
                     &mut square.lands,
                     &mut decompress_map(data),
-                    water_flo,
                     &mut marks,
                     originx,
                     originz,
@@ -379,19 +374,17 @@ impl GameMap {
     }
 
     /// Decodes ground tile data from the mapsquare buffer into the per-tile
-    /// `lands` flag array and marks zones that contain walkable ground.
+    /// `lands` flag array and marks zones that contain ground.
     ///
-    /// A tile counts as ground when it has an underlay or overlay, unless the
-    /// overlay is blocked water: fully water (or fully empty) zones are left
-    /// unmarked so the apply pass never allocates them. Marks are recorded at
-    /// the bridge-shifted level (the level entities actually occupy); bridged
-    /// tiles additionally mark their decode level so roof flags there still
-    /// apply.
+    /// A tile counts as ground when it has an underlay or overlay: fully empty
+    /// zones are left unmarked so the apply pass never allocates them. Marks
+    /// are recorded at the bridge-shifted level (the level entities actually
+    /// occupy); bridged tiles additionally mark their decode level so roof
+    /// flags there still apply.
     ///
     /// # Arguments
     /// * `lands` - Output array to receive per-tile flags for the mapsquare.
     /// * `buf` - The decompressed mapsquare ground data.
-    /// * `water_flo` - The flo id of the water overlay, if resolved.
     /// * `marks` - The world zone marks to record ground presence into.
     /// * `originx` - The mapsquare origin X in absolute tile coordinates.
     /// * `originz` - The mapsquare origin Z in absolute tile coordinates.
@@ -401,7 +394,6 @@ impl GameMap {
     fn decode_ground(
         lands: &mut [u8; MAPSQUARE],
         buf: &mut Packet,
-        water_flo: Option<u16>,
         marks: &mut ZoneMarks,
         originx: u16,
         originz: u16,
@@ -437,15 +429,8 @@ impl GameMap {
             for x in 0..X {
                 for z in 0..Z {
                     let coord = MapsquareCoordGrid::new(x as u8, y as u8, z as u8);
-                    let overlay = overlays[coord.packed() as usize];
-                    if overlay == 0 && underlays[coord.packed() as usize] == 0 {
-                        continue;
-                    }
-
-                    let flags = lands[coord.packed() as usize];
-                    if overlay != 0
-                        && water_flo == Some((overlay - 1) as u16)
-                        && (flags & BLOCK_MAP_SQUARE) != OPEN
+                    if overlays[coord.packed() as usize] == 0
+                        && underlays[coord.packed() as usize] == 0
                     {
                         continue;
                     }
@@ -660,7 +645,7 @@ impl GameMap {
     /// These are the teleport and forced-movement destinations scripts can
     /// reach (fishing spot movement enums, agility `fail_coord`/`end_coord`
     /// loc params, macro event teleports, ...), and they can sit on otherwise
-    /// skippable water zones. Teleports silently refuse unallocated zones, so
+    /// skippable zones. Teleports silently refuse unallocated zones, so
     /// every authored coordinate keeps its zone allocated.
     ///
     /// # Arguments
