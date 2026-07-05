@@ -173,7 +173,12 @@ pub trait ScriptEngine {
     /// # Returns
     /// `Some(NpcUid)` with the unique identifier of the spawned NPC, or `None`
     /// if no free slot is available.
-    fn add_npc_spawned(&mut self, coord: u32, id: u16, duration: u64) -> Option<crate::NpcUid>;
+    fn add_npc_spawned(
+        &mut self,
+        coord: u32,
+        id: u16,
+        duration: u64,
+    ) -> crate::Result<Option<crate::NpcUid>>;
 
     /// Removes an NPC from the world by its slot index.
     ///
@@ -190,7 +195,14 @@ pub trait ScriptEngine {
     /// * `receiver37` - Optional Base37-encoded username of the only player
     ///   who may see the object. `None` makes it visible to everyone.
     /// * `duration` - The tick at which the object should be removed.
-    fn add_obj(&mut self, coord: u32, id: u16, count: u32, receiver37: Option<u64>, duration: u64);
+    fn add_obj(
+        &mut self,
+        coord: u32,
+        id: u16,
+        count: u32,
+        receiver37: Option<u64>,
+        duration: u64,
+    ) -> crate::Result<()>;
 
     /// Adds a ground object that becomes visible after a delay.
     ///
@@ -274,7 +286,7 @@ pub trait ScriptEngine {
         angle: u8,
         duration: u64,
         create_if_missing: bool,
-    );
+    ) -> crate::Result<()>;
 
     /// Merges a location so that it is only visible to one player.
     ///
@@ -422,28 +434,28 @@ pub trait ScriptEngine {
     /// # Returns
     /// `true` if there is "line of sight" from the "src" coord to the "dst" coord.
     /// `false` if there is not "line of sight" from the "src" coord to the "dst" coord.
-    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> bool;
+    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> crate::Result<bool>;
 
     /// Indicates if there is "line of walk" between these two coords.
     ///
     /// # Returns
     /// `true` if there is "line of walk" from the "src" coord to the "dst" coord.
     /// `false` if there is not "line of walk" from the "src" coord to the "dst" coord.
-    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> bool;
+    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> crate::Result<bool>;
 
     /// Indicates if this coord has a `CollisionFlag::WalkBlocked` on it.
     ///
     /// # Returns
     /// `true` if there is `CollisionFlag::WalkBlocked` on it.
     /// `false` if there is not `CollisionFlag::WalkBlocked` on it.
-    fn map_blocked(&self, coord: CoordGrid) -> bool;
+    fn map_blocked(&self, coord: CoordGrid) -> crate::Result<bool>;
 
     /// Indicates if this coord has a `CollisionFlag::Roof` collision flag on it.
     ///
     /// # Returns
     /// `true` if there is `CollisionFlag::Roof` on it.
     /// `false` if there is not `CollisionFlag::Roof` on it.
-    fn map_indoors(&self, coord: CoordGrid) -> bool;
+    fn map_indoors(&self, coord: CoordGrid) -> crate::Result<bool>;
 
     /// Reads a shared variable (vars) by its definition ID.
     ///

@@ -289,7 +289,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let distance = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
 
-            let players = iterators::hunt_players::<E>(coord, distance, vis);
+            let players = iterators::hunt_players::<E>(coord, distance, vis)?;
             s.player_iterator = Some(PlayerIteratorState {
                 matches: players,
                 cursor: 0,

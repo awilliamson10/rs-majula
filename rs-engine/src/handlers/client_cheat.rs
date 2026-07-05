@@ -415,6 +415,10 @@ fn cheat_loc_add(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<()
             loc_type.id,
             LocShape::CentrepieceStraight,
             LocAngle::West,
+            loc_type.width,
+            loc_type.length,
+            loc_type.blockwalk,
+            loc_type.blockrange,
             500,
             true,
         );
@@ -430,10 +434,13 @@ fn cheat_loc_add(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<()
 ///
 /// Usage: `::npcadd <npc>` (e.g. `::npcadd man`).
 fn cheat_npc_add(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<(), ScriptError> {
-    parse_npc(args.next(), |npc_type| {
+    let mut npc_id = None;
+    parse_npc(args.next(), |npc_type| npc_id = Some(npc_type.id))?;
+    if let Some(id) = npc_id {
         let coord = active.player.pathing.coord.packed();
-        engine_mut().add_npc_spawned(coord, npc_type.id, 500);
-    })
+        engine_mut().add_npc_spawned(coord, id, 500)?;
+    }
+    Ok(())
 }
 
 /// Fills every free backpack slot with random objects, skipping members-only items

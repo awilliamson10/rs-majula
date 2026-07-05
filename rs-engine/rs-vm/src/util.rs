@@ -58,14 +58,15 @@ pub(crate) fn add_obj_split<E: ScriptEngine + 'static>(
     stackable: bool,
     receiver37: Option<u64>,
     duration: u64,
-) {
+) -> Result<()> {
     if !stackable || count == 1 {
         for _ in 0..count {
-            engine_mut::<E>().add_obj(coord, id, 1, receiver37, duration);
+            engine_mut::<E>().add_obj(coord, id, 1, receiver37, duration)?;
         }
     } else {
-        engine_mut::<E>().add_obj(coord, id, count, receiver37, duration);
+        engine_mut::<E>().add_obj(coord, id, count, receiver37, duration)?;
     }
+    Ok(())
 }
 
 /// Returns a mutable reference to the active player entity from the global engine.

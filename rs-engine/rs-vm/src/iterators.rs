@@ -111,7 +111,7 @@ fn npc_distance_inner<E: ScriptEngine + 'static>(
     coord: CoordGrid,
     distance: i32,
     vis: HuntCheckVis,
-) -> Vec<NpcRef> {
+) -> crate::Result<Vec<NpcRef>> {
     let center_zx = CoordGrid::zone(coord.x()) as i32;
     let center_zz = CoordGrid::zone(coord.z()) as i32;
     let radius = 1 + (distance >> 3);
@@ -137,12 +137,12 @@ fn npc_distance_inner<E: ScriptEngine + 'static>(
                 }
                 match vis {
                     HuntCheckVis::LineOfSight => {
-                        if !engine.lineofsight(coord, npc_coord) {
+                        if !engine.lineofsight(coord, npc_coord)? {
                             continue;
                         }
                     }
                     HuntCheckVis::LineOfWalk => {
-                        if !engine.lineofwalk(coord, npc_coord) {
+                        if !engine.lineofwalk(coord, npc_coord)? {
                             continue;
                         }
                     }
@@ -153,7 +153,7 @@ fn npc_distance_inner<E: ScriptEngine + 'static>(
         }
     }
 
-    matches
+    Ok(matches)
 }
 
 /// Finds all NPCs of a specific type within Chebyshev distance of a coordinate.
@@ -177,7 +177,7 @@ pub fn npc_distance<E: ScriptEngine + 'static>(
     coord: CoordGrid,
     distance: i32,
     vis: HuntCheckVis,
-) -> Vec<NpcRef> {
+) -> crate::Result<Vec<NpcRef>> {
     npc_distance_inner::<E>(Some(id), coord, distance, vis)
 }
 
@@ -200,7 +200,7 @@ pub fn npc_distance_any<E: ScriptEngine + 'static>(
     coord: CoordGrid,
     distance: i32,
     vis: HuntCheckVis,
-) -> Vec<NpcRef> {
+) -> crate::Result<Vec<NpcRef>> {
     npc_distance_inner::<E>(None, coord, distance, vis)
 }
 
@@ -227,7 +227,7 @@ pub fn hunt_players<E: ScriptEngine + 'static>(
     coord: CoordGrid,
     distance: i32,
     vis: HuntCheckVis,
-) -> Vec<u16> {
+) -> crate::Result<Vec<u16>> {
     let center_zx = CoordGrid::zone(coord.x()) as i32;
     let center_zz = CoordGrid::zone(coord.z()) as i32;
     let radius = 1 + (distance >> 3);
@@ -251,12 +251,12 @@ pub fn hunt_players<E: ScriptEngine + 'static>(
                 }
                 match vis {
                     HuntCheckVis::LineOfSight => {
-                        if !engine.lineofsight(coord, player_coord) {
+                        if !engine.lineofsight(coord, player_coord)? {
                             continue;
                         }
                     }
                     HuntCheckVis::LineOfWalk => {
-                        if !engine.lineofwalk(coord, player_coord) {
+                        if !engine.lineofwalk(coord, player_coord)? {
                             continue;
                         }
                     }
@@ -267,5 +267,5 @@ pub fn hunt_players<E: ScriptEngine + 'static>(
         }
     }
 
-    matches
+    Ok(matches)
 }

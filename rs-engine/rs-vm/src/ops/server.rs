@@ -70,20 +70,20 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, LINEOFSIGHT => |s| {
             let dst = CoordGrid::from(s.pop_int() as u32);
             let src = CoordGrid::from(s.pop_int() as u32);
-            s.push_int(engine::<E>().lineofsight(src, dst) as i32);
+            s.push_int(engine::<E>().lineofsight(src, dst)? as i32);
         });
 
         // 1006
         none!(m, LINEOFWALK => |s| {
             let dst = CoordGrid::from(s.pop_int() as u32);
             let src = CoordGrid::from(s.pop_int() as u32);
-            s.push_int(engine::<E>().lineofwalk(src, dst) as i32);
+            s.push_int(engine::<E>().lineofwalk(src, dst)? as i32);
         });
 
         // 1007
         none!(m, MAP_BLOCKED => |s| {
             let coord = CoordGrid::from(s.pop_int() as u32);
-            s.push_int(engine::<E>().map_blocked(coord) as i32);
+            s.push_int(engine::<E>().map_blocked(coord)? as i32);
         });
 
         // 1008
@@ -117,10 +117,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                         continue;
                     }
                     let src = CoordGrid::new(rx, coord.y(), rz);
-                    let blocked = engine.map_blocked(src);
+                    let blocked = engine.map_blocked(src).unwrap_or(true);
                     let vis_ok = match find_type {
-                        1 => engine.lineofwalk(src, coord),
-                        2 => engine.lineofsight(src, coord),
+                        1 => engine.lineofwalk(src, coord).unwrap_or(false),
+                        2 => engine.lineofsight(src, coord).unwrap_or(false),
                         _ => true,
                     };
                     if vis_ok && !blocked {
@@ -142,11 +142,11 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                         continue;
                     }
                     let src = CoordGrid::new(rx, coord.y(), rz);
-                    let blocked = engine.map_blocked(src);
+                    let blocked = engine.map_blocked(src).unwrap_or(true);
                     let too_close = src.in_distance(coord, min_radius as u8);
                     let vis_ok = match find_type {
-                        1 => engine.lineofwalk(src, coord),
-                        2 => engine.lineofsight(src, coord),
+                        1 => engine.lineofwalk(src, coord).unwrap_or(false),
+                        2 => engine.lineofsight(src, coord).unwrap_or(false),
                         _ => true,
                     };
                     if vis_ok && !blocked && !too_close {
@@ -161,7 +161,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 1010
         none!(m, MAP_INDOORS => |s| {
             let coord = CoordGrid::from(s.pop_int() as u32);
-            s.push_int(engine::<E>().map_indoors(coord) as i32);
+            s.push_int(engine::<E>().map_indoors(coord)? as i32);
         });
 
         // 1011

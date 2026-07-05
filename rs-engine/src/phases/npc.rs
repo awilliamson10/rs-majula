@@ -586,12 +586,12 @@ impl Engine {
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !engine.lineofsight(coord, player_coord) {
+                            if !engine.lineofsight(coord, player_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !engine.lineofwalk(coord, player_coord) {
+                            if !engine.lineofwalk(coord, player_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
@@ -784,12 +784,12 @@ impl Engine {
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !engine.lineofsight(coord, npc_coord) {
+                            if !engine.lineofsight(coord, npc_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !engine.lineofwalk(coord, npc_coord) {
+                            if !engine.lineofwalk(coord, npc_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
@@ -866,12 +866,12 @@ impl Engine {
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !engine.lineofsight(coord, obj_coord) {
+                            if !engine.lineofsight(coord, obj_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !engine.lineofwalk(coord, obj_coord) {
+                            if !engine.lineofwalk(coord, obj_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
@@ -946,12 +946,12 @@ impl Engine {
                     }
                     match vis {
                         HuntCheckVis::LineOfSight => {
-                            if !engine.lineofsight(coord, loc_coord) {
+                            if !engine.lineofsight(coord, loc_coord).unwrap_or(false) {
                                 continue;
                             }
                         }
                         HuntCheckVis::LineOfWalk => {
-                            if !engine.lineofwalk(coord, loc_coord) {
+                            if !engine.lineofwalk(coord, loc_coord).unwrap_or(false) {
                                 continue;
                             }
                         }

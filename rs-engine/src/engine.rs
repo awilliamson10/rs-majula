@@ -1780,6 +1780,10 @@ impl Engine {
         id: u16,
         shape: LocShape,
         angle: LocAngle,
+        width: u8,
+        length: u8,
+        blockwalk: bool,
+        blockrange: bool,
         duration: u64,
         create_if_missing: bool,
     ) {
@@ -1792,19 +1796,11 @@ impl Engine {
             .iter()
             .position(|loc| loc.is_at(x, z) && loc.layer() == layer);
 
-        let cache = cache();
-
         if let Some(idx) = existing {
             let old_loc = zone.locs[idx];
             if old_loc.visible() {
                 apply_loc_collision(&old_loc, coord, false);
             }
-
-            let (blockwalk, blockrange, width, length) = cache
-                .locs
-                .get_by_id(id)
-                .map(|lt| (lt.blockwalk, lt.blockrange, lt.width, lt.length))
-                .unwrap_or((false, false, 1, 1));
 
             zone.locs[idx].change(id, shape, angle, blockwalk, blockrange, width, length);
 
@@ -1838,13 +1834,6 @@ impl Engine {
             if !create_if_missing {
                 return;
             }
-
-            let (blockwalk, blockrange, width, length) = self
-                .cache
-                .locs
-                .get_by_id(id)
-                .map(|lt| (lt.blockwalk, lt.blockrange, lt.width, lt.length))
-                .unwrap_or((false, false, 1, 1));
 
             let loc = Loc::new(
                 coord,
@@ -3108,13 +3097,34 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ActiveNpc::new`, `Engine::add_npc`
-    fn add_npc_spawned(&mut self, coord: u32, id: u16, _duration: u64) -> Option<NpcUid> {
-        let npc_type = self.cache.npcs.get_by_id(id)?;
+    fn add_npc_spawned(
+        &mut self,
+        coord: u32,
+        id: u16,
+        _duration: u64,
+    ) -> rs_vm::Result<Option<NpcUid>> {
+        let npc_type = self
+            .cache
+            .npcs
+            .get_by_id(id)
+            .ok_or(ScriptError::NpcNotFound(id as i32))?;
         let coord = CoordGrid::from(coord);
+        let size = npc_type.size.max(1) as u16;
+        let (max_x, max_z) = (coord.x() + size - 1, coord.z() + size - 1);
+        for zone_x in CoordGrid::zone(coord.x())..=CoordGrid::zone(max_x) {
+            for zone_z in CoordGrid::zone(coord.z())..=CoordGrid::zone(max_z) {
+                if !rsmod::is_zone_allocated(zone_x << 3, zone_z << 3, coord.y()) {
+                    return Err(ScriptError::Runtime(format!(
+                        "Zone does not exist at coord: {:?}",
+                        CoordGrid::new(zone_x << 3, coord.y(), zone_z << 3)
+                    )));
+                }
+            }
+        }
         let vars = VarSet::new(self.cache.varns.types.iter().map(|v| v.var_type));
         let mut active = ActiveNpc::new(id, 0, coord, npc_type.size, vars, self.cache);
         active.npc.lifecycle = EntityLifeTime::Despawn;
-        self.add_npc(active)
+        Ok(self.add_npc(active))
     }
 
     /// Removes an NPC from the world by its slot index.
@@ -3133,14 +3143,27 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Obj::new`, `Engine::add_obj` (inherent)
-    fn add_obj(&mut self, coord: u32, id: u16, count: u32, receiver37: Option<u64>, duration: u64) {
+    fn add_obj(
+        &mut self,
+        coord: u32,
+        id: u16,
+        count: u32,
+        receiver37: Option<u64>,
+        duration: u64,
+    ) -> rs_vm::Result<()> {
         let coord = CoordGrid::from(coord);
-        self.add_obj(
+        if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                coord
+            )));
+        }
+        Ok(self.add_obj(
             coord,
             Obj::new(coord, EntityLifeTime::Despawn, id, count),
             receiver37,
             duration,
-        );
+        ))
     }
 
     /// Enqueues a ground object to be spawned after a delay.
@@ -3302,17 +3325,45 @@ impl ScriptEngine for Engine {
         angle: u8,
         duration: u64,
         create_if_missing: bool,
-    ) {
+    ) -> rs_vm::Result<()> {
+        let loc_type = self
+            .cache
+            .locs
+            .get_by_id(id)
+            .ok_or(ScriptError::LocNotFound(id as i32))?;
         let shape = unsafe { std::mem::transmute::<u8, LocShape>(shape) };
         let angle = unsafe { std::mem::transmute::<u8, LocAngle>(angle) };
-        self.add_or_change_loc(
-            CoordGrid::from(coord),
+        let (size_x, size_z) = match angle {
+            LocAngle::North | LocAngle::South => (loc_type.length, loc_type.width),
+            _ => (loc_type.width, loc_type.length),
+        };
+        let coord = CoordGrid::from(coord);
+        let (max_x, max_z) = (
+            coord.x() + size_x.max(1) as u16 - 1,
+            coord.z() + size_z.max(1) as u16 - 1,
+        );
+        for zone_x in CoordGrid::zone(coord.x())..=CoordGrid::zone(max_x) {
+            for zone_z in CoordGrid::zone(coord.z())..=CoordGrid::zone(max_z) {
+                if !rsmod::is_zone_allocated(zone_x << 3, zone_z << 3, coord.y()) {
+                    return Err(ScriptError::Runtime(format!(
+                        "Zone does not exist at coord: {:?}",
+                        CoordGrid::new(zone_x << 3, coord.y(), zone_z << 3)
+                    )));
+                }
+            }
+        }
+        Ok(self.add_or_change_loc(
+            coord,
             id,
             shape,
             angle,
+            loc_type.width,
+            loc_type.length,
+            loc_type.blockwalk,
+            loc_type.blockrange,
             duration,
             create_if_missing,
-        );
+        ))
     }
 
     /// Merges a location so that it is only visible to one player within a bounded area.
@@ -3555,14 +3606,37 @@ impl ScriptEngine for Engine {
     /// # Call Stack
     ///
     /// **Calls:** reads `rsmod::has_line_of_sight()`
-    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+    fn lineofsight(&self, src: CoordGrid, dst: CoordGrid) -> rs_vm::Result<bool> {
+        if !rsmod::is_zone_allocated(src.x(), src.z(), src.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                src
+            )));
+        }
+        if !rsmod::is_zone_allocated(dst.x(), dst.z(), dst.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                dst
+            )));
+        }
         if src.y() != dst.y() {
-            return false;
+            return Ok(false);
         }
         if !self.members && !self.cache.is_free(dst.x(), dst.z()) {
-            return false;
+            return Ok(false);
         }
-        rsmod::has_line_of_sight(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
+        Ok(rsmod::has_line_of_sight(
+            src.y(),
+            src.x(),
+            src.z(),
+            dst.x(),
+            dst.z(),
+            1,
+            1,
+            1,
+            1,
+            0,
+        ))
     }
 
     /// Indicates if there is "line of walk" between these coords.
@@ -3570,14 +3644,37 @@ impl ScriptEngine for Engine {
     /// # Call Stack
     ///
     /// **Calls:** reads `rsmod::has_line_of_walk()`
-    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> bool {
+    fn lineofwalk(&self, src: CoordGrid, dst: CoordGrid) -> rs_vm::Result<bool> {
+        if !rsmod::is_zone_allocated(src.x(), src.z(), src.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                src
+            )));
+        }
+        if !rsmod::is_zone_allocated(dst.x(), dst.z(), dst.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                dst
+            )));
+        }
         if src.y() != dst.y() {
-            return false;
+            return Ok(false);
         }
         if !self.members && !self.cache.is_free(dst.x(), dst.z()) {
-            return false;
+            return Ok(false);
         }
-        rsmod::has_line_of_walk(src.y(), src.x(), src.z(), dst.x(), dst.z(), 1, 1, 1, 1, 0)
+        Ok(rsmod::has_line_of_walk(
+            src.y(),
+            src.x(),
+            src.z(),
+            dst.x(),
+            dst.z(),
+            1,
+            1,
+            1,
+            1,
+            0,
+        ))
     }
 
     /// Indicates if this coord has a `CollisionFlag::WalkBlocked` on it.
@@ -3585,16 +3682,22 @@ impl ScriptEngine for Engine {
     /// # Call Stack
     ///
     /// **Calls:** reads `rsmod::is_flagged()`
-    fn map_blocked(&self, coord: CoordGrid) -> bool {
-        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
-            return false;
+    fn map_blocked(&self, coord: CoordGrid) -> rs_vm::Result<bool> {
+        if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                coord
+            )));
         }
-        rsmod::is_flagged(
+        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
+            return Ok(false);
+        }
+        Ok(rsmod::is_flagged(
             coord.x(),
             coord.z(),
             coord.y(),
             CollisionFlag::WalkBlocked as u32,
-        )
+        ))
     }
 
     /// Indicates if this coord has a `CollisionFlag::Roof` collision flag on it.
@@ -3602,11 +3705,22 @@ impl ScriptEngine for Engine {
     /// # Call Stack
     ///
     /// **Calls:** reads `rsmod::is_flagged()`
-    fn map_indoors(&self, coord: CoordGrid) -> bool {
-        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
-            return false;
+    fn map_indoors(&self, coord: CoordGrid) -> rs_vm::Result<bool> {
+        if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
+            return Err(ScriptError::Runtime(format!(
+                "Zone does not exist at coord: {:?}",
+                coord
+            )));
         }
-        rsmod::is_flagged(coord.x(), coord.z(), coord.y(), CollisionFlag::Roof as u32)
+        if !self.members && !self.cache.is_free(coord.x(), coord.z()) {
+            return Ok(false);
+        }
+        Ok(rsmod::is_flagged(
+            coord.x(),
+            coord.z(),
+            coord.y(),
+            CollisionFlag::Roof as u32,
+        ))
     }
 
     /// Reads a shared variable (vars) by its definition ID.

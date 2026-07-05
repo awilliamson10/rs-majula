@@ -41,7 +41,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let id = s.pop_int_as::<u16>()?;
             let coord = s.pop_int();
-            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord as u32, id, duration as u64) {
+            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord as u32, id, duration as u64)? {
                 set_active_npc(s, uid, s.int_operand() != 0);
             }
         });
@@ -147,7 +147,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let npc = pop_npc(s)?;
             let coord = CoordGrid::from(s.pop_int() as u32);
 
-            let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis);
+            let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis)?;
 
             let closest = npcs
                 .iter()
@@ -167,7 +167,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let distance = s.pop_int();
             let npc = pop_npc(s)?;
             let coord = CoordGrid::from(s.pop_int() as u32);
-            let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis);
+            let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis)?;
             s.npc_iterator = Some(NpcIteratorState {
                 matches: npcs,
                 cursor: 0,
@@ -180,7 +180,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
-            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis);
+            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             s.npc_iterator = Some(NpcIteratorState {
                 matches: npcs,
                 cursor: 0,
@@ -204,7 +204,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let category = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
 
-            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis);
+            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             let c = cache();
 
             let closest = npcs
@@ -330,7 +330,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let distance = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
 
-            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis);
+            let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
 
             let closest = npcs
                 .iter()
@@ -359,7 +359,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let distance = s.pop_int();
             let coord = CoordGrid::from(s.pop_int() as u32);
 
-            let mut npcs = iterators::npc_distance_any::<E>(coord, distance, vis);
+            let mut npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             npcs.retain(|npc_ref| {
                 cache()
                     .npcs
