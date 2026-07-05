@@ -43,6 +43,7 @@ impl Engine {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 for &pid in &pids[start..] {
                     Self::compute_player_info(self, pid);
+                    start += 1;
                 }
             }));
             match result {
@@ -117,6 +118,7 @@ impl Engine {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 for &nid in &nids[start..] {
                     Self::compute_npc_info(self, nid);
+                    start += 1;
                 }
             }));
             match result {

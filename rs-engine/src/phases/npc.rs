@@ -62,6 +62,7 @@ impl Engine {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 for &nid in &nids[start..] {
                     Self::process_npc(self, nid);
+                    start += 1;
                 }
             }));
             match result {

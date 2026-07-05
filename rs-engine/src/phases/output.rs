@@ -42,6 +42,7 @@ impl Engine {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 for &pid in &pids[start..] {
                     Self::process_output(self, pid);
+                    start += 1;
                 }
             }));
             match result {
