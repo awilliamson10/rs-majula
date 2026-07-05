@@ -159,10 +159,6 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3013
         active_loc!(m, LOC_TYPE => |s, loc| {
-            let loc = cache()
-                .locs
-                .get_by_id(loc.id)
-                .ok_or(ScriptError::LocNotFound(loc.id as i32))?;
             s.push_int(loc.id as i32);
         });
     }
