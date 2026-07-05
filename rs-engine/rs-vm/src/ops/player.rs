@@ -5,7 +5,6 @@ use crate::state::{ExecutionState, QueuePriority, ScriptArgument, ScriptState, T
 use crate::trigger::ServerTriggerType;
 use crate::util::*;
 use crate::*;
-use rs_grid::CoordGrid;
 use rs_pack::cache::script::*;
 use rs_pack::types::HuntCheckVis;
 use rs_util::colour::rgb24_to_15;
@@ -53,8 +52,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2001
         active_player_mut!(m, ALLOWDESIGN => |s, player| {
-            let allow = s.pop_int();
-            player.set_allow_design(allow == 1);
+            player.set_allow_design(s.pop_int() == 1);
         });
 
         // 2002
@@ -82,22 +80,19 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2004
         active_player_mut!(m, BUILDAPPEARANCE => |s, player| {
-            let inv = pop_inv(s)?;
-            player.buildappearance(inv.id);
+            player.buildappearance(pop_inv(s)?.id);
         });
 
         // 2005
         // https://x.com/JagexAsh/status/1653407769989349377
         active_player!(m, BUSY => |s, player| {
-            let busy = player.busy() || player.logging_out();
-            s.push_int(busy as i32);
+            s.push_int((player.busy() || player.logging_out()) as i32);
         });
 
         // 2006
         // https://x.com/JagexAsh/status/1791053667228856563
         active_player!(m, BUSY2 => |s, player| {
-            let busy2 = player.has_interaction() || player.has_waypoints();
-            s.push_int(busy2 as i32);
+            s.push_int((player.has_interaction() || player.has_waypoints()) as i32);
         });
 
         // 2007
@@ -105,7 +100,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let rate2 = s.pop_int_as::<u8>()?;
             let rate = s.pop_int_as::<u8>()?;
             let height = s.pop_int_as::<u16>()?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             player.cam_lookat(coord.x(), coord.z(), height, rate, rate2)?;
         });
 
@@ -114,7 +109,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let rate2 = s.pop_int_as::<u8>()?;
             let rate = s.pop_int_as::<u8>()?;
             let height = s.pop_int_as::<u16>()?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             player.cam_moveto(coord.x(), coord.z(), height, rate, rate2)?;
         });
 
@@ -135,25 +130,22 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2011
         // https://x.com/JagexAsh/status/1821831590906859683
         active_player_mut!(m, CLEARQUEUE => |s, player| {
-            let script_id = s.pop_int();
-            player.clearqueue(script_id);
+            player.clearqueue(s.pop_int());
         });
 
         // 2012
         active_player_mut!(m, CLEARSOFTTIMER => |s, player| {
-            let script = pop_script::<E>(s)?;
-            player.cleartimer(script.id);
+            player.cleartimer(pop_script::<E>(s)?.id);
         });
 
         // 2013
         active_player_mut!(m, CLEARTIMER => |s, player| {
-            let script = pop_script::<E>(s)?;
-            player.cleartimer(script.id);
+            player.cleartimer(pop_script::<E>(s)?.id);
         });
 
         // 2014
         active_player!(m, COORD => |s, player| {
-            s.push_int(player.coord() as i32);
+            s.push_int(player.coord().packed() as i32);
         });
 
         // 2015
@@ -176,8 +168,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2017
         active_player_mut!(m, FACESQUARE => |s, player| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            player.facesquare(coord.x(), coord.z());
+            player.facesquare(pop_coord(s)?);
         });
 
         // 2018
@@ -247,14 +238,13 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2026
         active_player_mut!(m, HEALENERGY => |s, player| {
             // 100=1%, 1000=10%, 10000=100%
-            let amount = s.pop_int();
-            player.healenergy(amount);
+            player.healenergy(s.pop_int());
         });
 
         // 2027
         active_player_mut!(m, HINT_COORD => |s, player| {
             let height = s.pop_int_as::<u8>()?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let offset = s.pop_int_as::<u8>()?;
             player.hint_tile(offset, coord.x(), coord.z(), height);
         });
@@ -287,7 +277,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, HUNTALL => |s| {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let players = iterators::hunt_players::<E>(coord, distance, vis)?;
             s.player_iterator = Some(PlayerIteratorState {
@@ -549,8 +539,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2062
         active_player_mut!(m, MES => |s, player| {
-            let text = s.pop_string();
-            player.mes(&text);
+            player.mes(&s.pop_string());
         });
 
         // 2063
@@ -619,8 +608,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2067
         protected_active_player_mut!(m, P_APRANGE => |s, player| {
-            let range = s.pop_int();
-            player.aprange(range);
+            player.aprange(s.pop_int());
         });
 
         // 2068
@@ -659,8 +647,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let direction = s.pop_int();
             let finish = s.pop_int();
             let begin = s.pop_int();
-            let end = CoordGrid::from(s.pop_int() as u32);
-            let start = CoordGrid::from(s.pop_int() as u32);
+            let end = pop_coord(s)?;
+            let start = pop_coord(s)?;
             player.clear_waypoints();
             player.exactmove(
                 start.x(),
@@ -701,8 +689,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2074
         // https://x.com/JagexAsh/status/1684232225397657602
         protected_active_player_mut!(m, P_LOCMERGE => |s, player| {
-            let nw = CoordGrid::from(s.pop_int() as u32);
-            let se = CoordGrid::from(s.pop_int() as u32);
+            let nw = pop_coord(s)?;
+            let se = pop_coord(s)?;
             let end = s.pop_int_as::<u16>()?;
             let start = s.pop_int_as::<u16>()?;
 
@@ -759,19 +747,25 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             }
 
             player.stopaction()?;
-
-            let forceapproach = loc_type.forceapproach as u8;
             if !player.in_operable_distance_loc(
-                loc.coord, loc_type.width, loc_type.length, loc.shape, loc.angle, forceapproach,
+                loc.coord,
+                loc_type.width,
+                loc_type.length,
+                loc.shape,
+                loc.angle,
+                loc_type.forceapproach as u8,
             ) {
-                let coord = CoordGrid::from(loc.coord);
-                player.queue_waypoint(coord.x(), coord.z());
+                player.queue_waypoint(loc.coord);
             }
-
-            let trigger = ServerTriggerType::ApLoc1 as u8 + op as u8;
             player.set_interaction_loc(
-                loc.coord, loc.id, loc_type.width, loc_type.length,
-                loc.shape, loc.angle, loc.layer, trigger,
+                loc.coord,
+                loc.id,
+                loc_type.width,
+                loc_type.length,
+                loc.shape,
+                loc.angle,
+                loc.layer,
+                ServerTriggerType::ApLoc1 as u8 + op as u8,
             );
         });
 
@@ -807,9 +801,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             }
 
             player.stopaction()?;
-
-            let trigger = ServerTriggerType::ApNpc1 as u8 + op as u8;
-            player.set_interaction_npc(npc_uid.nid(), trigger);
+            player.set_interaction_npc(npc_uid.nid(), ServerTriggerType::ApNpc1 as u8 + op as u8);
         });
 
         // 2079
@@ -855,12 +847,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             }
 
             player.stopaction()?;
-
-            let coord = CoordGrid::from(obj.coord);
-            player.queue_waypoint(coord.x(), coord.z());
-
-            let trigger = ServerTriggerType::ApObj1 as u8 + op as u8;
-            player.set_interaction_obj(obj.coord, obj.id, obj.count, trigger);
+            player.queue_waypoint(obj.coord);
+            player.set_interaction_obj(obj.coord, obj.id, obj.count, ServerTriggerType::ApObj1 as u8 + op as u8);
         });
 
         // 2081
@@ -925,24 +913,21 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2087
         // https://x.com/JagexAsh/status/1697517518007541917
         protected_active_player_mut!(m, P_TELEJUMP => |s, player| {
-            let coord = s.pop_int() as u32;
-            player.telejump(coord);
+            player.telejump(pop_coord(s)?);
         });
 
         // 2088
         // https://x.com/JagexAsh/status/1697517518007541917
         // https://x.com/JagexAsh/status/1790684996480442796
         protected_active_player_mut!(m, P_TELEPORT => |s, player| {
-            let coord = s.pop_int() as u32;
-            player.teleport(coord);
+            player.teleport(pop_coord(s)?);
         });
 
         // 2089
         // https://x.com/JagexAsh/status/1605130887292751873
         // https://x.com/JagexAsh/status/1698248664349614138
         protected_active_player_mut!(m, P_WALK => |s, player| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            player.walk(coord.x(), coord.z());
+            player.walk(pop_coord(s)?);
         });
 
         // 2090
@@ -960,8 +945,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
             let uid = s.pop_int();
-            let src = CoordGrid::from(s.pop_int() as u32);
-            let dst = CoordGrid::from(player.coord());
+            let src = pop_coord(s)?;
+            let dst = player.coord();
             if uid != player.uid().packed() as i32 {
                 return Err(ScriptError::Runtime(format!("Invalid uid: {}, expected: {}", uid, player.uid().packed() as i32)))
             }
@@ -1019,8 +1004,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2097
         active_player_mut!(m, SAY => |s, player| {
-            let msg = s.pop_string();
-            player.say(&msg);
+            player.say(&s.pop_string());
         });
 
         // 2098
@@ -1363,14 +1347,13 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2145
         #[cfg(since_244)]
         active_player_mut!(m, IF_OPENOVERLAY => |s, player| {
-            let com = s.pop_int_as::<u16>()?;
-            player.if_openoverlay(com);
+            player.if_openoverlay(s.pop_int_as::<u16>()?);
         });
 
         // 2146
         // TODO: this is duplicated with `HUNTALL`
         none!(m, PLAYER_FINDALLZONE => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let players = iterators::player_zone::<E>(coord);
             s.player_iterator = Some(PlayerIteratorState {
                 matches: players,

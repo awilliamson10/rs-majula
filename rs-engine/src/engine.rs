@@ -178,7 +178,7 @@ pub enum PendingZoneEvent {
 /// Once the `delay` expires, the object is created at `coord` with the specified
 /// `id`, `count`, `receiver37`, and `duration` (despawn lifetime).
 pub struct ObjDelayedRequest {
-    pub coord: u32,
+    pub coord: CoordGrid,
     pub id: u16,
     pub count: u32,
     pub receiver37: Option<u64>,
@@ -3015,8 +3015,8 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`, `ActiveNpc::current_type`, `CoordGrid::packed`
-    fn get_zone_npcs(&self, x: u16, y: u8, z: u16) -> Vec<NpcRef> {
-        let Some(zone) = self.zones.zone(x, y, z) else {
+    fn get_zone_npcs(&self, coord: CoordGrid) -> Vec<NpcRef> {
+        let Some(zone) = self.zones.zone(coord.x(), coord.y(), coord.z()) else {
             return Vec::new();
         };
         zone.npcs
@@ -3026,7 +3026,7 @@ impl ScriptEngine for Engine {
                 Some(NpcRef {
                     nid,
                     id: active.npc.uid.id(),
-                    coord: active.npc.pathing.coord.packed(),
+                    coord: active.npc.pathing.coord,
                 })
             })
             .collect()
@@ -3048,16 +3048,13 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`, `CoordGrid::packed`
-    fn get_zone_player_coords(&self, x: u16, y: u8, z: u16) -> Vec<u32> {
-        let Some(zone) = self.zones.zone(x, y, z) else {
+    fn get_zone_player_coords(&self, coord: CoordGrid) -> Vec<CoordGrid> {
+        let Some(zone) = self.zones.zone(coord.x(), coord.y(), coord.z()) else {
             return Vec::new();
         };
         zone.players
             .iter()
-            .filter_map(|&pid| {
-                let active = self.player_list.get(pid)?;
-                Some(active.player.pathing.coord.packed())
-            })
+            .filter_map(|&pid| Some(self.player_list.get(pid)?.player.pathing.coord))
             .collect()
     }
 
@@ -3067,9 +3064,9 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`
-    fn get_zone_player_pids(&self, x: u16, y: u8, z: u16) -> &[u16] {
+    fn get_zone_player_pids(&self, coord: CoordGrid) -> &[u16] {
         self.zones
-            .zone(x, y, z)
+            .zone(coord.x(), coord.y(), coord.z())
             .map(|z| z.players.as_slice())
             .unwrap_or(&[])
     }
@@ -3099,7 +3096,7 @@ impl ScriptEngine for Engine {
     /// **Calls:** `ActiveNpc::new`, `Engine::add_npc`
     fn add_npc_spawned(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         _duration: u64,
     ) -> rs_vm::Result<Option<NpcUid>> {
@@ -3108,7 +3105,6 @@ impl ScriptEngine for Engine {
             .npcs
             .get_by_id(id)
             .ok_or(ScriptError::NpcNotFound(id as i32))?;
-        let coord = CoordGrid::from(coord);
         let size = npc_type.size.max(1) as u16;
         let (max_x, max_z) = (coord.x() + size - 1, coord.z() + size - 1);
         for zone_x in CoordGrid::zone(coord.x())..=CoordGrid::zone(max_x) {
@@ -3145,13 +3141,12 @@ impl ScriptEngine for Engine {
     /// **Calls:** `Obj::new`, `Engine::add_obj` (inherent)
     fn add_obj(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         count: u32,
         receiver37: Option<u64>,
         duration: u64,
     ) -> rs_vm::Result<()> {
-        let coord = CoordGrid::from(coord);
         if !rsmod::is_zone_allocated(coord.x(), coord.z(), coord.y()) {
             return Err(ScriptError::Runtime(format!(
                 "Zone does not exist at coord: {:?}",
@@ -3176,7 +3171,7 @@ impl ScriptEngine for Engine {
     /// **Calls:** `LinkList::add_tail`
     fn add_obj_delayed(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         count: u32,
         receiver37: Option<u64>,
@@ -3199,8 +3194,8 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Engine::remove_obj` (inherent)
-    fn remove_obj(&mut self, coord: u32, id: u16, receiver37: Option<u64>, duration: u64) {
-        self.remove_obj(CoordGrid::from(coord), id, receiver37, duration);
+    fn remove_obj(&mut self, coord: CoordGrid, id: u16, receiver37: Option<u64>, duration: u64) {
+        self.remove_obj(coord, id, receiver37, duration);
     }
 
     /// Finds a ground object at the given coordinate by type ID and optional
@@ -3210,13 +3205,12 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`, `Zone::get_obj`
-    fn find_obj(&self, coord: u32, id: u16, receiver37: Option<u64>) -> Option<ObjRef> {
-        let coord = CoordGrid::from(coord);
+    fn find_obj(&self, coord: CoordGrid, id: u16, receiver37: Option<u64>) -> Option<ObjRef> {
         let zone = self.zones.zone(coord.x(), coord.y(), coord.z())?;
         let idx = zone.get_obj(coord.x(), coord.z(), id, receiver37)?;
         let obj = &zone.objs[idx];
         Some(ObjRef {
-            coord: obj.world_coord(zone.coord).packed(),
+            coord: obj.world_coord(zone.coord),
             id: obj.id(),
             count: obj.count(),
         })
@@ -3228,14 +3222,14 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`
-    fn get_zone_objs(&self, x: u16, y: u8, z: u16) -> Vec<ObjRef> {
-        let Some(zone) = self.zones.zone(x, y, z) else {
+    fn get_zone_objs(&self, coord: CoordGrid) -> Vec<ObjRef> {
+        let Some(zone) = self.zones.zone(coord.x(), coord.y(), coord.z()) else {
             return Vec::new();
         };
         zone.objs
             .iter()
             .map(|obj| ObjRef {
-                coord: obj.world_coord(zone.coord).packed(),
+                coord: obj.world_coord(zone.coord),
                 id: obj.id(),
                 count: obj.count(),
             })
@@ -3260,16 +3254,15 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`, `Loc::visible`, `CoordGrid::packed`
-    fn get_zone_locs(&self, x: u16, y: u8, z: u16) -> Vec<LocRef> {
-        let Some(zone) = self.zones.zone(x, y, z) else {
-            debug_assert!(false, "Zone not found at coord: x={}, y={}, z={}", x, y, z);
+    fn get_zone_locs(&self, coord: CoordGrid) -> Vec<LocRef> {
+        let Some(zone) = self.zones.zone(coord.x(), coord.y(), coord.z()) else {
             return Vec::new();
         };
         zone.locs
             .iter()
             .filter(|loc| loc.visible())
             .map(|loc| LocRef {
-                coord: loc.world_coord(zone.coord).packed(),
+                coord: loc.world_coord(zone.coord),
                 id: loc.id(),
                 shape: loc.shape() as u8,
                 angle: loc.angle() as u8,
@@ -3295,12 +3288,12 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `ZoneMap::zone`, `Zone::get_loc`
-    fn find_loc(&self, x: u16, z: u16, y: u8, id: u16) -> Option<LocRef> {
-        let zone = self.zones.zone(x, y, z)?;
-        let idx = zone.get_loc(x, z, id)?;
+    fn find_loc(&self, coord: CoordGrid, id: u16) -> Option<LocRef> {
+        let zone = self.zones.zone(coord.x(), coord.y(), coord.z())?;
+        let idx = zone.get_loc(coord.x(), coord.z(), id)?;
         let loc = &zone.locs[idx];
         Some(LocRef {
-            coord: loc.world_coord(zone.coord).packed(),
+            coord: loc.world_coord(zone.coord),
             id: loc.id(),
             shape: loc.shape() as u8,
             angle: loc.angle() as u8,
@@ -3319,7 +3312,7 @@ impl ScriptEngine for Engine {
     /// **Calls:** `Engine::add_or_change_loc` (inherent)
     fn add_or_change_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         shape: u8,
         angle: u8,
@@ -3337,7 +3330,6 @@ impl ScriptEngine for Engine {
             LocAngle::North | LocAngle::South => (loc_type.length, loc_type.width),
             _ => (loc_type.width, loc_type.length),
         };
-        let coord = CoordGrid::from(coord);
         let (max_x, max_z) = (
             coord.x() + size_x.max(1) as u16 - 1,
             coord.z() + size_z.max(1) as u16 - 1,
@@ -3381,7 +3373,7 @@ impl ScriptEngine for Engine {
     /// **Calls:** `Zone::merge_loc`, `Engine::track_zone`
     fn merge_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         shape: u8,
         angle: u8,
         id: u16,
@@ -3396,8 +3388,6 @@ impl ScriptEngine for Engine {
         let shape = unsafe { std::mem::transmute::<u8, LocShape>(shape) };
         let angle = unsafe { std::mem::transmute::<u8, LocAngle>(angle) };
         let layer = shape.layer();
-
-        let coord = CoordGrid::from(coord);
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
 
         let existing = self
@@ -3434,9 +3424,9 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Engine::remove_loc` (inherent)
-    fn remove_loc(&mut self, coord: u32, layer: u8, duration: u64) {
+    fn remove_loc(&mut self, coord: CoordGrid, layer: u8, duration: u64) {
         let layer = unsafe { std::mem::transmute::<u8, LocLayer>(layer) };
-        self.remove_loc(CoordGrid::from(coord), layer, duration);
+        self.remove_loc(coord, layer, duration);
     }
 
     /// Plays a sequence animation on a location.
@@ -3447,8 +3437,7 @@ impl ScriptEngine for Engine {
     ///
     /// **Called by:** VM ops via `ScriptEngine` trait
     /// **Calls:** `Zone::get_loc`, `Zone::anim_loc`, `Engine::track_zone`
-    fn anim_loc(&mut self, coord: u32, id: u16, seq: u16) {
-        let coord = CoordGrid::from(coord);
+    fn anim_loc(&mut self, coord: CoordGrid, id: u16, seq: u16) {
         let (x, y, z) = (coord.x(), coord.y(), coord.z());
         let zone = self.zones.zone_mut(x, y, z);
         if let Some(idx) = zone.get_loc(x, z, id) {
@@ -3765,8 +3754,8 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `CoordGrid::packed`
-    fn coord(&self) -> u32 {
-        self.player.pathing.coord.packed()
+    fn coord(&self) -> CoordGrid {
+        self.player.pathing.coord
     }
 
     /// Returns the component ID of the last interface button clicked, or `-1` if none.
@@ -4931,9 +4920,9 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `CoordGrid::fine`
-    fn facesquare(&mut self, x: u16, z: u16) {
-        let fine_x = CoordGrid::fine(x, 1);
-        let fine_z = CoordGrid::fine(z, 1);
+    fn facesquare(&mut self, coord: CoordGrid) {
+        let fine_x = CoordGrid::fine(coord.x(), 1);
+        let fine_z = CoordGrid::fine(coord.z(), 1);
         self.player.info.face_x = Some(fine_x);
         self.player.info.face_z = Some(fine_z);
         self.player.info.masks |= PlayerInfoProt::FaceCoord as u16;
@@ -5029,8 +5018,8 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `ActivePlayer::tele_jump`
-    fn telejump(&mut self, coord: u32) {
-        self.tele_jump(CoordGrid::from(coord));
+    fn telejump(&mut self, coord: CoordGrid) {
+        self.tele_jump(coord);
     }
 
     /// Teleports the player to a coordinate, processing zone transitions.
@@ -5039,8 +5028,8 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `ActivePlayer::tele`
-    fn teleport(&mut self, coord: u32) {
-        self.tele(CoordGrid::from(coord));
+    fn teleport(&mut self, coord: CoordGrid) {
+        self.tele(coord);
     }
 
     /// Plays an exact-move animation that linearly interpolates between two positions.
@@ -5066,7 +5055,7 @@ impl ScriptPlayer for ActivePlayer {
         finish: u16,
         direction: u8,
     ) {
-        self.teleport(CoordGrid::new(end_x, self.player.pathing.coord.y(), end_z).packed());
+        self.teleport(CoordGrid::new(end_x, self.player.pathing.coord.y(), end_z));
         self.player.info.exactmove_start_x = Some(start_x);
         self.player.info.exactmove_start_z = Some(start_z);
         self.player.info.exactmove_end_x = Some(end_x);
@@ -5345,8 +5334,8 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `Pathing::queue_waypoint`
-    fn queue_waypoint(&mut self, x: u16, z: u16) {
-        self.player.pathing.queue_waypoint(x, z);
+    fn queue_waypoint(&mut self, coord: CoordGrid) {
+        self.player.pathing.queue_waypoint(coord);
     }
 
     /// Starts the player walking toward the given tile using pathfinding.
@@ -5358,13 +5347,13 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `rsmod::find_path`, `Pathing::queue_waypoints`
-    fn walk(&mut self, dest_x: u16, dest_z: u16) {
+    fn walk(&mut self, coord: CoordGrid) {
         self.player.pathing.queue_waypoints(rsmod::find_path(
             self.player.pathing.coord.y(),
             self.player.pathing.coord.x(),
             self.player.pathing.coord.z(),
-            dest_x,
-            dest_z,
+            coord.x(),
+            coord.z(),
             1,
             1,
             1,
@@ -5398,7 +5387,7 @@ impl ScriptPlayer for ActivePlayer {
     /// **Calls:** `EnginePlayer::set_interaction`
     fn set_interaction_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         width: u8,
         length: u8,
@@ -5408,7 +5397,7 @@ impl ScriptPlayer for ActivePlayer {
         op: u8,
     ) {
         let target = InteractionTarget::Loc {
-            coord: CoordGrid::from(coord),
+            coord,
             id,
             width,
             length,
@@ -5436,12 +5425,8 @@ impl ScriptPlayer for ActivePlayer {
     ///
     /// **Called by:** VM ops via `ScriptPlayer` trait
     /// **Calls:** `EnginePlayer::set_interaction`
-    fn set_interaction_obj(&mut self, coord: u32, id: u16, count: u32, op: u8) {
-        let target = InteractionTarget::Obj {
-            coord: CoordGrid::from(coord),
-            id,
-            count,
-        };
+    fn set_interaction_obj(&mut self, coord: CoordGrid, id: u16, count: u32, op: u8) {
+        let target = InteractionTarget::Obj { coord, id, count };
         self.player.set_interaction(target, op, false);
     }
 
@@ -5477,23 +5462,22 @@ impl ScriptPlayer for ActivePlayer {
     /// **Calls:** `rsmod::reached`
     fn in_operable_distance_loc(
         &self,
-        coord: u32,
+        coord: CoordGrid,
         width: u8,
         length: u8,
         shape: u8,
         angle: u8,
         forceapproach: u8,
     ) -> bool {
-        let c = CoordGrid::from(coord);
-        if c.y() != self.player.pathing.coord.y() {
+        if coord.y() != self.player.pathing.coord.y() {
             return false;
         }
         rsmod::reached(
             self.player.pathing.coord.y(),
             self.player.pathing.coord.x(),
             self.player.pathing.coord.z(),
-            c.x(),
-            c.z(),
+            coord.x(),
+            coord.z(),
             width,
             length,
             1,
@@ -5536,8 +5520,8 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `CoordGrid::packed`
-    fn coord(&self) -> u32 {
-        self.npc.pathing.coord.packed()
+    fn coord(&self) -> CoordGrid {
+        self.npc.pathing.coord
     }
 
     /// Returns the NPC's collision size in tiles.
@@ -5672,7 +5656,7 @@ impl ScriptNpc for ActiveNpc {
     /// **Calls:** `Npc::set_interaction`
     fn set_interaction_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         width: u8,
         length: u8,
@@ -5682,7 +5666,7 @@ impl ScriptNpc for ActiveNpc {
         op: u8,
     ) {
         let target = InteractionTarget::Loc {
-            coord: CoordGrid::from(coord),
+            coord,
             id,
             width,
             length,
@@ -5699,12 +5683,8 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `Npc::set_interaction`
-    fn set_interaction_obj(&mut self, coord: u32, id: u16, count: u32, op: u8) {
-        let target = InteractionTarget::Obj {
-            coord: CoordGrid::from(coord),
-            id,
-            count,
-        };
+    fn set_interaction_obj(&mut self, coord: CoordGrid, id: u16, count: u32, op: u8) {
+        let target = InteractionTarget::Obj { coord, id, count };
         self.npc.set_interaction(target, op, false);
     }
 
@@ -5839,8 +5819,8 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `ActiveNpc::tele`
-    fn tele(&mut self, coord: u32) {
-        self.tele(CoordGrid::from(coord));
+    fn tele(&mut self, coord: CoordGrid) {
+        self.tele(coord);
     }
 
     /// Makes the NPC face a specific tile.
@@ -5851,10 +5831,12 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `NpcInfo::focus_npc`, `CoordGrid::fine`
-    fn facesquare(&mut self, x: u16, z: u16) {
-        self.npc
-            .info
-            .focus_npc(CoordGrid::fine(x, 1), CoordGrid::fine(z, 1), true);
+    fn facesquare(&mut self, coord: CoordGrid) {
+        self.npc.info.focus_npc(
+            CoordGrid::fine(coord.x(), 1),
+            CoordGrid::fine(coord.z(), 1),
+            true,
+        );
     }
 
     /// Queues a waypoint for the NPC to walk toward.
@@ -5863,8 +5845,8 @@ impl ScriptNpc for ActiveNpc {
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
     /// **Calls:** `Pathing::queue_waypoint`
-    fn walk(&mut self, x: u16, z: u16) {
-        self.npc.pathing.queue_waypoint(x, z);
+    fn walk(&mut self, coord: CoordGrid) {
+        self.npc.pathing.queue_waypoint(coord);
     }
 
     /// Sets the maximum hunt range for this NPC's AI.
@@ -5974,7 +5956,7 @@ impl ScriptNpc for ActiveNpc {
     /// # Call Stack
     ///
     /// **Called by:** VM ops via `ScriptNpc` trait
-    fn destination(&self) -> u32 {
+    fn destination(&self) -> CoordGrid {
         if !self.npc.pathing.has_waypoints() {
             return self.coord();
         }

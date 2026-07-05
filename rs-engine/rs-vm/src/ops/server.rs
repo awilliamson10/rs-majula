@@ -3,7 +3,7 @@ use crate::register::OpsRegistry;
 use crate::state::ExecutionState;
 #[cfg(since_274)]
 use crate::util::midi_tick_length;
-use crate::util::{pop_seq, pop_spotanim};
+use crate::util::{pop_coord, pop_seq, pop_spotanim};
 use crate::{handlers, none};
 use rs_grid::CoordGrid;
 use rs_pack::cache::script::*;
@@ -30,34 +30,34 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
     handlers! { |m|
         // 1000
         none!(m, COORDX => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(coord.x() as i32);
         });
 
         // 1001
         none!(m, COORDY => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(coord.y() as i32);
         });
 
         // 1002
         none!(m, COORDZ => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(coord.z() as i32);
         });
 
         // 1003
         none!(m, DISTANCE => |s| {
-            let b = CoordGrid::from(s.pop_int() as u32);
-            let a = CoordGrid::from(s.pop_int() as u32);
+            let b = pop_coord(s)?;
+            let a = pop_coord(s)?;
             s.push_int(a.distance(b));
         });
 
         // 1004
         none!(m, INZONE => |s| {
-            let test = CoordGrid::from(s.pop_int() as u32);
-            let ne = CoordGrid::from(s.pop_int() as u32);
-            let sw = CoordGrid::from(s.pop_int() as u32);
+            let test = pop_coord(s)?;
+            let ne = pop_coord(s)?;
+            let sw = pop_coord(s)?;
             let ok = test.y() == sw.y()
                 && test.x() >= sw.x()
                 && test.x() <= ne.x()
@@ -68,21 +68,21 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1005
         none!(m, LINEOFSIGHT => |s| {
-            let dst = CoordGrid::from(s.pop_int() as u32);
-            let src = CoordGrid::from(s.pop_int() as u32);
+            let dst = pop_coord(s)?;
+            let src = pop_coord(s)?;
             s.push_int(engine::<E>().lineofsight(src, dst)? as i32);
         });
 
         // 1006
         none!(m, LINEOFWALK => |s| {
-            let dst = CoordGrid::from(s.pop_int() as u32);
-            let src = CoordGrid::from(s.pop_int() as u32);
+            let dst = pop_coord(s)?;
+            let src = pop_coord(s)?;
             s.push_int(engine::<E>().lineofwalk(src, dst)? as i32);
         });
 
         // 1007
         none!(m, MAP_BLOCKED => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(engine::<E>().map_blocked(coord)? as i32);
         });
 
@@ -96,7 +96,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let find_type = s.pop_int();
             let max_radius = s.pop_int();
             let min_radius = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let engine = engine::<E>();
             let engine_mut = engine_mut::<E>();
@@ -160,7 +160,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1010
         none!(m, MAP_INDOORS => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(engine::<E>().map_indoors(coord)? as i32);
         });
 
@@ -174,7 +174,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1012
         none!(m, MAP_LOCADDUNSAFE => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(engine::<E>().locaddunsafe(coord) as i32);
         });
 
@@ -185,14 +185,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 1014
         none!(m, MAP_MULTIWAY => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(cache().is_multi(coord.x(), coord.z(), coord.y()) as i32);
         });
 
         // 1015
         none!(m, MAP_PLAYERCOUNT => |s| {
-            let to = CoordGrid::from(s.pop_int() as u32);
-            let from = CoordGrid::from(s.pop_int() as u32);
+            let to = pop_coord(s)?;
+            let from = pop_coord(s)?;
 
             let mut count = 0;
             let from_zx = from.x() >> 3;
@@ -204,9 +204,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
             for zx in from_zx..=to_zx {
                 for zz in from_zz..=to_zz {
-                    let coords = engine.get_zone_player_coords(zx << 3, from.y(), zz << 3);
-                    for packed in coords {
-                        let coord = CoordGrid::from(packed);
+                    for coord in engine.get_zone_player_coords(CoordGrid::new(zx << 3, from.y(), zz << 3)) {
                         if coord.x() >= from.x() && coord.x() <= to.x() && coord.z() >= from.z() && coord.z() <= to.z() {
                             count += 1;
                         }
@@ -222,7 +220,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let dz = s.pop_int();
             let dy = s.pop_int();
             let dx = s.pop_int();
-            let base = CoordGrid::from(s.pop_int() as u32);
+            let base = pop_coord(s)?;
             let nc = CoordGrid::new(
                 (base.x() as i32 + dx) as u16,
                 (base.y() as i32 + dy).clamp(0, 3) as u8,
@@ -245,8 +243,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let dst_height = s.pop_int_as::<u8>()?;
             let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
-            let dst = CoordGrid::from(s.pop_int() as u32);
-            let src = CoordGrid::from(s.pop_int() as u32);
+            let dst = pop_coord(s)?;
+            let src = pop_coord(s)?;
             engine_mut::<E>().map_proj_anim(
                 src.y(),
                 src.x(),
@@ -274,7 +272,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, SPOTANIM_MAP => |s| {
             let delay = s.pop_int_as::<u16>()?;
             let height = s.pop_int_as::<u8>()?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let spotanim = pop_spotanim(s)?;
             engine_mut::<E>().anim_map(coord.y(), coord.x(), coord.z(), spotanim.id, height, delay);
         });
@@ -296,7 +294,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 1023
         #[cfg(since_274)]
         none!(m, MAP_LOC => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             s.push_int(engine::<E>().map_loc(coord) as i32);
         });
 
@@ -307,7 +305,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let loops = s.pop_int_as::<u8>()?;
             let synth = s.pop_int();
             let range = s.pop_int_as::<u8>()?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             if synth == -1 {
                 return Ok(());
             }

@@ -38,7 +38,7 @@ impl Engine {
     pub(crate) fn target_to_subject(target: &InteractionTarget) -> Option<ScriptSubject> {
         match target {
             InteractionTarget::Obj { coord, id, count } => Some(ScriptSubject::Obj(ObjRef {
-                coord: coord.packed(),
+                coord: *coord,
                 id: *id,
                 count: *count,
             })),
@@ -58,7 +58,7 @@ impl Engine {
                 layer,
                 ..
             } => Some(ScriptSubject::Loc(LocRef {
-                coord: coord.packed(),
+                coord: *coord,
                 id: *id,
                 shape: *shape as u8,
                 angle: *angle as u8,
@@ -531,7 +531,7 @@ impl Engine {
         match target {
             InteractionTarget::Obj { coord, .. } => {
                 if naive || (x == coord.x() && z == coord.z()) {
-                    pathing.queue_waypoint(coord.x(), coord.z());
+                    pathing.queue_waypoint(*coord);
                 } else {
                     pathing.queue_waypoints(rsmod::find_path(
                         y,
@@ -561,7 +561,7 @@ impl Engine {
                 ..
             } => {
                 if naive {
-                    pathing.queue_waypoint(coord.x(), coord.z());
+                    pathing.queue_waypoint(*coord);
                 } else {
                     let forceapproach = cache()
                         .locs

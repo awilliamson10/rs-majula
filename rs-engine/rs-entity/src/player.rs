@@ -1211,7 +1211,7 @@ mod interaction_tests {
     #[test]
     fn reset_does_not_clear_waypoints() {
         let mut p = make_player();
-        p.pathing.queue_waypoint(3225, 3222);
+        p.pathing.queue_waypoint(CoordGrid::new(3225, 0, 3222));
         assert!(p.pathing.has_waypoints());
         p.reset_pathing_entity();
         assert!(p.pathing.has_waypoints());
@@ -1228,7 +1228,7 @@ mod interaction_tests {
     #[test]
     fn queue_waypoint_sets_waypoints() {
         let mut p = make_player();
-        p.pathing.queue_waypoint(3225, 3222);
+        p.pathing.queue_waypoint(CoordGrid::new(3225, 0, 3222));
         assert!(p.pathing.has_waypoints());
         assert_eq!(p.pathing.waypoint_index, 0);
     }
@@ -1236,7 +1236,7 @@ mod interaction_tests {
     #[test]
     fn clear_waypoints_removes_them() {
         let mut p = make_player();
-        p.pathing.queue_waypoint(3225, 3222);
+        p.pathing.queue_waypoint(CoordGrid::new(3225, 0, 3222));
         p.clear_waypoints();
         assert!(!p.pathing.has_waypoints());
     }
@@ -1252,7 +1252,7 @@ mod interaction_tests {
         p.pathing.queue_waypoints(&wp);
         assert_eq!(p.pathing.waypoint_index, 2);
         // first walked = waypoints[2] = wp[0] (reversed)
-        let first = CoordGrid::from(p.pathing.waypoints[2]);
+        let first = p.pathing.waypoints[2];
         assert_eq!(first.x(), 3223);
     }
 
@@ -1540,7 +1540,7 @@ mod interaction_tests {
     fn waypoints_prevent_cant_reach() {
         let mut p = make_player();
         p.set_interaction(obj_target(), ServerTriggerType::ApObj1 as u8, true);
-        p.pathing.queue_waypoint(3225, 3222);
+        p.pathing.queue_waypoint(CoordGrid::new(3225, 0, 3222));
 
         let interacted = false;
         let cant_reach = !interacted && !p.pathing.has_waypoints() && p.pathing.steps_taken == 0;
@@ -1563,7 +1563,7 @@ mod interaction_tests {
     fn p_stopaction_clears_interaction_and_waypoints() {
         let mut p = make_player();
         p.set_interaction(obj_target(), ServerTriggerType::ApObj4 as u8, true);
-        p.pathing.queue_waypoint(3225, 3222);
+        p.pathing.queue_waypoint(CoordGrid::new(3225, 0, 3222));
 
         // p_stopaction = clear_waypoints + clear_interaction
         p.clear_waypoints();

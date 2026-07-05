@@ -1,6 +1,7 @@
 use crate::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, cache, engine, engine_mut};
 use crate::state::{LocRef, ObjRef, ScriptState};
 use crate::{NpcUid, PlayerUid, Result, ScriptError};
+use rs_grid::CoordGrid;
 use rs_inv::{Inventory, STACK_LIMIT, StackMode};
 use rs_pack::ParamValue;
 use rs_pack::cache::dbrow::DbRowType;
@@ -52,7 +53,7 @@ pub(crate) fn require_inv_access(state: &ScriptState, inv: &InvType, idx: usize)
 /// dropped as individual single-count piles, while a stackable amount is dropped
 /// as one combined pile.
 pub(crate) fn add_obj_split<E: ScriptEngine + 'static>(
-    coord: u32,
+    coord: CoordGrid,
     id: u16,
     count: u32,
     stackable: bool,
@@ -463,6 +464,17 @@ pub(crate) fn pop_count(state: &mut ScriptState) -> Result<u32> {
         )));
     }
     Ok(count.clamp(0, i32::MAX) as u32)
+}
+
+pub(crate) fn pop_coord(state: &mut ScriptState) -> Result<CoordGrid> {
+    let coord = state.pop_int();
+    if coord < 0 {
+        return Err(ScriptError::Runtime(format!(
+            "coord is out of range: {}",
+            coord
+        )));
+    }
+    Ok(CoordGrid::from(coord.clamp(0, i32::MAX) as u32))
 }
 
 /// Pops an integer from the script stack and looks up the corresponding [`EnumType`] from the cache.

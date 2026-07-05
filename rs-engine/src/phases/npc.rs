@@ -8,7 +8,7 @@ use rs_info::FocusKind;
 use rs_pack::cache::CacheStore;
 use rs_pack::cache::hunt::{HuntType, check_hunt_condition};
 use rs_pack::types::*;
-use rs_vm::engine::ScriptEngine;
+use rs_vm::engine::{ScriptEngine, ScriptNpc};
 use rs_vm::state::{ExecutionState, ScriptArgument};
 use rs_vm::subject::ScriptSubject;
 use rs_vm::trigger::ServerTriggerType;
@@ -927,14 +927,18 @@ impl Engine {
                 if zx < 0 || zz < 0 {
                     continue;
                 }
-                let locs = engine.get_zone_locs((zx as u16) << 3, coord.y(), (zz as u16) << 3);
+                let locs = engine.get_zone_locs(CoordGrid::new(
+                    (zx as u16) << 3,
+                    coord.y(),
+                    (zz as u16) << 3,
+                ));
                 for loc_ref in locs {
                     if let Some(id) = check_loc
                         && loc_ref.id != id
                     {
                         continue;
                     }
-                    let loc_coord = CoordGrid::from(loc_ref.coord);
+                    let loc_coord = loc_ref.coord;
                     if coord.distance(loc_coord) > distance {
                         continue;
                     }
@@ -1194,7 +1198,11 @@ impl Engine {
                 let dest_z = (active.npc.spawn_coord.z() as i32 + dz) as u16;
                 if dest_x != active.npc.pathing.coord.x() || dest_z != active.npc.pathing.coord.z()
                 {
-                    active.npc.pathing.queue_waypoint(dest_x, dest_z);
+                    active.npc.pathing.queue_waypoint(CoordGrid::new(
+                        dest_x,
+                        active.coord().y(),
+                        dest_z,
+                    ));
                 }
             }
         }
@@ -1255,7 +1263,7 @@ impl Engine {
 
         if !active.npc.pathing.has_waypoints() && active.npc.interaction.target.is_none() {
             // requeue waypoints in cases where an npc was interacting and the interaction has been cleared
-            active.npc.pathing.queue_waypoint(dest.x(), dest.z());
+            active.npc.pathing.queue_waypoint(dest);
         }
 
         active.npc.stuck_counter += 1;
@@ -1279,7 +1287,7 @@ impl Engine {
                 active.npc.patrol_delay_ticks_remaining = -1;
                 let next_idx = active.npc.next_patrol_point as usize % len;
                 dest = CoordGrid::from(patrol[next_idx].coord as u32);
-                active.npc.pathing.queue_waypoint(dest.x(), dest.z());
+                active.npc.pathing.queue_waypoint(dest);
             }
         }
 
@@ -1347,6 +1355,7 @@ impl Engine {
         let members = engine().members;
         let spawn = active.npc.spawn_coord;
         let size = active.npc.pathing.size;
+        let m1 = CoordGrid::new(mx, level, mz);
 
         // Prefer the diagonal away from the player; if it is blocked or would
         // leave maxrange, fall back to the X axis, then the Z axis.
@@ -1360,11 +1369,12 @@ impl Engine {
             size,
             extra_flag,
             collision(),
-        ) && CoordGrid::new(mx, level, mz).distance(spawn) <= maxrange;
+        ) && m1.distance(spawn) <= maxrange;
 
         if diagonal_ok {
-            active.npc.pathing.queue_waypoint(mx, mz);
+            active.npc.pathing.queue_waypoint(m1);
         } else {
+            let m2 = CoordGrid::new(mx, level, coord.z());
             let primary_ok = rs_entity::can_travel(
                 members,
                 level,
@@ -1375,7 +1385,8 @@ impl Engine {
                 size,
                 extra_flag,
                 collision(),
-            ) && CoordGrid::new(mx, level, coord.z()).distance(spawn) <= maxrange;
+            ) && m2.distance(spawn) <= maxrange;
+            let m3 = CoordGrid::new(coord.x(), level, mz);
             let secondary_ok = rs_entity::can_travel(
                 members,
                 level,
@@ -1386,13 +1397,12 @@ impl Engine {
                 size,
                 extra_flag,
                 collision(),
-            ) && CoordGrid::new(coord.x(), level, mz).distance(spawn)
-                <= maxrange;
+            ) && m3.distance(spawn) <= maxrange;
 
             if primary_ok {
-                active.npc.pathing.queue_waypoint(mx, coord.z());
+                active.npc.pathing.queue_waypoint(m2);
             } else if secondary_ok {
-                active.npc.pathing.queue_waypoint(coord.x(), mz);
+                active.npc.pathing.queue_waypoint(m3);
             }
         }
 

@@ -4,6 +4,7 @@ use crate::subject::ScriptSubject;
 use crate::trigger::ServerTriggerType;
 use crate::{NpcUid, PlayerUid, ScriptError};
 use num_enum::TryFromPrimitive;
+use rs_grid::CoordGrid;
 use rs_pack::cache::script::Script;
 use std::any::type_name;
 use std::sync::Arc;
@@ -1163,7 +1164,7 @@ pub struct TimedScript {
 pub struct NpcRef {
     pub nid: u16,
     pub id: u16,
-    pub coord: u32,
+    pub coord: CoordGrid,
 }
 
 /// A snapshot reference to a location (interactable world object) entity.
@@ -1172,7 +1173,7 @@ pub struct NpcRef {
 /// give the running script access to a specific location on the map.
 #[derive(Debug, Clone, Copy)]
 pub struct LocRef {
-    pub coord: u32,
+    pub coord: CoordGrid,
     pub id: u16,
     pub shape: u8,
     pub angle: u8,
@@ -1185,7 +1186,7 @@ pub struct LocRef {
 /// give the running script access to a specific ground item.
 #[derive(Debug, Clone, Copy)]
 pub struct ObjRef {
-    pub coord: u32,
+    pub coord: CoordGrid,
     pub id: u16,
     pub count: u32,
 }

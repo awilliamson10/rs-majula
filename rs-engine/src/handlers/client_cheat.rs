@@ -437,8 +437,7 @@ fn cheat_npc_add(args: &mut Split<char>, active: &mut ActivePlayer) -> Result<()
     let mut npc_id = None;
     parse_npc(args.next(), |npc_type| npc_id = Some(npc_type.id))?;
     if let Some(id) = npc_id {
-        let coord = active.player.pathing.coord.packed();
-        engine_mut().add_npc_spawned(coord, id, 500)?;
+        engine_mut().add_npc_spawned(active.player.pathing.coord, id, 500)?;
     }
     Ok(())
 }

@@ -4,7 +4,6 @@ use crate::state::ObjRef;
 use crate::state::ScriptState;
 use crate::util::*;
 use crate::{ScriptError, active_player_mut, handlers, none};
-use rs_grid::CoordGrid;
 use rs_inv::StackMode;
 use rs_pack::cache::inv::InvScope;
 use rs_pack::cache::provider::CacheType;
@@ -40,7 +39,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, BOTH_DROPSLOT => |s, player| {
             let duration = s.pop_int();
             let slot = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
             require_inv_access(s, inv, secondary)?;
@@ -55,7 +54,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             if completed == 0 || !obj_type.tradeable {
                 return Ok(());
             }
-            engine_mut::<E>().add_obj(coord.packed(), item.obj, item.num, Some(to_uid.username37()), duration as u64)?;
+            engine_mut::<E>().add_obj(coord, item.obj, item.num, Some(to_uid.username37()), duration as u64)?;
         });
 
         // 4301
@@ -169,11 +168,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // https://x.com/JagexAsh/status/1778879334167548366
         active_player_mut!(m, INV_DROPALL => |s, player| {
             let duration = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let inv = pop_inv(s)?;
             require_inv_access(s, inv, s.int_operand() as usize)?;
             let inventory = get_inv_mut::<E>(inv.id, player)?;
-            let packed = coord.packed();
             for slot in 0..inventory.capacity {
                 let Some(item) = inventory.get(slot as u16).copied() else {
                     continue
@@ -184,7 +182,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 if !obj_type.tradeable {
                     continue;
                 }
-                engine_mut::<E>().add_obj(packed, item.obj, item.num, None, duration as u64)?;
+                engine_mut::<E>().add_obj(coord, item.obj, item.num, None, duration as u64)?;
             }
         });
 
@@ -194,7 +192,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let count = pop_count(s)?;
             let obj = pop_obj(s)?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let inv = pop_inv(s)?;
             require_inv_access(s, inv, s.int_operand() as usize)?;
             let completed = get_inv_mut::<E>(inv.id, player)?.delete(obj.id, count);
@@ -202,7 +200,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 return Ok(());
             }
             engine_mut::<E>().add_obj_delayed(
-                coord.packed(),
+                coord,
                 obj.id,
                 completed,
                 Some(player.uid().username37()),
@@ -217,7 +215,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let count = pop_count(s)?;
             let obj = pop_obj(s)?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
             require_inv_access(s, inv, secondary)?;
@@ -225,15 +223,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             if completed == 0 {
                 return Ok(());
             }
-            let packed = coord.packed();
             engine_mut::<E>().add_obj(
-                packed,
+                coord,
                 obj.id,
                 completed,
                 Some(player.uid().username37()),
                 duration as u64
             )?;
-            set_active_obj(s, ObjRef { coord: packed, id: obj.id, count: completed }, secondary != 0);
+            set_active_obj(s, ObjRef { coord, id: obj.id, count: completed }, secondary != 0);
         });
 
         // 4312
@@ -241,7 +238,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, INV_DROPSLOT => |s, player| {
             let duration = s.pop_int();
             let slot = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let inv = pop_inv(s)?;
             let secondary = s.int_operand() as usize;
             require_inv_access(s, inv, secondary)?;
@@ -258,10 +255,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             inventory.remove(slot as u16, item.num);
 
             let receiver37 = Some(player.uid().username37());
-            let packed = coord.packed();
-            add_obj_split::<E>(packed, item.obj, item.num, stackable, receiver37, duration as u64)?;
-
-            set_active_obj(s, ObjRef { coord: packed, id: item.obj, count: item.num }, secondary != 0);
+            add_obj_split::<E>(coord, item.obj, item.num, stackable, receiver37, duration as u64)?;
+            set_active_obj(s, ObjRef { coord, id: item.obj, count: item.num }, secondary != 0);
         });
 
         // 4313

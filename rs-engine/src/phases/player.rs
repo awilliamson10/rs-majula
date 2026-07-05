@@ -549,10 +549,10 @@ impl Engine {
         if active.player.pathing.is_last_or_no_waypoint() && following {
             if let InteractionTarget::Player { pid } = target {
                 if let Some(target_player) = engine().get_player(*pid) {
-                    active.player.pathing.queue_waypoint(
-                        target_player.player.pathing.follow_coord.x(),
-                        target_player.player.pathing.follow_coord.z(),
-                    );
+                    active
+                        .player
+                        .pathing
+                        .queue_waypoint(target_player.player.pathing.follow_coord);
                 }
             }
             return;

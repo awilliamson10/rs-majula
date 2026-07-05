@@ -40,8 +40,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, NPC_ADD => |s| {
             let duration = s.pop_int();
             let id = s.pop_int_as::<u16>()?;
-            let coord = s.pop_int();
-            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord as u32, id, duration as u64)? {
+            let coord = pop_coord(s)?;
+            if let Some(uid) = engine_mut::<E>().add_npc_spawned(coord, id, duration as u64)? {
                 set_active_npc(s, uid, s.int_operand() != 0);
             }
         });
@@ -110,7 +110,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2508
         // https://x.com/JagexAsh/status/1821835323808026853
         active_npc!(m, NPC_COORD => |s, npc| {
-            s.push_int(npc.coord() as i32);
+            s.push_int(npc.coord().packed() as i32);
         });
 
         // 2509
@@ -127,16 +127,13 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2511
         active_npc_mut!(m, NPC_DELAY => |s, npc| {
-            let delay = s.pop_int();
-            let clock = engine::<E>().clock();
-            npc.delay(clock + 1 + delay as u32);
+            npc.delay(engine::<E>().clock() + 1 + s.pop_int() as u32);
             s.execution = ExecutionState::NpcSuspended;
         });
 
         // 2512
         active_npc_mut!(m, NPC_FACESQUARE => |s, npc| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            npc.facesquare(coord.x(), coord.z());
+            npc.facesquare(pop_coord(s)?);
         });
 
         // 2513
@@ -145,13 +142,13 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
             let npc = pop_npc(s)?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis)?;
 
             let closest = npcs
                 .iter()
-                .min_by_key(|r| coord.euclidean_squared_distance(CoordGrid::from(r.coord)));
+                .min_by_key(|r| coord.euclidean_squared_distance(r.coord));
 
             if let Some(npc_ref) = closest {
                 set_active_npc(s, NpcUid::new(npc_ref.id, npc_ref.nid), s.int_operand() != 0);
@@ -166,7 +163,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
             let npc = pop_npc(s)?;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let npcs = iterators::npc_distance::<E>(npc.id, coord, distance, vis)?;
             s.npc_iterator = Some(NpcIteratorState {
                 matches: npcs,
@@ -179,7 +176,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, NPC_FINDALLANY => |s| {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
             let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             s.npc_iterator = Some(NpcIteratorState {
                 matches: npcs,
@@ -189,8 +186,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2516
         none!(m, NPC_FINDALLZONE => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            let npcs = iterators::npc_zone::<E>(coord);
+            let npcs = iterators::npc_zone::<E>(pop_coord(s)?);
             s.npc_iterator = Some(NpcIteratorState {
                 matches: npcs,
                 cursor: 0,
@@ -202,7 +198,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
             let category = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             let c = cache();
@@ -215,7 +211,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                         .and_then(|t| t.category)
                         .is_some_and(|cat| cat as i32 == category)
                 })
-                .min_by_key(|r| coord.euclidean_squared_distance(CoordGrid::from(r.coord)));
+                .min_by_key(|r| coord.euclidean_squared_distance(r.coord));
 
             if let Some(npc_ref) = closest {
                 set_active_npc(s, NpcUid::new(npc_ref.id, npc_ref.nid), s.int_operand() != 0);
@@ -228,13 +224,12 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2518
         none!(m, NPC_FINDEXACT => |s| {
             let id = s.pop_int() as u16;
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let npcs = iterators::npc_zone::<E>(coord);
 
             if let Some(npc_ref) = npcs.iter().find(|r| {
-                let c = CoordGrid::from(r.coord);
-                r.id == id && c.x() == coord.x() && c.z() == coord.z() && c.y() == coord.y()
+                r.id == id && r.coord == coord
             }) {
                 set_active_npc(s, NpcUid::new(npc_ref.id, npc_ref.nid), s.int_operand() != 0);
                 s.push_int(1);
@@ -283,8 +278,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2521
         none!(m, NPC_FINDUID => |s| {
-            let uid = s.pop_int();
-            let nid = (uid & 0xFFFF) as u16;
+            let nid = (s.pop_int() & 0xFFFF) as u16;
             match engine::<E>().get_npc(nid) {
                 None => s.push_int(0),
                 Some(npc) => {
@@ -328,7 +322,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, NPC_HUNT => |s| {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
 
@@ -341,7 +335,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                         .and_then(|t| t.op.as_ref())
                         .is_some_and(|ops| ops.get(1).is_some_and(|o| o.is_some()))
                 })
-                .min_by_key(|r| coord.euclidean_squared_distance(CoordGrid::from(r.coord)));
+                .min_by_key(|r| coord.euclidean_squared_distance(r.coord));
 
             if let Some(npc_ref) = closest {
                 set_active_npc(s, NpcUid::new(npc_ref.id, npc_ref.nid), s.int_operand() != 0);
@@ -357,7 +351,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         none!(m, NPC_HUNTALL => |s| {
             let vis = HuntCheckVis::try_from(s.pop_int() as u8).unwrap_or(HuntCheckVis::Off);
             let distance = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
+            let coord = pop_coord(s)?;
 
             let mut npcs = iterators::npc_distance_any::<E>(coord, distance, vis)?;
             npcs.retain(|npc_ref| {
@@ -418,8 +412,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2531
         active_npc!(m, NPC_RANGE => |s, npc| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            let npc_coord = CoordGrid::from(npc.coord());
+            let coord = pop_coord(s)?;
+            let npc_coord = npc.coord();
             if coord.y() != npc_coord.y() {
                 s.push_int(-1);
             } else {
@@ -439,8 +433,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2532
         active_npc_mut!(m, NPC_SAY => |s, npc| {
-            let msg = s.pop_string();
-            npc.say(&msg);
+            npc.say(&s.pop_string());
         });
 
         // 2533
@@ -552,8 +545,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2541
         active_npc_mut!(m, NPC_TELE => |s, npc| {
-            let coord = s.pop_int() as u32;
-            npc.tele(coord);
+            npc.tele(pop_coord(s)?);
         });
 
         // 2542
@@ -570,8 +562,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // https://x.com/JagexAsh/status/1821835323808026853
         // https://x.com/JagexAsh/status/1780932943038345562
         active_npc_mut!(m, NPC_WALK => |s, npc| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            npc.walk(coord.x(), coord.z());
+            npc.walk(pop_coord(s)?);
         });
 
         // 2545
@@ -592,8 +583,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let src_height = s.pop_int_as::<u8>()?;
             let spotanim = pop_spotanim(s)?;
             let uid = s.pop_int();
-            let src = CoordGrid::from(s.pop_int() as u32);
-            let dst = CoordGrid::from(npc.coord());
+            let src = pop_coord(s)?;
+            let dst = npc.coord();
             if uid as u32 != npc.uid().packed() {
                 return Err(ScriptError::Runtime(format!("Invalid uid: {}, expected: {}", uid, npc.uid().packed())))
             }
@@ -624,7 +615,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2548
         active_npc!(m, NPC_DESTINATION => |s, npc| {
-            s.push_int(npc.destination() as i32);
+            s.push_int(npc.destination().packed() as i32);
         });
 
         // 2549

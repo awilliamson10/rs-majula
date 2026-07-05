@@ -139,7 +139,7 @@ pub trait ScriptEngine {
     ///
     /// # Returns
     /// A `Vec<NpcRef>` of NPC references in the zone.
-    fn get_zone_npcs(&self, x: u16, y: u8, z: u16) -> Vec<NpcRef>;
+    fn get_zone_npcs(&self, coord: CoordGrid) -> Vec<NpcRef>;
 
     /// Returns the packed coordinates of all players in the specified zone.
     ///
@@ -150,7 +150,7 @@ pub trait ScriptEngine {
     ///
     /// # Returns
     /// A `Vec<u32>` of packed `CoordGrid` values for each player in the zone.
-    fn get_zone_player_coords(&self, x: u16, y: u8, z: u16) -> Vec<u32>;
+    fn get_zone_player_coords(&self, coord: CoordGrid) -> Vec<CoordGrid>;
 
     /// Returns the player slot indices for all players in the specified zone.
     ///
@@ -161,7 +161,7 @@ pub trait ScriptEngine {
     ///
     /// # Returns
     /// A slice of player slot indices (`&[u16]`).
-    fn get_zone_player_pids(&self, x: u16, y: u8, z: u16) -> &[u16];
+    fn get_zone_player_pids(&self, coord: CoordGrid) -> &[u16];
 
     /// Spawns a new NPC at the given coordinate with a limited lifetime.
     ///
@@ -175,7 +175,7 @@ pub trait ScriptEngine {
     /// if no free slot is available.
     fn add_npc_spawned(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         duration: u64,
     ) -> crate::Result<Option<crate::NpcUid>>;
@@ -197,7 +197,7 @@ pub trait ScriptEngine {
     /// * `duration` - The tick at which the object should be removed.
     fn add_obj(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         count: u32,
         receiver37: Option<u64>,
@@ -215,7 +215,7 @@ pub trait ScriptEngine {
     /// * `delay` - The number of ticks to wait before the object becomes visible.
     fn add_obj_delayed(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         count: u32,
         receiver37: Option<u64>,
@@ -232,17 +232,17 @@ pub trait ScriptEngine {
     ///   the object.
     /// * `duration` - The remaining duration used to identify the specific object
     ///   instance to remove.
-    fn remove_obj(&mut self, coord: u32, id: u16, receiver37: Option<u64>, duration: u64);
+    fn remove_obj(&mut self, coord: CoordGrid, id: u16, receiver37: Option<u64>, duration: u64);
 
     /// Finds a ground object at the given coordinate by type ID.
     ///
     /// If `receiver37` is `Some`, matches objects visible to that player
     /// (receiver-owned or globally visible). If `None`, matches only
     /// globally visible objects.
-    fn find_obj(&self, coord: u32, id: u16, receiver37: Option<u64>) -> Option<ObjRef>;
+    fn find_obj(&self, coord: CoordGrid, id: u16, receiver37: Option<u64>) -> Option<ObjRef>;
 
     /// Returns all ground objects present in the specified zone.
-    fn get_zone_objs(&self, x: u16, y: u8, z: u16) -> Vec<ObjRef>;
+    fn get_zone_objs(&self, coord: CoordGrid) -> Vec<ObjRef>;
 
     /// Returns all locations (locs) present in the specified zone.
     ///
@@ -253,7 +253,7 @@ pub trait ScriptEngine {
     ///
     /// # Returns
     /// A `Vec<LocRef>` of location references in the zone.
-    fn get_zone_locs(&self, x: u16, y: u8, z: u16) -> Vec<LocRef>;
+    fn get_zone_locs(&self, coord: CoordGrid) -> Vec<LocRef>;
 
     /// Finds a specific location at the given tile.
     ///
@@ -265,7 +265,7 @@ pub trait ScriptEngine {
     ///
     /// # Returns
     /// `Some(LocRef)` if a matching location exists, `None` otherwise.
-    fn find_loc(&self, x: u16, z: u16, y: u8, id: u16) -> Option<LocRef>;
+    fn find_loc(&self, coord: CoordGrid, id: u16) -> Option<LocRef>;
 
     /// Adds a new location or changes an existing one at the given coordinate.
     ///
@@ -280,7 +280,7 @@ pub trait ScriptEngine {
     ///   untouched so a deleted dynamic loc is never resurrected.
     fn add_or_change_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         shape: u8,
         angle: u8,
@@ -305,7 +305,7 @@ pub trait ScriptEngine {
     #[allow(clippy::too_many_arguments)]
     fn merge_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         shape: u8,
         angle: u8,
         id: u16,
@@ -324,7 +324,7 @@ pub trait ScriptEngine {
     /// * `coord` - The packed coordinate.
     /// * `layer` - The collision layer of the location to remove.
     /// * `duration` - The tick at which the removal should revert.
-    fn remove_loc(&mut self, coord: u32, layer: u8, duration: u64);
+    fn remove_loc(&mut self, coord: CoordGrid, layer: u8, duration: u64);
 
     /// Plays a sequence animation on a location.
     ///
@@ -332,7 +332,7 @@ pub trait ScriptEngine {
     /// * `coord` - The packed coordinate of the location.
     /// * `id` - The location type identifier.
     /// * `seq` - The sequence (animation) identifier to play.
-    fn anim_loc(&mut self, coord: u32, id: u16, seq: u16);
+    fn anim_loc(&mut self, coord: CoordGrid, id: u16, seq: u16);
 
     /// Creates a projectile animation between two map positions.
     ///
@@ -494,7 +494,7 @@ pub trait ScriptPlayer {
     ///
     /// # Returns
     /// A packed `u32` coordinate encoding level, X, and Z.
-    fn coord(&self) -> u32;
+    fn coord(&self) -> CoordGrid;
 
     /// Returns the component ID of the last interface button the player clicked.
     ///
@@ -1172,7 +1172,7 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `x` - The tile X coordinate to face.
     /// * `z` - The tile Z coordinate to face.
-    fn facesquare(&mut self, x: u16, z: u16);
+    fn facesquare(&mut self, coord: CoordGrid);
 
     /// Plays a synthesized sound effect for the player.
     ///
@@ -1230,7 +1230,7 @@ pub trait ScriptPlayer {
     ///
     /// # Side Effects
     /// Clears the waypoint queue and updates the player's zone membership.
-    fn telejump(&mut self, coord: u32);
+    fn telejump(&mut self, coord: CoordGrid);
 
     /// Teleports the player to a coordinate, processing zone transitions.
     ///
@@ -1240,7 +1240,7 @@ pub trait ScriptPlayer {
     /// # Side Effects
     /// Clears the waypoint queue, updates the player's zone membership, and
     /// sends map reload data to the client if necessary.
-    fn teleport(&mut self, coord: u32);
+    fn teleport(&mut self, coord: CoordGrid);
 
     /// Plays an exact-move animation that linearly interpolates the player
     /// between two positions.
@@ -1443,7 +1443,7 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `x` - The destination tile X coordinate.
     /// * `z` - The destination tile Z coordinate.
-    fn queue_waypoint(&mut self, x: u16, z: u16);
+    fn queue_waypoint(&mut self, coord: CoordGrid);
 
     /// Starts the player walking toward the given tile, replacing any
     /// existing waypoints.
@@ -1451,7 +1451,7 @@ pub trait ScriptPlayer {
     /// # Arguments
     /// * `dest_x` - The destination tile X coordinate.
     /// * `dest_z` - The destination tile Z coordinate.
-    fn walk(&mut self, dest_x: u16, dest_z: u16);
+    fn walk(&mut self, coord: CoordGrid);
 
     /// Clears all pending movement waypoints.
     fn clear_waypoints(&mut self);
@@ -1470,7 +1470,7 @@ pub trait ScriptPlayer {
     #[allow(clippy::too_many_arguments)]
     fn set_interaction_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         width: u8,
         length: u8,
@@ -1494,7 +1494,7 @@ pub trait ScriptPlayer {
     /// * `id` - The object type identifier.
     /// * `count` - The stack count used to identify the specific object instance.
     /// * `op` - The interaction opcode.
-    fn set_interaction_obj(&mut self, coord: u32, id: u16, count: u32, op: u8);
+    fn set_interaction_obj(&mut self, coord: CoordGrid, id: u16, count: u32, op: u8);
 
     /// Sets the player's interaction target to another player.
     ///
@@ -1527,7 +1527,7 @@ pub trait ScriptPlayer {
     /// `true` if the player can operate on the location from their current position.
     fn in_operable_distance_loc(
         &self,
-        coord: u32,
+        coord: CoordGrid,
         width: u8,
         length: u8,
         shape: u8,
@@ -1564,7 +1564,7 @@ pub trait ScriptNpc {
     ///
     /// # Returns
     /// A packed `u32` coordinate encoding level, X, and Z.
-    fn coord(&self) -> u32;
+    fn coord(&self) -> CoordGrid;
 
     /// Returns the NPC's collision size in tiles.
     ///
@@ -1640,7 +1640,7 @@ pub trait ScriptNpc {
     #[allow(clippy::too_many_arguments)]
     fn set_interaction_loc(
         &mut self,
-        coord: u32,
+        coord: CoordGrid,
         id: u16,
         width: u8,
         length: u8,
@@ -1657,7 +1657,7 @@ pub trait ScriptNpc {
     /// * `id` - The object type identifier.
     /// * `count` - The stack count used to identify the specific object instance.
     /// * `op` - The interaction opcode.
-    fn set_interaction_obj(&mut self, coord: u32, id: u16, count: u32, op: u8);
+    fn set_interaction_obj(&mut self, coord: CoordGrid, id: u16, count: u32, op: u8);
 
     /// Plays an animation on the NPC's model.
     ///
@@ -1748,21 +1748,21 @@ pub trait ScriptNpc {
     ///
     /// # Side Effects
     /// Updates the NPC's zone membership and collision map.
-    fn tele(&mut self, coord: u32);
+    fn tele(&mut self, coord: CoordGrid);
 
     /// Makes the NPC face a specific tile.
     ///
     /// # Arguments
     /// * `x` - The tile X coordinate to face.
     /// * `z` - The tile Z coordinate to face.
-    fn facesquare(&mut self, x: u16, z: u16);
+    fn facesquare(&mut self, coord: CoordGrid);
 
     /// Walks the NPC toward the given tile using pathfinding.
     ///
     /// # Arguments
     /// * `x` - The destination tile X coordinate.
     /// * `z` - The destination tile Z coordinate.
-    fn walk(&mut self, x: u16, z: u16);
+    fn walk(&mut self, coord: CoordGrid);
 
     /// Sets the maximum hunt range for this NPC's AI.
     ///
@@ -1807,7 +1807,7 @@ pub trait ScriptNpc {
     fn spotanim(&mut self, id: u16, height: u16, delay: u16);
 
     /// Returns the NPC's current coord destination.
-    fn destination(&self) -> u32;
+    fn destination(&self) -> CoordGrid;
 }
 
 thread_local! {

@@ -24,7 +24,7 @@ pub enum MoveStrategy {
 /// produces walk/run direction values that are sent to the client for animation.
 pub struct PathingEntity {
     pub last_movement: u32,
-    pub waypoints: [u32; 25],
+    pub waypoints: [CoordGrid; 25],
     pub coord: CoordGrid,
     pub waypoint_index: i32,
     pub walk_step: Option<Direction>,
@@ -65,7 +65,7 @@ impl PathingEntity {
             walk_dir: -1,
             run_dir: -1,
             walk_step: None,
-            waypoints: [0; 25],
+            waypoints: [CoordGrid::from(0); 25],
             waypoint_index: -1,
             steps_taken: 0,
             last_movement: 0,
@@ -154,8 +154,8 @@ impl PathingEntity {
     ///
     /// # Side Effects
     /// * Sets `waypoints[0]` to the packed coordinate and `waypoint_index` to 0.
-    pub const fn queue_waypoint(&mut self, x: u16, z: u16) {
-        self.waypoints[0] = ((x as u32) << 14) | (z as u32);
+    pub const fn queue_waypoint(&mut self, coord: CoordGrid) {
+        self.waypoints[0] = coord;
         self.waypoint_index = 0;
     }
 
@@ -178,7 +178,7 @@ impl PathingEntity {
         };
         let mut index = 0;
         while index < len {
-            self.waypoints[index] = waypoints[waypoints.len() - 1 - index];
+            self.waypoints[index] = CoordGrid::from(waypoints[waypoints.len() - 1 - index]);
             index += 1;
         }
         self.waypoint_index = if len > 0 { len as i32 - 1 } else { -1 };
@@ -337,10 +337,8 @@ impl PathingEntity {
                 self.steps_taken += 1;
 
                 if self.waypoint_index >= 0 {
-                    let wp = self.waypoints[self.waypoint_index as usize];
-                    let dest_x = (wp >> 14) as u16;
-                    let dest_z = (wp & 0x3FFF) as u16;
-                    if self.coord.x() == dest_x && self.coord.z() == dest_z {
+                    let coord = self.waypoints[self.waypoint_index as usize];
+                    if self.coord.x() == coord.x() && self.coord.z() == coord.z() {
                         self.waypoint_index -= 1;
                     }
                 }
@@ -383,9 +381,9 @@ impl PathingEntity {
 
         let src_x = self.coord.x();
         let src_z = self.coord.z();
-        let wp = self.waypoints[self.waypoint_index as usize];
-        let dest_x = ((wp >> 14) & 0x3FFF) as u16;
-        let dest_z = (wp & 0x3FFF) as u16;
+        let coord = self.waypoints[self.waypoint_index as usize];
+        let dest_x = coord.x();
+        let dest_z = coord.z();
 
         let walk = |dx: i8, dz: i8| {
             can_travel(

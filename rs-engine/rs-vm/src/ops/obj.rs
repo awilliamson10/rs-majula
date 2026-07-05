@@ -4,7 +4,6 @@ use crate::register::OpsRegistry;
 use crate::state::ObjRef;
 use crate::util::*;
 use crate::{ScriptError, active_obj, handlers, iterators, none};
-use rs_grid::CoordGrid;
 use rs_pack::ParamValue;
 use rs_pack::cache::script::*;
 
@@ -33,7 +32,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let count = s.pop_int();
             let obj_id = s.pop_int();
-            let coord = s.pop_int() as u32;
+            let coord = pop_coord(s)?;
 
             if obj_id == -1 || count == -1 {
                 return Ok(());
@@ -66,7 +65,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let duration = s.pop_int();
             let count = s.pop_int();
             let obj_id = s.pop_int();
-            let coord = s.pop_int() as u32;
+            let coord = pop_coord(s)?;
 
             if obj_id == -1 || count == -1 {
                 return Ok(());
@@ -87,7 +86,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3502
         active_obj!(m, OBJ_COORD => |s, obj| {
-            s.push_int(obj.coord as i32);
+            s.push_int(obj.coord.packed() as i32);
         });
 
         // 3503
@@ -109,7 +108,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 3505
         none!(m, OBJ_FIND => |s| {
             let id = s.pop_int_as::<u16>()?;
-            let coord = s.pop_int() as u32;
+            let coord = pop_coord(s)?;
             let receiver37 = s.active_player.map(|uid| uid.username37());
 
             if let Some(obj) = engine_mut::<E>().find_obj(coord, id, receiver37) {
@@ -122,8 +121,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3506
         none!(m, OBJ_FINDALLZONE => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            let objs = iterators::obj_zone::<E>(coord);
+            let objs = iterators::obj_zone::<E>(pop_coord(s)?);
             s.obj_iterator = Some(iterators::ObjIteratorState {
                 matches: objs,
                 cursor: 0,
@@ -196,8 +194,6 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 .active_player
                 .ok_or_else(|| ScriptError::Runtime("no active_player".into()))?;
 
-            let coord = CoordGrid::from(obj.coord);
-
             let stackable = obj_type.stackable;
             let obj_id = obj.id;
 
@@ -214,7 +210,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 add_obj_split::<E>(player_coord, obj_id, overflow, stackable, Some(user37), LOOTDROP_DURATION)?;
             }
 
-            engine_mut::<E>().remove_obj(coord.packed(), obj_id, Some(user37), obj_type.respawnrate as u64);
+            engine_mut::<E>().remove_obj(obj.coord, obj_id, Some(user37), obj_type.respawnrate as u64);
         });
 
         // 3511

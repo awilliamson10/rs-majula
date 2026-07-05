@@ -3,9 +3,8 @@ use crate::iterators;
 use crate::iterators::LocIteratorState;
 use crate::register::OpsRegistry;
 use crate::state::LocRef;
-use crate::util::{pop_param, pop_seq, set_active_loc};
+use crate::util::{pop_coord, pop_param, pop_seq, set_active_loc};
 use crate::{ScriptError, active_loc, handlers, none};
-use rs_grid::CoordGrid;
 use rs_pack::ParamValue;
 use rs_pack::cache::script::*;
 use rs_pack::types::LocShape;
@@ -35,7 +34,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let shape = s.pop_int_as::<u8>()?;
             let angle = s.pop_int_as::<u8>()?;
             let id = s.pop_int_as::<u16>()?;
-            let coord = s.pop_int() as u32;
+            let coord = pop_coord(s)?;
 
             let layer = LocShape::try_from(shape)
                 .map_err(|_| ScriptError::Runtime(format!("invalid loc shape: {}", shape)))?
@@ -80,20 +79,19 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3005
         active_loc!(m, LOC_COORD => |s, loc| {
-            s.push_int(loc.coord as i32);
+            s.push_int(loc.coord.packed() as i32);
         });
 
         // 3006
         active_loc!(m, LOC_DEL => |s, loc| {
-            let duration = s.pop_int();
-            engine_mut::<E>().remove_loc(loc.coord, loc.layer, duration as u64);
+            engine_mut::<E>().remove_loc(loc.coord, loc.layer, s.pop_int() as u64);
         });
 
         // 3007
         none!(m, LOC_FIND => |s| {
             let id = s.pop_int();
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            if let Some(loc) = engine::<E>().find_loc(coord.x(), coord.z(), coord.y(), id as u16) {
+            let coord = pop_coord(s)?;
+            if let Some(loc) = engine::<E>().find_loc(coord, id as u16) {
                 set_active_loc(s, loc, s.int_operand() != 0);
                 s.push_int(1);
             } else {
@@ -103,8 +101,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3008
         none!(m, LOC_FINDALLZONE => |s| {
-            let coord = CoordGrid::from(s.pop_int() as u32);
-            let locs = iterators::loc_zone::<E>(coord);
+            let locs = iterators::loc_zone::<E>(pop_coord(s)?);
             s.loc_iterator = Some(LocIteratorState { matches: locs, cursor: 0 });
         });
 

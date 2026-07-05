@@ -142,7 +142,6 @@ fn handle(
 
     let y = active.player.pathing.coord.y();
     let Some(zone) = engine().zones.zone(x, y, z) else {
-        debug_assert!(false, "Zone not found at coord: x={}, y={}, z={}", x, y, z);
         active.player.move_request = false;
         active.clear_pending_action()?;
         return Ok(());

@@ -56,12 +56,12 @@ pub struct PlayerIteratorState {
 /// # Call Stack
 /// **Calls:** [`ScriptEngine::get_zone_locs`] via the global engine accessor.
 pub fn loc_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<LocRef> {
-    engine::<E>().get_zone_locs(coord.x(), coord.y(), coord.z())
+    engine::<E>().get_zone_locs(coord)
 }
 
 /// Collects all ground object references in the zone containing the given coordinate.
 pub fn obj_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<ObjRef> {
-    engine::<E>().get_zone_objs(coord.x(), coord.y(), coord.z())
+    engine::<E>().get_zone_objs(coord)
 }
 
 /// Collects all NPC references in the zone containing the given coordinate.
@@ -77,14 +77,12 @@ pub fn obj_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<ObjRef> {
 /// # Call Stack
 /// **Calls:** [`ScriptEngine::get_zone_npcs`] via the global engine accessor.
 pub fn npc_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<NpcRef> {
-    engine::<E>().get_zone_npcs(coord.x(), coord.y(), coord.z())
+    engine::<E>().get_zone_npcs(coord)
 }
 
 /// Returns the pids of all players in the zone containing `coord`.
 pub fn player_zone<E: ScriptEngine + 'static>(coord: CoordGrid) -> Vec<u16> {
-    engine::<E>()
-        .get_zone_player_pids(coord.x(), coord.y(), coord.z())
-        .to_vec()
+    engine::<E>().get_zone_player_pids(coord).to_vec()
 }
 
 /// Internal implementation for distance-based NPC searches.
@@ -124,9 +122,13 @@ fn npc_distance_inner<E: ScriptEngine + 'static>(
             if zx < 0 || zz < 0 {
                 continue;
             }
-            let npcs = engine.get_zone_npcs((zx as u16) << 3, coord.y(), (zz as u16) << 3);
+            let npcs = engine.get_zone_npcs(CoordGrid::new(
+                (zx as u16) << 3,
+                coord.y(),
+                (zz as u16) << 3,
+            ));
             for npc_ref in npcs {
-                let npc_coord = CoordGrid::from(npc_ref.coord);
+                let npc_coord = npc_ref.coord;
                 if coord.distance(npc_coord) > distance {
                     continue;
                 }
@@ -242,10 +244,10 @@ pub fn hunt_players<E: ScriptEngine + 'static>(
             }
             let zone_x = (zx as u16) << 3;
             let zone_z = (zz as u16) << 3;
-            let pids = engine.get_zone_player_pids(zone_x, coord.y(), zone_z);
-            let coords = engine.get_zone_player_coords(zone_x, coord.y(), zone_z);
+            let pids = engine.get_zone_player_pids(CoordGrid::new(zone_x, coord.y(), zone_z));
+            let coords = engine.get_zone_player_coords(CoordGrid::new(zone_x, coord.y(), zone_z));
             for (i, &pid) in pids.iter().enumerate() {
-                let player_coord = CoordGrid::from(coords[i]);
+                let player_coord = coords[i];
                 if coord.distance(player_coord) > distance {
                     continue;
                 }
