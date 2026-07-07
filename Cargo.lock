@@ -1842,6 +1842,20 @@ name = "rev-cfg"
 version = "0.1.10"
 
 [[package]]
+name = "rl-env"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "rs-engine",
+ "rs-entity",
+ "rs-grid",
+ "rs-pack",
+ "rs-stat",
+ "rs-vm",
+ "tokio",
+]
+
+[[package]]
 name = "rs-cam"
 version = "0.1.10"
 dependencies = [
