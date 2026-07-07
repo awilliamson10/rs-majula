@@ -2037,6 +2037,46 @@ impl Engine {
         self.player_list.get_mut(pid)
     }
 
+    /// Spawn a bot player headlessly at `coord`, bypassing the login pipeline.
+    /// Reuses `accept_login` (same-crate private) with a fabricated bot handle
+    /// and no saved profile, then relocates to `coord`.
+    pub fn spawn_player(&mut self, username: &str, coord: CoordGrid) -> u16 {
+        use crate::clients::client_game::create_io;
+        use rs_crypto::isaac::IsaacPair;
+
+        let pid = self.player_list.next_pid().expect("free pid slot");
+        let io = create_io(IsaacPair::new(&[0; 4], &[0; 4]));
+        let request = LoginRequest {
+            handle: io.handle,
+            username: username.into(),
+            password: "x".into(),
+            low_memory: false,
+            remote_addr: "127.0.0.1:0".parse().unwrap(),
+            reconnect: false,
+        };
+
+        // accept_login runs RuneScript (appearance/login trigger), which
+        // touches the thread-local engine()/cache() globals. Called outside
+        // cycle(), those aren't installed, so install them here for the
+        // duration -- mirroring the raw-pointer pattern `cycle()` itself uses
+        // to sidestep the double-mutable-borrow of `self` inside the closure.
+        let engine_ptr = self as *mut Engine;
+        with_engine(self, || {
+            let engine = unsafe { &mut *engine_ptr };
+            engine.accept_login(request, None, pid);
+            // Re-seat zone membership at the new coord. accept_login
+            // registered the player in the tutorial-coord zone via
+            // add_player; remove_player tears that registration down (using
+            // the still-tutorial coord) before we relocate and re-add at the
+            // target coord.
+            if let Some(mut active) = engine.remove_player(pid) {
+                active.player.pathing.coord = coord;
+                engine.add_player(pid, active, pid as i64);
+            }
+        });
+        pid
+    }
+
     pub fn add_npc(&mut self, mut active: ActiveNpc) -> Option<NpcUid> {
         let nid = self.npc_list.next_nid()?;
         let id = active.npc.uid.id();
