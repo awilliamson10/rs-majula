@@ -4,6 +4,8 @@ use rs_engine::{Engine, TickStats, LoginRequest};
 use rs_engine::{EtherInbound, EtherOutbound, DbRequest, DbResponse};
 use rs_pack::cache::CacheStore;
 use rs_pack::cache::script::ScriptProvider;
+use rs_entity::InteractionTarget;
+use rs_vm::trigger::ServerTriggerType;
 use tokio::sync::{mpsc::unbounded_channel, watch};
 
 static CACHE: OnceCell<&'static CacheStore> = OnceCell::new();
@@ -96,5 +98,79 @@ impl EnvHarness {
 
     pub fn clock(&self) -> u64 {
         self.engine.clock as u64
+    }
+
+    /// Stat indices (OSRS order): 0=Attack 1=Defence 2=Strength 3=Hitpoints.
+    /// Sets both current and base levels high for reliable melee hits.
+    pub fn buff_melee(&mut self, pid: u16) {
+        if let Some(p) = self.engine.get_player_mut(pid) {
+            for i in [0usize, 1, 2] {
+                p.player.stats.levels[i] = 99;
+                p.player.stats.base_levels[i] = 99;
+            }
+            p.player.stats.levels[3] = 99;
+            p.player.stats.base_levels[3] = 99;
+        }
+    }
+
+    /// Injects a melee-attack interaction on `attacker` targeting NPC `target_nid`,
+    /// bypassing the packet/handler pipeline (direct engine-state mutation). The
+    /// cow's (and most attackable low-level NPCs') "Attack" menu op is op2, so the
+    /// trigger used is `ApNpc2`.
+    ///
+    /// Also resets `modal_state` to 0 (`MODAL_NONE`) first. `spawn_player` bypasses
+    /// the login pipeline, so bots never click through the post-login welcome/MOTD
+    /// interface a real client would dismiss; that interface leaves `modal_state`
+    /// with `MODAL_MAIN` set (observed `modal_state == 9`, i.e.
+    /// `MODAL_MAIN | MODAL_TUT`), which makes `Player::can_access()` return `false`
+    /// forever and silently no-ops every branch of interaction processing
+    /// (`process_interaction` in `rs-engine/src/phases/player.rs`) -- combat
+    /// included, with no error or message. `EnginePlayer::close_modal` (which would
+    /// run the interface's `IfClose` script properly) lives in a private module and
+    /// isn't reachable outside `rs-engine`, so we reset the public `modal_state`
+    /// field directly instead.
+    pub fn attack_npc(&mut self, attacker: u16, target_nid: u16) {
+        if let Some(p) = self.engine.get_player_mut(attacker) {
+            p.player.modal_state = 0;
+            p.player.set_interaction(
+                InteractionTarget::Npc { nid: target_nid },
+                ServerTriggerType::ApNpc2 as u8,
+                true,
+            );
+            p.player.opcalled = true;
+        }
+    }
+
+    /// Injects a melee-attack interaction on `attacker` targeting player `target_pid`.
+    /// See [`Self::attack_npc`] for why `modal_state` is reset here too.
+    pub fn attack_player(&mut self, attacker: u16, target_pid: u16) {
+        if let Some(p) = self.engine.get_player_mut(attacker) {
+            p.player.modal_state = 0;
+            p.player.set_interaction(
+                InteractionTarget::Player { pid: target_pid },
+                ServerTriggerType::ApPlayer2 as u8,
+                true,
+            );
+            p.player.opcalled = true;
+        }
+    }
+
+    pub fn player_hp(&self, pid: u16) -> u16 {
+        self.engine
+            .get_player(pid)
+            .map(|p| p.player.stats.levels[3])
+            .unwrap_or(0)
+    }
+
+    /// Current (live) hitpoints of NPC `nid`. NPCs share the same
+    /// `stats.levels`/`base_levels` layout as players (index 3 = Hitpoints;
+    /// see `rs-pack::types::NpcStat::Hitpoints = 3`), and `ActiveNpc::damage`
+    /// decrements `npc.stats.levels[Hitpoints]` directly, so this reads the
+    /// true current HP (not a static/base value).
+    pub fn npc_hp(&self, nid: u16) -> u16 {
+        self.engine
+            .get_npc(nid)
+            .map(|n| n.npc.stats.levels[3])
+            .unwrap_or(0)
     }
 }
