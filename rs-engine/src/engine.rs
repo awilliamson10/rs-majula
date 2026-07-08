@@ -621,8 +621,14 @@ impl Engine {
             vars,
             reusable_script: None,
         };
-        for npc in spawned_npcs {
-            engine.add_npc(npc);
+        // Profiling/RL ablation: `RL_NO_STATIC_NPCS=1` skips spawning the ~7,300
+        // static world NPCs, so a headless arena ticks (near) nothing but the
+        // player(s). Used to quantify the per-tick NPC cost (Phase-1a Layer 2)
+        // and as the first step toward a minimal-world/arena env.
+        if std::env::var_os("RL_NO_STATIC_NPCS").is_none() {
+            for npc in spawned_npcs {
+                engine.add_npc(npc);
+            }
         }
 
         (engine, clock_rate_rx)
@@ -2035,6 +2041,73 @@ impl Engine {
 
     pub fn get_player_mut(&mut self, pid: u16) -> Option<&mut ActivePlayer> {
         self.player_list.get_mut(pid)
+    }
+
+    /// Spawn a bot player headlessly at `coord`, bypassing the login pipeline.
+    /// Reuses `accept_login` (same-crate private) with a fabricated bot handle
+    /// and no saved profile, then relocates to `coord`.
+    pub fn spawn_player(&mut self, username: &str, coord: CoordGrid) -> u16 {
+        use crate::clients::client_game::create_io;
+        use rs_crypto::isaac::IsaacPair;
+
+        let pid = self.player_list.next_pid().expect("free pid slot");
+        let io = create_io(IsaacPair::new(&[0; 4], &[0; 4]));
+        let request = LoginRequest {
+            handle: io.handle,
+            username: username.into(),
+            password: "x".into(),
+            low_memory: false,
+            remote_addr: "127.0.0.1:0".parse().unwrap(),
+            reconnect: false,
+        };
+
+        // accept_login runs RuneScript (appearance/login trigger), which
+        // touches the thread-local engine()/cache() globals. Called outside
+        // cycle(), those aren't installed, so install them here for the
+        // duration -- mirroring the raw-pointer pattern `cycle()` itself uses
+        // to sidestep the double-mutable-borrow of `self` inside the closure.
+        let engine_ptr = self as *mut Engine;
+        with_engine(self, || {
+            let engine = unsafe { &mut *engine_ptr };
+            engine.accept_login(request, None, pid);
+            // accept_login's post-login sequence leaves the client's
+            // welcome/tutorial modal open (modal_state != MODAL_NONE, with
+            // modal_main set to the player_kit interface), which
+            // `can_access()` treats as "busy" and blocks pathing/combat
+            // until a client sends an IfClose response. There is no real
+            // client here, so close it ourselves via the same
+            // `EnginePlayer::clear_pending_action` -> `close_modal` path a
+            // client's modal-close packet would trigger: it fires the
+            // IfClose script for modal_main/modal_chat/modal_side (a
+            // missing trigger is tolerated), clears suspended scripts and
+            // interface listeners, and resets modal_state/modal_main to
+            // MODAL_NONE/None so the spawned bot is immediately
+            // interactive.
+            if let Some(active) = engine.get_player_mut(pid) {
+                if let Err(e) = active.clear_pending_action() {
+                    error!("error closing post-login modal for spawned player {pid}: {e}");
+                }
+            }
+            // Re-seat zone membership at the new coord. accept_login
+            // registered the player in the tutorial-coord zone via
+            // add_player; remove_player tears that registration down (using
+            // the still-tutorial coord) before we relocate and re-add at the
+            // target coord.
+            if let Some(mut active) = engine.remove_player(pid) {
+                active.player.pathing.coord = coord;
+                engine.add_player(pid, active, pid as i64);
+            }
+        });
+        pid
+    }
+
+    /// Spawn an NPC of `id` at `coord` headlessly. Wraps the private
+    /// `add_npc_spawned` (which calls `add_npc`, running the `ai_spawn`
+    /// RuneScript) inside a `with_engine` scope, mirroring `spawn_player`.
+    pub fn spawn_npc(&mut self, id: u16, coord: CoordGrid) -> Option<NpcUid> {
+        with_engine(self, || {
+            engine_mut().add_npc_spawned(coord, id, 500).ok().flatten()
+        })
     }
 
     pub fn add_npc(&mut self, mut active: ActiveNpc) -> Option<NpcUid> {

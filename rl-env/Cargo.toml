@@ -1,0 +1,14 @@
+[package]
+name = "rl-env"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rs-engine = { path = "../rs-engine" }
+rs-pack   = { path = "../rs-pack" }
+rs-entity = { path = "../rs-engine/rs-entity" }
+rs-vm     = { path = "../rs-engine/rs-vm" }
+rs-grid   = { path = "../rs-engine/rs-grid" }
+rs-stat   = { path = "../rs-engine/rs-stat" }
+tokio     = { version = "1.52", features = ["sync", "rt"] }
+once_cell = "1"

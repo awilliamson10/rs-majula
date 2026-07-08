@@ -19,6 +19,7 @@ members = [
     "rs-protocol",
     "rs-protocol/macros",
     "rs-server",
+    "rl-env",
     "rev-cfg",
 ]
 resolver = "2"
