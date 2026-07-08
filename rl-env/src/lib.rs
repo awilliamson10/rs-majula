@@ -111,6 +111,12 @@ impl EnvHarness {
         self.engine.clock as u64
     }
 
+    /// Latest per-phase tick timings published by the engine after the most
+    /// recent `cycle()` (profiling). Fields are per-phase wall-ms.
+    pub fn tick_stats(&self) -> TickStats {
+        self._stats_rx.borrow().clone()
+    }
+
     /// Stat indices (OSRS order): 0=Attack 1=Defence 2=Strength 3=Hitpoints.
     /// Sets both current and base levels high for reliable melee hits, *and*
     /// backs each level with the matching XP total.

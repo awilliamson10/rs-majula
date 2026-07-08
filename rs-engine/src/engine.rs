@@ -621,8 +621,14 @@ impl Engine {
             vars,
             reusable_script: None,
         };
-        for npc in spawned_npcs {
-            engine.add_npc(npc);
+        // Profiling/RL ablation: `RL_NO_STATIC_NPCS=1` skips spawning the ~7,300
+        // static world NPCs, so a headless arena ticks (near) nothing but the
+        // player(s). Used to quantify the per-tick NPC cost (Phase-1a Layer 2)
+        // and as the first step toward a minimal-world/arena env.
+        if std::env::var_os("RL_NO_STATIC_NPCS").is_none() {
+            for npc in spawned_npcs {
+                engine.add_npc(npc);
+            }
         }
 
         (engine, clock_rate_rx)
