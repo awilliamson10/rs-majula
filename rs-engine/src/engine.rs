@@ -2077,6 +2077,15 @@ impl Engine {
         pid
     }
 
+    /// Spawn an NPC of `id` at `coord` headlessly. Wraps the private
+    /// `add_npc_spawned` (which calls `add_npc`, running the `ai_spawn`
+    /// RuneScript) inside a `with_engine` scope, mirroring `spawn_player`.
+    pub fn spawn_npc(&mut self, id: u16, coord: CoordGrid) -> Option<NpcUid> {
+        with_engine(self, || {
+            engine_mut().add_npc_spawned(coord, id, 500).ok().flatten()
+        })
+    }
+
     pub fn add_npc(&mut self, mut active: ActiveNpc) -> Option<NpcUid> {
         let nid = self.npc_list.next_nid()?;
         let id = active.npc.uid.id();
