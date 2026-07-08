@@ -2064,6 +2064,24 @@ impl Engine {
         with_engine(self, || {
             let engine = unsafe { &mut *engine_ptr };
             engine.accept_login(request, None, pid);
+            // accept_login's post-login sequence leaves the client's
+            // welcome/tutorial modal open (modal_state != MODAL_NONE, with
+            // modal_main set to the player_kit interface), which
+            // `can_access()` treats as "busy" and blocks pathing/combat
+            // until a client sends an IfClose response. There is no real
+            // client here, so close it ourselves via the same
+            // `EnginePlayer::clear_pending_action` -> `close_modal` path a
+            // client's modal-close packet would trigger: it fires the
+            // IfClose script for modal_main/modal_chat/modal_side (a
+            // missing trigger is tolerated), clears suspended scripts and
+            // interface listeners, and resets modal_state/modal_main to
+            // MODAL_NONE/None so the spawned bot is immediately
+            // interactive.
+            if let Some(active) = engine.get_player_mut(pid) {
+                if let Err(e) = active.clear_pending_action() {
+                    error!("error closing post-login modal for spawned player {pid}: {e}");
+                }
+            }
             // Re-seat zone membership at the new coord. accept_login
             // registered the player in the tutorial-coord zone via
             // add_player; remove_player tears that registration down (using

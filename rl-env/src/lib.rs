@@ -118,20 +118,14 @@ impl EnvHarness {
     /// cow's (and most attackable low-level NPCs') "Attack" menu op is op2, so the
     /// trigger used is `ApNpc2`.
     ///
-    /// Also resets `modal_state` to 0 (`MODAL_NONE`) first. `spawn_player` bypasses
-    /// the login pipeline, so bots never click through the post-login welcome/MOTD
-    /// interface a real client would dismiss; that interface leaves `modal_state`
-    /// with `MODAL_MAIN` set (observed `modal_state == 9`, i.e.
-    /// `MODAL_MAIN | MODAL_TUT`), which makes `Player::can_access()` return `false`
-    /// forever and silently no-ops every branch of interaction processing
-    /// (`process_interaction` in `rs-engine/src/phases/player.rs`) -- combat
-    /// included, with no error or message. `EnginePlayer::close_modal` (which would
-    /// run the interface's `IfClose` script properly) lives in a private module and
-    /// isn't reachable outside `rs-engine`, so we reset the public `modal_state`
-    /// field directly instead.
+    /// This mirrors the tail of the real `OpNpc` handler's `set_interaction` +
+    /// `opcalled = true` sequence (see `rs-engine/src/handlers/opnpc.rs`), but
+    /// -- unlike that handler -- does not call `clear_pending_action()` first,
+    /// since a freshly spawned bot has no prior interaction/modal state to
+    /// clear (`Engine::spawn_player` already closes the post-login welcome
+    /// modal via `EnginePlayer::clear_pending_action` before returning).
     pub fn attack_npc(&mut self, attacker: u16, target_nid: u16) {
         if let Some(p) = self.engine.get_player_mut(attacker) {
-            p.player.modal_state = 0;
             p.player.set_interaction(
                 InteractionTarget::Npc { nid: target_nid },
                 ServerTriggerType::ApNpc2 as u8,
@@ -142,10 +136,9 @@ impl EnvHarness {
     }
 
     /// Injects a melee-attack interaction on `attacker` targeting player `target_pid`.
-    /// See [`Self::attack_npc`] for why `modal_state` is reset here too.
+    /// See [`Self::attack_npc`] for details on how this relates to the real handler.
     pub fn attack_player(&mut self, attacker: u16, target_pid: u16) {
         if let Some(p) = self.engine.get_player_mut(attacker) {
-            p.player.modal_state = 0;
             p.player.set_interaction(
                 InteractionTarget::Player { pid: target_pid },
                 ServerTriggerType::ApPlayer2 as u8,
