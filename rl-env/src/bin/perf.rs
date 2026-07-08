@@ -27,9 +27,9 @@ fn run_one(cycles: u64, arena: bool) -> f64 {
 ///     isolated engine); >1 also reports aggregate/per-proc scaling.
 ///   - `arena|full` (default `arena`): `arena` boots via
 ///     `EnvHarness::boot_arena()` (no static world NPCs -- the training-time
-///     mode, ~100k+ ticks/s single-thread); `full` boots via
-///     `EnvHarness::boot()` (full ~7,300-NPC world, ~1.4k ticks/s
-///     single-thread) for comparison.
+///     mode, ~50k+ ticks/s single-thread under combat load, ~100k idle);
+///     `full` boots via `EnvHarness::boot()` (full ~7,300-NPC world,
+///     ~0.9-1.4k ticks/s single-thread) for comparison.
 /// Worker mode (`--worker <cycles> <arena|full>`): one isolated process = one
 /// engine; prints just the ticks/s number (used internally when `procs > 1`).
 fn main() {

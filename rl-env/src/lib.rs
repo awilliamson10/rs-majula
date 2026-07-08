@@ -68,8 +68,10 @@ pub struct EnvHarness {
 impl EnvHarness {
     /// Full-world boot: spawns all ~7,300 static world NPCs in addition to
     /// whatever players the caller spawns. This is the "real world" env,
-    /// used when static-NPC interaction/comparison matters; it is ~72x
-    /// slower per-tick than [`Self::boot_arena`].
+    /// used when static-NPC interaction/comparison matters. It is far slower
+    /// per-tick than [`Self::boot_arena`] — profiled pure-tick ~72x (1,391 vs
+    /// ~100k ticks/s); the `perf` bench under sustained combat shows ~60x
+    /// (~0.9k vs ~50k+ ticks/s).
     pub fn boot() -> Self {
         Self::boot_inner(true)
     }
