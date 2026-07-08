@@ -16,7 +16,7 @@ use rl_env::EnvHarness;
 /// requiring the *sum* to be positive.
 #[test]
 fn duel_episode_produces_obs_reward_and_resets() {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_arena();
     let (a, b) = env.reset_duel();
     env.cycle(); // visibility settles
 

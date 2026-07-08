@@ -384,6 +384,7 @@ async fn bootstrap(
         ether_rx,
         db_tx,
         db_rx,
+        true, // the real server always spawns the full static world
     );
     tokio::spawn(engine_tick(engine, reload_rx, clock_rate_rx));
 

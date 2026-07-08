@@ -539,6 +539,10 @@ impl Engine {
     /// * `ether_rx` -- Receiver for inbound cross-world messages.
     /// * `db_tx` -- Optional sender for database requests.
     /// * `db_rx` -- Receiver for database responses.
+    /// * `spawn_static_npcs` -- Whether to spawn the ~7,300 static world NPCs
+    ///   defined by the cache. Set to `false` for a minimal-world/arena env
+    ///   (e.g. headless RL training) where only dynamically-spawned entities
+    ///   are needed; this skips the dominant per-tick cost of a full world.
     ///
     /// # Returns
     ///
@@ -571,6 +575,7 @@ impl Engine {
         ether_rx: UnboundedReceiver<EtherInbound>,
         db_tx: Option<UnboundedSender<DbRequest>>,
         db_rx: UnboundedReceiver<DbResponse>,
+        spawn_static_npcs: bool,
     ) -> (Self, watch::Receiver<u64>) {
         let ops = register_ops();
 
@@ -621,11 +626,11 @@ impl Engine {
             vars,
             reusable_script: None,
         };
-        // Profiling/RL ablation: `RL_NO_STATIC_NPCS=1` skips spawning the ~7,300
-        // static world NPCs, so a headless arena ticks (near) nothing but the
-        // player(s). Used to quantify the per-tick NPC cost (Phase-1a Layer 2)
-        // and as the first step toward a minimal-world/arena env.
-        if std::env::var_os("RL_NO_STATIC_NPCS").is_none() {
+        // Arena mode: skip spawning the ~7,300 static world NPCs, so a
+        // headless arena ticks (near) nothing but the player(s). This is the
+        // dominant per-tick cost of a full world (Phase-1a Layer 2) and
+        // skipping it is the basis of the minimal-world/arena RL env.
+        if spawn_static_npcs {
             for npc in spawned_npcs {
                 engine.add_npc(npc);
             }
@@ -2046,6 +2051,15 @@ impl Engine {
     /// Spawn a bot player headlessly at `coord`, bypassing the login pipeline.
     /// Reuses `accept_login` (same-crate private) with a fabricated bot handle
     /// and no saved profile, then relocates to `coord`.
+    ///
+    /// This drives the same RuneScript login trigger a real client login
+    /// would (via `accept_login`'s appearance/login sequence), so it is not a
+    /// free-standing struct insert -- it runs script logic on the new player.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no free player slot is available, i.e. all `MAX_PLAYERS`
+    /// (2048) slots are already occupied.
     pub fn spawn_player(&mut self, username: &str, coord: CoordGrid) -> u16 {
         use crate::clients::client_game::create_io;
         use rs_crypto::isaac::IsaacPair;
