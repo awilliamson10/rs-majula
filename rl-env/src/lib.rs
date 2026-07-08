@@ -5,6 +5,7 @@ use rs_engine::{EtherInbound, EtherOutbound, DbRequest, DbResponse};
 use rs_pack::cache::CacheStore;
 use rs_pack::cache::script::ScriptProvider;
 use rs_entity::InteractionTarget;
+use rs_grid::CoordGrid;
 use rs_vm::trigger::ServerTriggerType;
 use tokio::sync::{mpsc::unbounded_channel, watch};
 
@@ -58,6 +59,10 @@ pub struct EnvHarness {
     _stats_rx: watch::Receiver<TickStats>,
     _new_player_tx: tokio::sync::mpsc::UnboundedSender<LoginRequest>,
     _reload_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    /// Last-observed HP per pid, used by `step_reward` to compute HP deltas
+    /// across cycles (event masks reset every tick, so a single tick's state
+    /// can't tell "damage happened" -- differencing cached HP levels can).
+    prev_hp: std::collections::HashMap<u16, u16>,
 }
 
 impl EnvHarness {
@@ -89,7 +94,13 @@ impl EnvHarness {
             db_rx,
         );
 
-        EnvHarness { engine, _stats_rx, _new_player_tx: new_player_tx, _reload_tx: reload_tx }
+        EnvHarness {
+            engine,
+            _stats_rx,
+            _new_player_tx: new_player_tx,
+            _reload_tx: reload_tx,
+            prev_hp: std::collections::HashMap::new(),
+        }
     }
 
     pub fn cycle(&mut self) {
@@ -179,5 +190,71 @@ impl EnvHarness {
             .get_npc(nid)
             .map(|n| n.npc.stats.levels[3])
             .unwrap_or(0)
+    }
+
+    /// Flat symbolic observation for `pid` w.r.t. opponent `opp`:
+    /// `[self_hp, opp_hp, dx, dz, dist]`. If either player is absent (e.g.
+    /// died/despawned), returns an all-zero vector of the same length rather
+    /// than panicking, so a caller mid-episode never has to special-case a
+    /// missing entity.
+    pub fn observe(&self, pid: u16, opp: u16) -> Vec<f32> {
+        let me = self.engine.get_player(pid);
+        let ot = self.engine.get_player(opp);
+        let (mc, oc) = match (me, ot) {
+            (Some(m), Some(o)) => (m.player.pathing.coord, o.player.pathing.coord),
+            _ => return vec![0.0; 5],
+        };
+        let dx = oc.x() as f32 - mc.x() as f32;
+        let dz = oc.z() as f32 - mc.z() as f32;
+        vec![
+            self.player_hp(pid) as f32,
+            self.player_hp(opp) as f32,
+            dx,
+            dz,
+            (dx * dx + dz * dz).sqrt(),
+        ]
+    }
+
+    /// Reward = damage dealt to `opp` this step minus damage taken by `me`
+    /// this step, computed via HP deltas cached in `prev_hp` across cycles
+    /// (the engine's own hit/combat event masks reset every tick, so a
+    /// single tick's state can't distinguish "no hit" from "a hit already
+    /// consumed" -- differencing the cached HP levels can, and is robust
+    /// regardless of how many cycles elapsed between calls).
+    ///
+    /// On the first call for a given pid (e.g. right after `reset_duel`
+    /// clears `prev_hp`), that pid's "previous" HP is seeded from its
+    /// current HP, so the first observed delta is always zero rather than a
+    /// phantom drop/gain from stale bookkeeping.
+    pub fn step_reward(&mut self, me: u16, opp: u16) -> f32 {
+        let opp_now = self.player_hp(opp);
+        let me_now = self.player_hp(me);
+        let opp_prev = *self.prev_hp.get(&opp).unwrap_or(&opp_now);
+        let me_prev = *self.prev_hp.get(&me).unwrap_or(&me_now);
+        self.prev_hp.insert(opp, opp_now);
+        self.prev_hp.insert(me, me_now);
+        let dealt = opp_prev.saturating_sub(opp_now) as f32;
+        let taken = me_prev.saturating_sub(me_now) as f32;
+        dealt - taken
+    }
+
+    /// Despawns every currently-connected player, clears the `prev_hp`
+    /// reward bookkeeping (so the next `step_reward` call doesn't report a
+    /// phantom delta against a stale pre-reset HP value), and spawns a
+    /// fresh, XP-consistently-buffed attacker/victim pair adjacent to each
+    /// other in the Scorpion Valley deep-wilderness zone. Returns their pids.
+    pub fn reset_duel(&mut self) -> (u16, u16) {
+        let pids: Vec<u16> = (0..rs_engine::MAX_PLAYERS as u16)
+            .filter(|&p| self.engine.get_player(p).is_some())
+            .collect();
+        for p in pids {
+            let _ = self.engine.remove_player(p);
+        }
+        self.prev_hp.clear();
+        let a = self.engine.spawn_player("pker", CoordGrid::new(3200, 0, 3912));
+        let b = self.engine.spawn_player("victim", CoordGrid::new(3201, 0, 3912));
+        self.buff_melee(a);
+        self.buff_melee(b);
+        (a, b)
     }
 }
