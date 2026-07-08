@@ -101,15 +101,29 @@ impl EnvHarness {
     }
 
     /// Stat indices (OSRS order): 0=Attack 1=Defence 2=Strength 3=Hitpoints.
-    /// Sets both current and base levels high for reliable melee hits.
+    /// Sets both current and base levels high for reliable melee hits, *and*
+    /// backs each level with the matching XP total.
+    ///
+    /// This XP-consistency matters: `rs_stat::Stats::add_xp` has a "snap"
+    /// behavior where, if a stat's current level equals its base level at
+    /// the moment any xp is awarded to it, the current level is overwritten
+    /// with the XP-derived level (`get_level_by_exp`). If we only patched
+    /// `levels`/`base_levels` to 99 while leaving `xp` at its spawn default
+    /// (level 10 worth, for Hitpoints), the *very next* incidental xp drop
+    /// in that stat (e.g. HP xp from a retaliation hit) would silently
+    /// collapse the level back down to what the stale xp implies (10),
+    /// with no `damage()` call and no hitsplat -- an desync artifact, not
+    /// combat. Setting `xp[i] = get_exp_by_level(99)` makes 99 the
+    /// genuine, XP-backed level, so `add_xp`'s snap branch recomputes
+    /// `get_level_by_exp(xp)` back to 99 and is a no-op.
     pub fn buff_melee(&mut self, pid: u16) {
         if let Some(p) = self.engine.get_player_mut(pid) {
-            for i in [0usize, 1, 2] {
+            let xp99 = rs_stat::get_exp_by_level(99);
+            for i in [0usize, 1, 2, 3] {
                 p.player.stats.levels[i] = 99;
                 p.player.stats.base_levels[i] = 99;
+                p.player.stats.xp[i] = xp99;
             }
-            p.player.stats.levels[3] = 99;
-            p.player.stats.base_levels[3] = 99;
         }
     }
 
