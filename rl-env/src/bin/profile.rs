@@ -8,7 +8,7 @@ fn main() {
     let cycles: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(20_000);
 
     let mut env = EnvHarness::boot();
-    let (a, b) = env.reset_duel();
+    let (mut a, mut b) = env.reset_duel();
     env.cycle();
 
     // Accumulators for each phase field (wall-ms) + total.
@@ -29,9 +29,17 @@ fn main() {
     let mut npc_count = 0usize;
     let mut player_count = 0usize;
 
-    for _ in 0..cycles {
+    for i in 0..cycles {
         env.attack_player(a, b); // sustained combat = representative load
         env.cycle();
+        // Keep the duel alive: buffed unarmed players eventually kill each other
+        // over a long run; without periodic reset the world empties and the
+        // profile measures nothing. Reset every 200 ticks (matches perf.rs).
+        if i % 200 == 199 {
+            let (na, nb) = env.reset_duel();
+            a = na;
+            b = nb;
+        }
         let s = env.tick_stats();
         world += s.world;
         input += s.input;
