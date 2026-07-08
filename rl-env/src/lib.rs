@@ -1,7 +1,7 @@
 use once_cell::sync::OnceCell;
 use std::path::Path;
 use rs_engine::{Engine, TickStats, LoginRequest};
-use rs_engine::{EtherInbound, EtherOutbound, DbRequest, DbResponse};
+use rs_engine::{EtherInbound, DbResponse};
 use rs_pack::cache::CacheStore;
 use rs_pack::cache::script::ScriptProvider;
 use rs_entity::InteractionTarget;
@@ -66,7 +66,29 @@ pub struct EnvHarness {
 }
 
 impl EnvHarness {
+    /// Full-world boot: spawns all ~7,300 static world NPCs in addition to
+    /// whatever players the caller spawns. This is the "real world" env,
+    /// used when static-NPC interaction/comparison matters. It is far slower
+    /// per-tick than [`Self::boot_arena`] — profiled pure-tick ~72x (1,391 vs
+    /// ~100k ticks/s); the `perf` bench under sustained combat shows ~60x
+    /// (~0.9k vs ~50k+ ticks/s).
     pub fn boot() -> Self {
+        Self::boot_inner(true)
+    }
+
+    /// Arena-mode boot: skips spawning the static world NPCs entirely, so
+    /// the engine ticks (near) nothing but whatever players the caller spawns
+    /// (e.g. via `spawn_player`/`reset_duel`). This is the training-time
+    /// mode -- static NPCs are ~98.6% of a full-world tick's cost and are
+    /// irrelevant to a headless PvP env that only spawns its own bots.
+    pub fn boot_arena() -> Self {
+        Self::boot_inner(false)
+    }
+
+    /// Shared `Engine::new` construction for [`Self::boot`] and
+    /// [`Self::boot_arena`]; `spawn_static_npcs` is forwarded straight to
+    /// [`Engine::new`]'s equivalent parameter.
+    fn boot_inner(spawn_static_npcs: bool) -> Self {
         let (cache, scripts) = shared_cache();
         let cache_ptr = cache as *const CacheStore as *mut CacheStore;
 
@@ -92,6 +114,7 @@ impl EnvHarness {
             ether_rx,
             None,            // db_tx
             db_rx,
+            spawn_static_npcs,
         );
 
         EnvHarness {

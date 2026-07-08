@@ -3,7 +3,7 @@ use rs_grid::CoordGrid;
 
 #[test]
 fn spawns_a_player_at_coord_with_default_hp() {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_arena();
     // Scorpion Valley (deep wild, multi-combat): mapsquare (50,61), local (0,8).
     let coord = CoordGrid::new(3200, 0, 3912);
     let pid = env.engine.spawn_player("bot1", coord);
@@ -17,7 +17,7 @@ fn spawns_a_player_at_coord_with_default_hp() {
 
 #[test]
 fn spawns_an_npc() {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_arena();
     // Cow (debugname "cow", npc id 81 in rev 274's content/274/pack/npc.pack):
     // low-level attackable NPC, op2=Attack, hitpoints=8. Confirmed via
     // content/274/scripts/_unpack/225/all.npc `[cow]` config section.

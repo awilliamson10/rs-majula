@@ -3,7 +3,7 @@ use rs_grid::CoordGrid;
 
 #[test]
 fn player_damages_npc_in_melee() {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_arena();
     let pcoord = CoordGrid::new(3200, 0, 3912);
     let pid = env.engine.spawn_player("attacker", pcoord);
     env.buff_melee(pid);
@@ -26,7 +26,7 @@ fn player_damages_npc_in_melee() {
 
 #[test]
 fn player_damages_player_in_deep_wilderness() {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_arena();
     // Both in the Scorpion Valley multi-combat wilderness zone (deep wild ⇒
     // level-difference check trivially passes; multiway ⇒ in-combat check
     // passes). Confirmed against content/274/maps/multiway.csv block

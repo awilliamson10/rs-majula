@@ -1,13 +1,22 @@
 // Layer-1 profiler: run a sustained 2-agent deep-wild duel and aggregate the
 // engine's per-phase TickStats to find which tick phase dominates.
 //
-// Run (release, from majula/):  cargo run --release -q -p rl-env --bin profile -- 20000
+// Usage: `profile [cycles] [arena|full]`
+//   - `cycles` (default 20000): ticks to profile.
+//   - `arena|full` (default `full`): `full` boots via `EnvHarness::boot()`
+//     (full ~7,300-NPC world -- the original/default profile, showing the
+//     static-NPC cost that dominates a real-world tick); `arena` boots via
+//     `EnvHarness::boot_arena()` (no static NPCs) to see per-phase costs with
+//     that dominant cost ablated away, for comparison.
+//
+// Run (release, from majula/):  cargo run --release -q -p rl-env --bin profile -- 20000 full
 use rl_env::EnvHarness;
 
 fn main() {
     let cycles: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(20_000);
+    let arena = std::env::args().nth(2).as_deref() == Some("arena");
 
-    let mut env = EnvHarness::boot();
+    let mut env = if arena { EnvHarness::boot_arena() } else { EnvHarness::boot() };
     let (mut a, mut b) = env.reset_duel();
     env.cycle();
 
@@ -78,7 +87,8 @@ fn main() {
     rows.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap());
 
     let mean_total = total / n;
-    println!("=== Per-phase tick profile ({cycles} ticks, {player_count} players, {npc_count} npcs) ===");
+    let mode = if arena { "arena" } else { "full" };
+    println!("=== Per-phase tick profile ({mode}, {cycles} ticks, {player_count} players, {npc_count} npcs) ===");
     println!("{:<10} {:>10} {:>8}", "phase", "mean_ms", "% total");
     for (name, sum) in &rows {
         let mean = sum / n;
