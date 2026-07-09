@@ -9,11 +9,16 @@ Scenario(
             stats: [("attack", 99), ("strength", 99), ("defence", 99), ("hitpoints", 99), ("prayer", 99)],
             worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "rune_scimitar"],
             inventory: [("shark", 10), ("dragon_dagger", 1)],
+            // `zanaris` = `^zanaris_complete` (6; content/274/scripts/general/
+            // configs/quest.constant:59) -- marks Lost City complete so
+            // `dragon_dagger`'s quest-gated Wield (tier60.rs2) isn't refused.
+            vars: [("zanaris", 6)],
         ),
         Loadout(
             stats: [("attack", 99), ("strength", 99), ("defence", 99), ("hitpoints", 99), ("prayer", 99)],
             worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "rune_scimitar"],
             inventory: [("shark", 10), ("dragon_dagger", 1)],
+            vars: [("zanaris", 6)],
         ),
     ),
 )

@@ -24,6 +24,12 @@ pub struct Loadout {
     pub stats: Vec<(String, u8)>,      // (stat debugname, level) e.g. ("strength", 99)
     pub worn: Vec<String>,             // obj debugnames to equip
     pub inventory: Vec<(String, u32)>, // (obj debugname, count)
+    /// (varp debugname, value) pairs applied to the spawned player, e.g.
+    /// `("zanaris", 6)` to mark the Lost City quest complete so
+    /// quest-gated `OpHeld` wields (e.g. `dragon_dagger`) aren't silently
+    /// refused. Defaults empty so existing scenarios stay valid.
+    #[serde(default)]
+    pub vars: Vec<(String, i32)>,
 }
 
 #[derive(Debug)]

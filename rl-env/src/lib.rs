@@ -5,7 +5,7 @@ use once_cell::sync::OnceCell;
 use std::path::Path;
 use rs_engine::{Engine, TickStats, LoginRequest};
 use rs_engine::{EtherInbound, DbResponse};
-use rs_pack::cache::CacheStore;
+use rs_pack::cache::{CacheStore, VarValue};
 use rs_pack::cache::script::ScriptProvider;
 use rs_entity::InteractionTarget;
 use rs_grid::CoordGrid;
@@ -580,6 +580,27 @@ impl EnvHarness {
             })
             .collect();
 
+        // Player vars (varps): resolved up front against the same
+        // shared_cache() snapshot as stats/obj lookups above, same
+        // fail-loud policy -- an unresolved varp debugname means the
+        // scenario is malformed and must abort at load time rather than
+        // silently spawning a bot missing quest/state gating it needs
+        // (e.g. `zanaris` gating `dragon_dagger`'s Wield in mirror_melee).
+        // Mirrors the `::setvar` cheat's resolution (`cache().varps
+        // .get_by_debugname`, `rs-engine/src/handlers/client_cheat.rs`
+        // around line 972) and its coercion via `VarValue::from_int` using
+        // the varp's own declared type and transmit flag.
+        let var_updates: Vec<(u16, VarValue, bool)> = lo
+            .vars
+            .iter()
+            .map(|(name, value)| {
+                let varp = cache.varps.get_by_debugname(name).unwrap_or_else(|| {
+                    panic!("scenario loadout: unresolved varp debugname {name:?}")
+                });
+                (varp.id, VarValue::from_int(varp.var_type, *value), varp.transmit)
+            })
+            .collect();
+
         // accept_login (spawn_player) already ran with_engine and restored
         // the previous (null) thread-local state on exit, so we re-install
         // it here for the duration of the mutation + recalc, mirroring the
@@ -614,6 +635,9 @@ impl EnvHarness {
                     worn_inv.set(*slot, *obj_id, 1);
                 }
                 active.buildappearance(worn_id);
+            }
+            for (id, value, transmit) in &var_updates {
+                active.set_varp(*id, value.clone(), *transmit);
             }
             active.recalc_combat_and_appearance();
         });

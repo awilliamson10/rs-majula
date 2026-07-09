@@ -36,11 +36,15 @@ fn eat_heals_and_consumes_food() {
 /// City (Zanaris) quest -- see `content/274/scripts/levelrequire/scripts/
 /// tier60.rs2`: `[opheld2,dragon_dagger] @levelrequire_zanaris_quest_attack(60, last_slot);`,
 /// which (`levelrequire.rs2`) checks `%zanaris >= ^zanaris_complete` before
-/// falling through to the actual wield logic. A freshly spawned bot hasn't
-/// completed any quest, so this test sets that var directly first --
-/// otherwise the wield is correctly (and silently, from the caller's
-/// perspective -- no error, just no-op) refused by the game's own
-/// quest-requirement check, which is not a bug in the eat/equip wiring.
+/// falling through to the actual wield logic. `mirror_melee.ron` declares
+/// `vars: [("zanaris", 6)]` on each side's `Loadout` (6 = `^zanaris_complete`,
+/// `content/274/scripts/general/configs/quest.constant:59`), and
+/// `EnvHarness::load_scenario` applies it via `apply_loadout_stats_inv` --
+/// so this test exercises the real training path (no test-only var poking):
+/// without that scenario-declared var, the wield is correctly (and
+/// silently, from the caller's perspective -- no error, just no-op)
+/// refused by the game's own quest-requirement check, which is not a bug
+/// in the eat/equip wiring.
 #[test]
 fn equip_moves_weapon_from_backpack_to_worn() {
     let sc = Scenario::load("scenarios/mirror_melee.ron").unwrap();
@@ -50,9 +54,6 @@ fn equip_moves_weapon_from_backpack_to_worn() {
     let (cache, _) = rl_env::shared_cache();
     let dagger_id = cache.objs.get_by_debugname("dragon_dagger").unwrap().id;
     let worn_id = cache.invs.get_by_debugname("worn").unwrap().id;
-    let zanaris_id = cache.varps.get_by_debugname("zanaris").unwrap().id;
-    let zanaris_complete = 6; // `^zanaris_complete` (content/274/scripts/general/configs/quest.constant)
-    h.engine.get_player_mut(a).unwrap().player.vars.set(zanaris_id, rs_pack::cache::VarValue::Int(zanaris_complete));
 
     let dagger_in_backpack_before = h.engine.get_player(a).unwrap().player.invs.values()
         .flat_map(|i| i.slots.iter().flatten())
