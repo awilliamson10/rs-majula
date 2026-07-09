@@ -361,19 +361,28 @@ impl EnvHarness {
     fn apply_loadout_stats_inv(&mut self, pid: u16, lo: &crate::scenario::Loadout) {
         let (cache, _) = shared_cache();
         let inv_id = cache.invs.get_by_debugname("inv").map(|i| i.id);
+        // Fail loud: an unresolved stat name or obj debugname means the
+        // scenario is malformed. This is a training/authoring harness -- an
+        // invalid loadout must abort at load time, never silently spawn a
+        // valid-but-incomplete bot (see rl-env/tests/scenario_apply.rs
+        // `unresolved_obj_debugname_panics`).
         let stat_updates: Vec<(usize, u8)> = lo
             .stats
             .iter()
-            .filter_map(|(name, lvl)| crate::scenario::stat_index(name).map(|i| (i, *lvl)))
+            .map(|(name, lvl)| {
+                let i = crate::scenario::stat_index(name)
+                    .unwrap_or_else(|| panic!("scenario loadout: unknown stat name {name:?}"));
+                (i, *lvl)
+            })
             .collect();
         let inv_items: Vec<(u16, u32, bool)> = lo
             .inventory
             .iter()
-            .filter_map(|(name, count)| {
-                cache
-                    .objs
-                    .get_by_debugname(name)
-                    .map(|obj| (obj.id, *count, obj.stackable))
+            .map(|(name, count)| {
+                let obj = cache.objs.get_by_debugname(name).unwrap_or_else(|| {
+                    panic!("scenario loadout: unresolved obj debugname {name:?}")
+                });
+                (obj.id, *count, obj.stackable)
             })
             .collect();
 
