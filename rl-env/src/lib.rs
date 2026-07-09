@@ -1,5 +1,6 @@
 pub mod action;
 pub mod observe;
+pub mod reward;
 pub mod scenario;
 
 use once_cell::sync::OnceCell;
@@ -86,10 +87,18 @@ pub struct EnvHarness {
     _stats_rx: watch::Receiver<TickStats>,
     _new_player_tx: tokio::sync::mpsc::UnboundedSender<LoginRequest>,
     _reload_tx: tokio::sync::mpsc::UnboundedSender<()>,
-    /// Last-observed HP per pid, used by `step_reward` to compute HP deltas
-    /// across cycles (event masks reset every tick, so a single tick's state
-    /// can't tell "damage happened" -- differencing cached HP levels can).
+    /// Last-observed HP per pid. No longer used by `step_reward` (Task 11
+    /// switched that to the event-based `player.hits` accumulator, which is
+    /// immune to same-tick eat-vs-damage HP diffing bugs -- see
+    /// `step_reward`'s doc comment), but left in place / still cleared on
+    /// reset in case a future caller wants HP-delta bookkeeping for
+    /// something other than reward (e.g. logging/diagnostics).
     prev_hp: std::collections::HashMap<u16, u16>,
+    /// Per-episode tick counter, incremented once per [`Self::cycle`] call
+    /// and reset to 0 by [`Self::load_scenario`] (and [`Self::reset_duel`]).
+    /// Used by [`Self::is_terminal`] to resolve `Terminal::Timeout(n)` /
+    /// `Terminal::DeathOrTimeout(n)` scenario conditions.
+    episode_tick: u32,
 }
 
 impl EnvHarness {
@@ -157,11 +166,15 @@ impl EnvHarness {
             _new_player_tx: new_player_tx,
             _reload_tx: reload_tx,
             prev_hp: std::collections::HashMap::new(),
+            episode_tick: 0,
         }
     }
 
+    /// Advances the engine one tick and bumps [`Self::episode_tick`] (used
+    /// by [`Self::is_terminal`]'s `Timeout`/`DeathOrTimeout` resolution).
     pub fn cycle(&mut self) {
         self.engine.cycle();
+        self.episode_tick = self.episode_tick.saturating_add(1);
     }
 
     pub fn clock(&self) -> u64 {
@@ -439,27 +452,78 @@ impl EnvHarness {
         }
     }
 
-    /// Reward = damage dealt to `opp` this step minus damage taken by `me`
-    /// this step, computed via HP deltas cached in `prev_hp` across cycles
-    /// (the engine's own hit/combat event masks reset every tick, so a
-    /// single tick's state can't distinguish "no hit" from "a hit already
-    /// consumed" -- differencing the cached HP levels can, and is robust
-    /// regardless of how many cycles elapsed between calls).
+    /// Reward = `w * (damage dealt to opp this step - damage taken by me
+    /// this step)`, read from each player's `player.hits` event accumulator
+    /// (Task 2), plus a terminal bonus of `+1.0` if `opp` is dead (HP == 0
+    /// or the player is absent) and/or `-1.0` if `me` is dead. This
+    /// deliberately replaced an earlier HP-delta implementation: diffing
+    /// cached HP across cycles silently *hides* damage when a player eats
+    /// (or otherwise heals) the same tick the damage lands, since the net
+    /// HP change can end up zero or positive even though a hit landed. The
+    /// `hits` accumulator records the explicit damage event regardless of
+    /// same-tick healing, so it can't be fooled that way (see
+    /// `rl-env/tests/reward.rs::eat_on_damage_tick_does_not_hide_damage`).
     ///
-    /// On the first call for a given pid (e.g. right after `reset_duel`
-    /// clears `prev_hp`), that pid's "previous" HP is seeded from its
-    /// current HP, so the first observed delta is always zero rather than a
-    /// phantom drop/gain from stale bookkeeping.
-    pub fn step_reward(&mut self, me: u16, opp: u16) -> f32 {
-        let opp_now = self.player_hp(opp);
-        let me_now = self.player_hp(me);
-        let opp_prev = *self.prev_hp.get(&opp).unwrap_or(&opp_now);
-        let me_prev = *self.prev_hp.get(&me).unwrap_or(&me_now);
-        self.prev_hp.insert(opp, opp_now);
-        self.prev_hp.insert(me, me_now);
-        let dealt = opp_prev.saturating_sub(opp_now) as f32;
-        let taken = me_prev.saturating_sub(me_now) as f32;
-        dealt - taken
+    /// # `hits` is drained here -- required call order
+    /// This reads AND CLEARS both `me.player.hits` and `opp.player.hits`
+    /// (the accumulator is a per-tick event queue, not a running total, so
+    /// once read it must be emptied or the same hits would double-count on
+    /// the next call). [`Self::observe`] also reads `opp.player.hits`
+    /// (non-destructively, for `IDX_OPP_RECENT_HIT`). Within a single step,
+    /// callers MUST call `observe()` BEFORE `step_reward()` -- calling
+    /// `step_reward()` first drains the hits and `observe()` will then see
+    /// an empty accumulator and report no recent hit, even though a hit
+    /// landed this step.
+    ///
+    /// # Not safe to call twice per step (self-play trap)
+    /// This is intended to be called exactly ONCE per step, for ONE agent's
+    /// perspective. Computing both agents' rewards in the same step by
+    /// calling `step_reward(a, b, w)` then `step_reward(b, a, w)` is NOT
+    /// safe: the first call drains `b`'s hits while computing `a`'s
+    /// "dealt", so the second call (computing `b`'s "taken") sees an
+    /// already-empty accumulator and silently under-reports. Phase A's
+    /// tests only ever compute one agent's reward per step, so this is fine
+    /// for now. Phase B's self-play wrapper (both agents learning
+    /// simultaneously) will need a snapshot-then-drain variant -- read both
+    /// players' `hits` sums first, THEN clear both -- rather than calling
+    /// this method twice; that pair API is deliberately not built yet
+    /// (YAGNI for Phase A).
+    pub fn step_reward(&mut self, me: u16, opp: u16, w: f32) -> f32 {
+        let dealt: u32 = self.engine.get_player_mut(opp)
+            .map(|p| { let s = p.player.hits.iter().map(|h| h.amount as u32).sum(); p.player.hits.clear(); s })
+            .unwrap_or(0);
+        let taken: u32 = self.engine.get_player_mut(me)
+            .map(|p| { let s = p.player.hits.iter().map(|h| h.amount as u32).sum(); p.player.hits.clear(); s })
+            .unwrap_or(0);
+        let mut r = w * (dealt as f32 - taken as f32);
+        // terminal bonus folded in when a death is observed this step
+        if self.engine.get_player(opp).map_or(true, |p| p.player.stats.levels[3] == 0) { r += 1.0; }
+        if self.engine.get_player(me).map_or(true, |p| p.player.stats.levels[3] == 0) { r -= 1.0; }
+        r
+    }
+
+    /// Resolves `term` against `me`/`opp`'s current liveness and
+    /// [`Self::episode_tick`], from `me`'s perspective: `opp` dead -> `Win`,
+    /// `me` dead -> `Loss` (checked first for `Death` so a mutual/ambiguous
+    /// double-KO tick still resolves the same way Timeout does), and for
+    /// `Timeout(n)`/`DeathOrTimeout(n)`, `episode_tick >= n` with neither
+    /// side dead -> `Draw`. `None` means the episode has not ended yet.
+    pub fn is_terminal(&self, me: u16, opp: u16, term: &crate::scenario::Terminal) -> Option<crate::reward::Outcome> {
+        use crate::reward::Outcome;
+        let me_dead = self.engine.get_player(me).map_or(true, |p| p.player.stats.levels[3] == 0);
+        let opp_dead = self.engine.get_player(opp).map_or(true, |p| p.player.stats.levels[3] == 0);
+        let timed_out = |limit: u32| self.episode_tick >= limit;
+        match term {
+            crate::scenario::Terminal::Death => {
+                if opp_dead { Some(Outcome::Win) } else if me_dead { Some(Outcome::Loss) } else { None }
+            }
+            crate::scenario::Terminal::Timeout(n) | crate::scenario::Terminal::DeathOrTimeout(n) => {
+                if opp_dead { Some(Outcome::Win) }
+                else if me_dead { Some(Outcome::Loss) }
+                else if timed_out(*n) { Some(Outcome::Draw) }
+                else { None }
+            }
+        }
     }
 
     /// Despawns every currently-connected player, clears the `prev_hp`
@@ -475,6 +539,7 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.episode_tick = 0;
         let a = self.engine.spawn_player("pker", CoordGrid::new(3200, 0, 3912));
         let b = self.engine.spawn_player("victim", CoordGrid::new(3201, 0, 3912));
         self.buff_melee(a);
@@ -505,6 +570,7 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.episode_tick = 0;
 
         // Crisp deterministic fight stream: reseed, THEN draw jitter, THEN
         // spawn. Train and replay run this identical sequence, so the whole

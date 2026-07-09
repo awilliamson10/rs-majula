@@ -12,7 +12,7 @@ use rl_env::EnvHarness;
 /// (a) the victim's HP strictly dropped (proves the "dealt" component fired
 /// for real, via `ActivePlayer::damage()`, not a desync artifact), and
 /// (b) `step_reward` returned a non-zero value on at least one tick (proves
-/// the HP-delta bookkeeping actually observed and reported a hit), without
+/// the hit-event accumulator actually observed and reported a hit), without
 /// requiring the *sum* to be positive.
 #[test]
 fn duel_episode_produces_obs_reward_and_resets() {
@@ -41,7 +41,7 @@ fn duel_episode_produces_obs_reward_and_resets() {
     for _ in 0..60 {
         env.attack_player(a, b);
         env.cycle();
-        let r = env.step_reward(a, b);
+        let r = env.step_reward(a, b, 1.0);
         if r != 0.0 {
             nonzero_reward_ticks += 1;
         }
