@@ -124,6 +124,40 @@ pub enum AttackIntent {
     Disengage,
 }
 
+// -- Resolved-action recording (Task 12) ------------------------------------
+//
+// `MultiAction` is the *requested* intent; `ResolvedKind`/`ResolvedAction`
+// record what `EnvHarness::apply_actions` actually dispatched -- e.g. a
+// `prayer: 1` request that matches the already-active overhead is a no-op
+// (see the toggle guards in `apply_actions`) and is NOT recorded, whereas an
+// actual toggle click is. This is the compact log Phase C replays to
+// reproduce a fight deterministically, so it must only ever contain events
+// that really happened, not every head that was merely requested.
+
+/// One action head's *actual* dispatch this tick (as opposed to
+/// [`MultiAction`]'s requested intent) -- see the module note above.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResolvedKind {
+    Move { dx: i8, dz: i8 },
+    Attack,
+    Disengage,
+    Eat,
+    Equip,
+    Prayer(u8),
+    Spec,
+}
+
+/// A single recorded dispatch: which player (`pid`), on which
+/// [`crate::EnvHarness`] episode tick, did what ([`ResolvedKind`]). Pushed by
+/// [`crate::EnvHarness::apply_actions`], drained by
+/// [`crate::EnvHarness::drain_recorded`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedAction {
+    pub pid: u16,
+    pub tick: u32,
+    pub kind: ResolvedKind,
+}
+
 /// A single tick's worth of action across every action head. Fields the
 /// current task doesn't wire up are carried through unused; see the module
 /// docs.

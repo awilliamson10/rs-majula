@@ -99,6 +99,12 @@ pub struct EnvHarness {
     /// Used by [`Self::is_terminal`] to resolve `Terminal::Timeout(n)` /
     /// `Terminal::DeathOrTimeout(n)` scenario conditions.
     episode_tick: u32,
+    /// Log of resolved (actually-dispatched) actions, appended to by
+    /// [`Self::apply_actions`] and drained by [`Self::drain_recorded`] --
+    /// see `action::ResolvedAction`'s doc comment. Never cleared on
+    /// `load_scenario`/`reset_duel`: draining is the caller's job, same as
+    /// `player.hits`.
+    recorded: Vec<crate::action::ResolvedAction>,
 }
 
 impl EnvHarness {
@@ -167,6 +173,7 @@ impl EnvHarness {
             _reload_tx: reload_tx,
             prev_hp: std::collections::HashMap::new(),
             episode_tick: 0,
+            recorded: Vec::new(),
         }
     }
 
@@ -265,8 +272,14 @@ impl EnvHarness {
     /// ticks on its own (nothing here re-arms it), so a caller that wants
     /// sustained combat must call this every tick, same as `attack_player`.
     pub fn apply_actions(&mut self, pid: u16, opp: u16, act: &crate::action::MultiAction) {
-        use crate::action::AttackIntent;
+        use crate::action::{AttackIntent, ResolvedKind};
         let engine_ptr = &mut self.engine as *mut Engine;
+        // Collected locally (not into `self.recorded`) because this closure
+        // already holds a raw `*mut Engine` borrow of `self.engine` via
+        // `with_engine` -- touching `self.recorded` in here too would be a
+        // second, conflicting borrow of `self`. Stamped with pid/tick and
+        // appended to `self.recorded` after the closure returns instead.
+        let mut resolved: Vec<ResolvedKind> = Vec::new();
         with_engine(&mut self.engine, || {
             let engine = unsafe { &mut *engine_ptr };
 
@@ -280,6 +293,7 @@ impl EnvHarness {
                         active.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
                     if !on {
                         crate::action::if_button(active, crate::action::com_protect_melee());
+                        resolved.push(ResolvedKind::Prayer(1));
                     }
                 }
             } else if act.prayer == 0 {
@@ -288,6 +302,7 @@ impl EnvHarness {
                         active.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
                     if on {
                         crate::action::if_button(active, crate::action::com_protect_melee());
+                        resolved.push(ResolvedKind::Prayer(0));
                     }
                 }
             }
@@ -301,6 +316,7 @@ impl EnvHarness {
                 if let Some(active) = engine.get_player_mut(pid) {
                     if let Some((slot, obj, op)) = crate::action::first_wieldable(active) {
                         crate::action::op_held(active, op, obj, slot, crate::action::inv_com());
+                        resolved.push(ResolvedKind::Equip);
                     }
                 }
             }
@@ -310,6 +326,7 @@ impl EnvHarness {
                 if let Some(active) = engine.get_player_mut(pid) {
                     if let Some((slot, obj, op)) = crate::action::first_edible(active) {
                         crate::action::op_held(active, op, obj, slot, crate::action::inv_com());
+                        resolved.push(ResolvedKind::Eat);
                     }
                 }
             }
@@ -320,6 +337,7 @@ impl EnvHarness {
             if act.spec {
                 if let Some(active) = engine.get_player_mut(pid) {
                     crate::action::if_button(active, crate::action::com_special_attack());
+                    resolved.push(ResolvedKind::Spec);
                 }
             }
 
@@ -333,9 +351,11 @@ impl EnvHarness {
                             true,
                         );
                         active.player.opcalled = true;
+                        resolved.push(ResolvedKind::Attack);
                     }
                     AttackIntent::Disengage => {
                         active.player.clear_interaction();
+                        resolved.push(ResolvedKind::Disengage);
                     }
                     AttackIntent::Hold => {}
                 }
@@ -355,9 +375,24 @@ impl EnvHarness {
                         (c.z() as i32 + dz) as u16,
                     );
                     crate::action::move_to(active, dest);
+                    resolved.push(ResolvedKind::Move { dx: act.move_dx, dz: act.move_dz });
                 }
             }
         });
+        self.recorded.extend(resolved.into_iter().map(|kind| crate::action::ResolvedAction {
+            pid,
+            tick: self.episode_tick,
+            kind,
+        }));
+    }
+
+    /// Drains and returns everything [`Self::apply_actions`] has recorded so
+    /// far (across any number of calls/players), leaving `self.recorded`
+    /// empty -- the compact resolved-action log Phase C replays to reproduce
+    /// a fight. Like `player.hits`, this is an accumulator: callers own when
+    /// to drain it (e.g. once per episode, or once per step).
+    pub fn drain_recorded(&mut self) -> Vec<crate::action::ResolvedAction> {
+        std::mem::take(&mut self.recorded)
     }
 
     pub fn player_hp(&self, pid: u16) -> u16 {
