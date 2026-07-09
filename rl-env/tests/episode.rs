@@ -20,10 +20,13 @@ fn duel_episode_produces_obs_reward_and_resets() {
     let (a, b) = env.reset_duel();
     env.cycle(); // visibility settles
 
-    let obs = env.observe(a, b);
-    assert_eq!(obs.len(), 5, "obs = [self_hp, opp_hp, dx, dz, dist]");
-    assert_eq!(obs[0], 99.0, "attacker starts at full buffed HP");
-    assert_eq!(obs[1], 99.0, "victim starts at full buffed HP");
+    let (obs, _mask) = env.observe(a, b);
+    assert_eq!(obs.len(), rl_env::observe::OBS_LEN);
+    assert_eq!(
+        obs[rl_env::observe::IDX_SELF_HP],
+        99.0,
+        "attacker starts at full buffed HP"
+    );
 
     let hp0 = env.player_hp(b);
 

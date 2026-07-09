@@ -366,27 +366,58 @@ impl EnvHarness {
             .unwrap_or(0)
     }
 
-    /// Flat symbolic observation for `pid` w.r.t. opponent `opp`:
-    /// `[self_hp, opp_hp, dx, dz, dist]`. If either player is absent (e.g.
-    /// died/despawned), returns an all-zero vector of the same length rather
-    /// than panicking, so a caller mid-episode never has to special-case a
-    /// missing entity.
-    pub fn observe(&self, pid: u16, opp: u16) -> Vec<f32> {
+    /// Fixed-length partial-info observation vector for `pid` w.r.t.
+    /// opponent `opp`, plus `pid`'s legality mask -- see
+    /// [`crate::observe`]'s index map for field layout.
+    ///
+    /// **Self fields are exact** (own HP/prayer/spec/run-energy/overhead).
+    /// **Opponent fields are client-visible only**: relative position
+    /// (dx/dz/dist), overhead prayer icon, a *coarse* HP-bar bucket
+    /// (`IDX_OPP_HP_BUCKET`, never the exact HP number), and a recent-hit
+    /// flag. The opponent's exact HP, spec energy, and inventory never
+    /// appear in the vector -- this is the mission-critical faithfulness
+    /// property (the agent must see only what a real 2004 client shows).
+    ///
+    /// A handful of fields aren't readily sourced yet in M1
+    /// (is_attacking, opp weapon class, self attack/eat timers, opp
+    /// is_moving) and are left at `0.0` -- see the `TODO M1` comments on
+    /// their index constants in [`crate::observe`].
+    ///
+    /// If either player is absent (e.g. died/despawned), the corresponding
+    /// block is left all-zero rather than panicking, so a caller mid-episode
+    /// never has to special-case a missing entity.
+    pub fn observe(&self, pid: u16, opp: u16) -> (Vec<f32>, crate::observe::Mask) {
+        use crate::observe as ob;
+        let mut v = vec![0.0f32; ob::OBS_LEN];
         let me = self.engine.get_player(pid);
         let ot = self.engine.get_player(opp);
-        let (mc, oc) = match (me, ot) {
-            (Some(m), Some(o)) => (m.player.pathing.coord, o.player.pathing.coord),
-            _ => return vec![0.0; 5],
-        };
-        let dx = oc.x() as f32 - mc.x() as f32;
-        let dz = oc.z() as f32 - mc.z() as f32;
-        vec![
-            self.player_hp(pid) as f32,
-            self.player_hp(opp) as f32,
-            dx,
-            dz,
-            (dx * dx + dz * dz).sqrt(),
-        ]
+        if let Some(m) = me {
+            v[ob::IDX_SELF_HP] = m.player.stats.levels[3] as f32;
+            v[ob::IDX_SELF_PRAYER] = m.player.stats.levels[5] as f32;
+            v[ob::IDX_SELF_SPEC] = crate::action::spec_energy(m) as f32;
+            v[ob::IDX_SELF_RUN] = m.player.runenergy as f32 / 10000.0;
+            v[ob::IDX_SELF_OVERHEAD] =
+                (m.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0) as u8 as f32;
+        }
+        if let (Some(m), Some(o)) = (me, ot) {
+            let (mc, oc) = (m.player.pathing.coord, o.player.pathing.coord);
+            let dx = oc.x() as f32 - mc.x() as f32;
+            let dz = oc.z() as f32 - mc.z() as f32;
+            v[ob::IDX_OPP_DX] = dx;
+            v[ob::IDX_OPP_DZ] = dz;
+            v[ob::IDX_OPP_DIST] = (dx * dx + dz * dz).sqrt();
+            v[ob::IDX_OPP_OVERHEAD] =
+                (o.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0) as u8 as f32;
+            // COARSE hp bar: bucket index in [0, OPP_HP_BUCKETS], never exact hp.
+            // Faithfulness requirement: the raw opponent HP number must never
+            // appear anywhere in the observation vector.
+            let hp = o.player.stats.levels[3] as f32;
+            let maxhp = (o.player.stats.base_levels[3] as f32).max(1.0);
+            let frac = (hp / maxhp).clamp(0.0, 1.0);
+            v[ob::IDX_OPP_HP_BUCKET] = (frac * ob::OPP_HP_BUCKETS as f32).round();
+            v[ob::IDX_OPP_RECENT_HIT] = (!o.player.hits.is_empty()) as u8 as f32;
+        }
+        (v, self.legal_mask(pid))
     }
 
     /// Per-head legality mask for `pid` (Task 9) -- see
