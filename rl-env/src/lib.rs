@@ -245,8 +245,7 @@ impl EnvHarness {
     /// eat -> spec -> attack -> move`; reordering this changes which head
     /// "wins" when two heads could otherwise interact within the same tick
     /// (e.g. a prayer flick landing before/after an attack). As of this
-    /// task (Task 7), `equip`/`eat`/`attack`/`move` are wired up;
-    /// `prayer`/`spec` remain reserved placeholders for Task 8.
+    /// task (Task 8), all six heads are wired up.
     ///
     /// Note: the combat interaction set by `Engage` does not persist across
     /// ticks on its own (nothing here re-arms it), so a caller that wants
@@ -257,7 +256,27 @@ impl EnvHarness {
         with_engine(&mut self.engine, || {
             let engine = unsafe { &mut *engine_ptr };
 
-            // prayer (Task 8: reserved, no-op)
+            // prayer: toggle Protect-from-Melee to match act.prayer, only
+            // clicking the button when current state disagrees (checked via
+            // player.headicons) so holding the same value across ticks
+            // doesn't re-toggle (and thus re-flip) the prayer every tick.
+            if act.prayer == 1 {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    let on =
+                        active.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
+                    if !on {
+                        crate::action::if_button(active, crate::action::com_protect_melee());
+                    }
+                }
+            } else if act.prayer == 0 {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    let on =
+                        active.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
+                    if on {
+                        crate::action::if_button(active, crate::action::com_protect_melee());
+                    }
+                }
+            }
 
             // equip: wield the first backpack weapon (M1: act.equip == 1
             // is the only defined gear-set index -- the scenario's spec
@@ -280,7 +299,15 @@ impl EnvHarness {
                     }
                 }
             }
-            // spec   (Task 8: reserved, no-op)
+            // spec: arm the special attack (fires on the next attack that
+            // consumes it). See `action::com_special_attack`'s docs for the
+            // weapon-category caveat (this targets the stab-weapon spec
+            // bar).
+            if act.spec {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    crate::action::if_button(active, crate::action::com_special_attack());
+                }
+            }
 
             // attack
             if let Some(active) = engine.get_player_mut(pid) {

@@ -2,13 +2,12 @@
 //! action "head" (move, attack, prayer, eat, equip, spec), applied to a
 //! player every tick via [`crate::EnvHarness::apply_actions`].
 //!
-//! `move_*`, `attack`, `eat`, and `equip` are wired up as of this task
-//! (Task 7); `prayer`/`spec` are carried on the struct but remain no-ops
-//! until Task 8 implements their handlers -- callers may set them today
-//! without any effect.
+//! All six heads are wired up as of this task (Task 8 adds `prayer`/`spec`
+//! on top of Task 7's `move`/`attack`/`eat`/`equip`).
 
 use once_cell::sync::OnceCell;
 use rs_engine::{ActivePlayer, ClientGameHandler};
+use rs_protocol::network::game::client::if_button::IfButton;
 use rs_protocol::network::game::client::move_gameclick::MoveGameClick;
 use rs_protocol::network::game::client::opheld1::OpHeld1;
 use rs_protocol::network::game::client::opheld2::OpHeld2;
@@ -16,6 +15,102 @@ use rs_protocol::network::game::client::opheld3::OpHeld3;
 use rs_protocol::network::game::client::opheld4::OpHeld4;
 use rs_protocol::network::game::client::opheld5::OpHeld5;
 use rs_protocol::network::game::client::pack_coord;
+
+// -- Content spike (Task 8) -------------------------------------------------
+//
+// Discovered from `content/274` (see doc comments on each item below for the
+// exact citations). Two of the four are genuine content constants (baked
+// directly from `.constant`/`.varp` files, which are stable data, not pack
+// output); the other two are interface *component* ids, which -- like
+// `inv_com()` above -- are pack-time-assigned and not safe to hardcode as
+// numeric literals, so they are resolved once via `cache().interfaces
+// .get_by_debugname(...)` and memoized, exactly like `inv_com()`.
+
+/// `player.headicons` bit for the Protect-from-Melee overhead prayer icon.
+///
+/// `content/274/scripts/player/configs/headicon.constant:4`:
+/// `^headicon_prayer_protectfrommelee = 3` (icon index 3). The bit itself is
+/// computed from that index by `[proc,headicon_add]`/`[proc,headicon_del]`
+/// (`content/274/scripts/player/scripts/appearance.rs2:64-73`):
+/// `def_int $bit = multiply(0x1, pow(2, $icon));` i.e. `bit = 1 << icon`, so
+/// icon 3 -> bit `1 << 3 = 8`. Confirmed against the runtime field type via
+/// `rs-engine/src/engine.rs:4729` (`fn headicons_get(&self) -> u8`).
+pub const HEADICON_PROTECT_MELEE: u8 = 1 << 3;
+
+/// Player varp debugname for special-attack energy (0..1000, hundredths of a
+/// percent -- e.g. `1000` = 100%).
+///
+/// `content/274/scripts/_unpack/244/all.varp:4`: `[sa_energy]`. Used
+/// throughout `content/274/scripts/skill_combat/scripts/player/specwep.rs2`
+/// as `%sa_energy` (e.g. line 16: `if (%sa_energy = ^sa_max_energy)`, line
+/// 39: `%sa_energy = max(sub(%sa_energy, $energy_used), 0);`).
+pub const VARP_SPEC_ENERGY: &str = "sa_energy";
+
+/// Interface component id (`IfButton.com`) for the Protect-from-Melee prayer
+/// button, resolved via its full `"{interface}:{component}"` debugname.
+///
+/// The debugname `"prayer:prayer_protectfrommelee"` is exactly the string
+/// content itself uses to key this button's trigger:
+/// `content/274/scripts/skill_prayer/scripts/prayers/protectfrommelee.rs2:1`:
+/// `[if_button,prayer:prayer_protectfrommelee]`. The component is defined in
+/// the prayer tab interface at
+/// `content/274/scripts/skill_prayer/interfaces/prayer.if:157`:
+/// `[prayer_protectfrommelee]` (`buttontype=toggle`). Resolved the same way
+/// as [`inv_com`] (`cache().interfaces.get_by_debugname`), not hardcoded,
+/// since interface component ids are pack-assigned.
+static COM_PROTECT_MELEE_CELL: OnceCell<u16> = OnceCell::new();
+pub fn com_protect_melee() -> u16 {
+    *COM_PROTECT_MELEE_CELL.get_or_init(|| {
+        crate::cache()
+            .interfaces
+            .get_by_debugname("prayer:prayer_protectfrommelee")
+            .expect(
+                "cache is missing the \"prayer:prayer_protectfrommelee\" interface \
+                 component (see content/274/scripts/skill_prayer/interfaces/prayer.if:157)",
+            )
+            .id
+    })
+}
+
+/// Interface component id (`IfButton.com`) for the special-attack bar
+/// toggle, resolved via its full `"{interface}:{component}"` debugname.
+///
+/// Every weapon category has its own combat sub-interface with its own
+/// `specbar` component (see `[proc,update_weapon_category]`,
+/// `content/274/scripts/skill_combat/scripts/player/player_attackstyles.rs2:102-141`,
+/// which switches the active combat tab -- and thus which `specbar` is
+/// visible -- on every equip/unequip). This constant targets
+/// `"combat_stabsword:specbar"`, the stab-weapon tab's spec bar, i.e. the
+/// tab `dragon_dagger` (`category=weapon_stab`) switches to when wielded --
+/// matching this env's designated spec weapon (`mirror_melee.ron`). The
+/// component is defined at
+/// `content/274/scripts/skill_combat/interfaces/melee/combat_stabsword.if:282`
+/// (`[specbar]`, `buttontype=normal`), and its trigger at
+/// `content/274/scripts/skill_combat/scripts/player/specwep.rs2:85`:
+/// `[if_button,combat_stabsword:specbar] @toggle_sa;`. A weapon-category-
+/// agnostic spec toggle (resolving the right tab for whatever is currently
+/// wielded) is out of scope for this content spike -- see module docs.
+static COM_SPECIAL_ATTACK_CELL: OnceCell<u16> = OnceCell::new();
+pub fn com_special_attack() -> u16 {
+    *COM_SPECIAL_ATTACK_CELL.get_or_init(|| {
+        crate::cache()
+            .interfaces
+            .get_by_debugname("combat_stabsword:specbar")
+            .expect(
+                "cache is missing the \"combat_stabsword:specbar\" interface \
+                 component (see content/274/scripts/skill_combat/interfaces/melee/combat_stabsword.if:282)",
+            )
+            .id
+    })
+}
+
+/// Fires an `IfButton` click on component `com` through the real handler
+/// (`rs-engine/src/handlers/if_button.rs`), exactly as a client click on
+/// that interface component would. Used by [`crate::EnvHarness::apply_actions`]'s
+/// `prayer`/`spec` heads (Task 8).
+pub fn if_button(active: &mut ActivePlayer, com: u16) {
+    let _ = IfButton { com }.handle(active);
+}
 
 /// What a player should do w.r.t. combat this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +136,11 @@ pub struct MultiAction {
     /// move this tick.
     pub move_dz: i8,
     pub attack: AttackIntent,
-    /// 0 = none, 1 = protect-melee (Task 8). No-op this task.
+    /// 0 = none, 1 = protect-melee (Task 8). Toggles the Protect-from-Melee
+    /// overhead prayer on/off via [`if_button`]/[`com_protect_melee`],
+    /// checking current state first (`player.headicons &
+    /// HEADICON_PROTECT_MELEE`) so holding the same value across ticks
+    /// doesn't flip-flop the prayer script.
     pub prayer: u8,
     /// Eat the first edible backpack item (Task 7): ops its "Eat" iop via
     /// `OpHeld{op}`, see [`first_edible`]/[`op_held`].
@@ -50,8 +149,9 @@ pub struct MultiAction {
     /// M1's only defined gear-set index -- see [`first_wieldable`]).
     /// Values > 1 are reserved for future gear-set indices and are no-ops.
     pub equip: u8,
-    /// Trigger the equipped weapon's special attack (Task 8). No-op this
-    /// task.
+    /// Trigger the special attack bar's toggle (Task 8) via
+    /// [`if_button`]/[`com_special_attack`] -- see that function's docs for
+    /// the current weapon-category caveat.
     pub spec: bool,
 }
 

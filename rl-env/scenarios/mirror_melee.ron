@@ -12,13 +12,42 @@ Scenario(
             // `zanaris` = `^zanaris_complete` (6; content/274/scripts/general/
             // configs/quest.constant:59) -- marks Lost City complete so
             // `dragon_dagger`'s quest-gated Wield (tier60.rs2) isn't refused.
-            vars: [("zanaris", 6)],
+            // `sa_energy` = `^sa_max_energy` (1000; content/274/scripts/
+            // skill_combat/configs/combat.constant:1) -- a freshly spawned
+            // bot otherwise starts at 0 special-attack energy (only
+            // `[proc,sa_reset]`, called from the duel-arena finish script,
+            // ever sets it to max; login only starts the slow 100-per-50-tick
+            // regen timer via `[proc,sa_login]`), so without this a bot
+            // can't usefully spec for ~5 minutes of game time.
+            // `tutorial` = `^tutorial_complete` (1000;
+            // content/274/scripts/general/configs/quest.constant:1) -- a
+            // freshly spawned bot otherwise has `%tutorial = 0`, which gates
+            // `[proc,update_all]`'s call to `~update_weapon_category`
+            // (content/274/scripts/player/scripts/appearance.rs2:114-116:
+            // `if (%tutorial > ^newbie_combat_instructor_unequipping_items)
+            // { ~update_weapon_category(...) }`) -- i.e. without this, the
+            // weapon-specific combat sub-interface (and its `specbar`) never
+            // gets registered into a tab, so `IfButton` against any
+            // `combat_*:specbar` component is always rejected as
+            // "not visible", regardless of what's wielded.
+            vars: [("zanaris", 6), ("sa_energy", 1000), ("tutorial", 1000)],
         ),
         Loadout(
             stats: [("attack", 99), ("strength", 99), ("defence", 99), ("hitpoints", 99), ("prayer", 99)],
             worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "rune_scimitar"],
             inventory: [("shark", 10), ("dragon_dagger", 1)],
-            vars: [("zanaris", 6)],
+            // `tutorial` = `^tutorial_complete` (1000;
+            // content/274/scripts/general/configs/quest.constant:1) -- a
+            // freshly spawned bot otherwise has `%tutorial = 0`, which gates
+            // `[proc,update_all]`'s call to `~update_weapon_category`
+            // (content/274/scripts/player/scripts/appearance.rs2:114-116:
+            // `if (%tutorial > ^newbie_combat_instructor_unequipping_items)
+            // { ~update_weapon_category(...) }`) -- i.e. without this, the
+            // weapon-specific combat sub-interface (and its `specbar`) never
+            // gets registered into a tab, so `IfButton` against any
+            // `combat_*:specbar` component is always rejected as
+            // "not visible", regardless of what's wielded.
+            vars: [("zanaris", 6), ("sa_energy", 1000), ("tutorial", 1000)],
         ),
     ),
 )
