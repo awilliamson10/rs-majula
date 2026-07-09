@@ -385,6 +385,28 @@ impl EnvHarness {
                 (obj.id, *count, obj.stackable)
             })
             .collect();
+        // Worn equipment: resolve each declared obj debugname and its
+        // cache-declared wear slot up front, same fail-loud policy as
+        // stats/inventory above -- an unresolved obj debugname, or an obj
+        // with no `wearpos` (i.e. not wearable), aborts loudly rather than
+        // silently spawning a bot missing gear it was supposed to have.
+        let worn_id = cache.invs.get_by_debugname("worn").map(|i| i.id).unwrap_or(94);
+        let worn_items: Vec<(u16, u16)> = lo
+            .worn
+            .iter()
+            .map(|name| {
+                let obj = cache.objs.get_by_debugname(name).unwrap_or_else(|| {
+                    panic!("scenario loadout: unresolved worn obj debugname {name:?}")
+                });
+                let wearpos = obj.wearpos.unwrap_or_else(|| {
+                    panic!(
+                        "scenario loadout: worn obj {name:?} (id {}) has no wearpos in cache",
+                        obj.id
+                    )
+                });
+                (wearpos as u16, obj.id)
+            })
+            .collect();
 
         // accept_login (spawn_player) already ran with_engine and restored
         // the previous (null) thread-local state on exit, so we re-install
@@ -408,6 +430,18 @@ impl EnvHarness {
                         inv.add(*obj_id, *count, *stackable);
                     }
                 }
+            }
+            if !worn_items.is_empty() {
+                // Fail loud: unlike the backpack inv above (which no-ops if
+                // absent), a missing "worn" inv on the player means worn
+                // equipment silently vanishes -- surface it instead.
+                let worn_inv = active.player.invs.get_mut(&worn_id).unwrap_or_else(|| {
+                    panic!("scenario loadout: player has no \"worn\" inventory (id {worn_id})")
+                });
+                for (slot, obj_id) in &worn_items {
+                    worn_inv.set(*slot, *obj_id, 1);
+                }
+                active.buildappearance(worn_id);
             }
             active.recalc_combat_and_appearance();
         });

@@ -71,6 +71,47 @@ fn unresolved_obj_debugname_panics() {
 }
 
 #[test]
+fn applies_worn_equipment() {
+    let sc = Scenario::load("scenarios/mirror_melee.ron").unwrap();
+    let mut h = EnvHarness::boot_arena_seeded(sc.seed);
+    let (a, _) = h.load_scenario(&sc);
+
+    // Resolve the scenario's declared worn obj ids from the cache so this
+    // test proves the REAL declared items ("rune_full_helm",
+    // "rune_platebody", "rune_platelegs", "rune_scimitar") landed in the
+    // "worn" inv at their cache-declared wear slots -- not a loose
+    // "worn inv is non-empty" check. Verified valid rev-274 ids (see
+    // content/274/pack/obj.pack): rune_full_helm=1163, rune_platebody=1127,
+    // rune_platelegs=1079, rune_scimitar=1333.
+    let (cache, _) = rl_env::shared_cache();
+    let worn_id = cache
+        .invs
+        .get_by_debugname("worn")
+        .expect("worn inv debugname resolves")
+        .id;
+    let worn = &h.engine.get_player(a).unwrap().player.invs[&worn_id];
+
+    for name in &sc.sides[0].worn {
+        let obj = cache
+            .objs
+            .get_by_debugname(name)
+            .unwrap_or_else(|| panic!("{name:?} obj resolves in rev-274 cache"));
+        let wearpos = obj
+            .wearpos
+            .unwrap_or_else(|| panic!("{name:?} (id {}) has a wearpos in rev-274 cache", obj.id));
+        let slot = wearpos as usize;
+        let item = worn.slots[slot]
+            .as_ref()
+            .unwrap_or_else(|| panic!("worn slot {slot} ({name:?}) is occupied"));
+        assert_eq!(
+            item.obj, obj.id,
+            "worn slot {slot} holds the declared {name:?} (id {})",
+            obj.id
+        );
+    }
+}
+
+#[test]
 fn load_is_reproducible() {
     let sc = Scenario::load("scenarios/mirror_melee.ron").unwrap();
     let mut h1 = EnvHarness::boot_arena_seeded(sc.seed);
