@@ -30,16 +30,16 @@ fn workspace_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
-/// Packs the rev-274 cache exactly once, leaks it to `'static`, and returns it
-/// plus a fresh ScriptProvider (each Engine gets its own ScriptProvider).
-pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
+/// Packs the rev-274 cache exactly once, leaks it to `'static`, and returns
+/// the leaked reference. Used by both [`shared_cache`] (which additionally
+/// rebuilds a fresh `ScriptProvider`) and [`cache`] (which just wants the
+/// `CacheStore` for obj/inv/interface lookups, without paying for another
+/// script pack on every call).
+fn packed_cache() -> &'static CacheStore {
     let root = workspace_root();
     let content_dir = root.join(rs_pack::CONTENT_DIR);
     let pack_dir = root.join(rs_pack::PACK_DIR);
-
-    // pack_all returns (Box<CacheStore>, ScriptProvider). We pack once for the
-    // cache (leaked), and re-pack only to obtain a ScriptProvider when needed.
-    let cache: &'static CacheStore = *CACHE.get_or_init(|| {
+    *CACHE.get_or_init(|| {
         let (store, _scripts) = rs_pack::pack_all(
             &content_dir,
             &pack_dir,
@@ -47,7 +47,16 @@ pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
             true,  // members
         ).expect("pack_all rev-274");
         Box::leak(store)
-    });
+    })
+}
+
+/// Packs the rev-274 cache exactly once, leaks it to `'static`, and returns it
+/// plus a fresh ScriptProvider (each Engine gets its own ScriptProvider).
+pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
+    let cache = packed_cache();
+    let root = workspace_root();
+    let content_dir = root.join(rs_pack::CONTENT_DIR);
+    let pack_dir = root.join(rs_pack::PACK_DIR);
     // ScriptProvider is cheap-ish to rebuild; pack again to get one.
     let (_store2, scripts) = rs_pack::pack_all(
         &content_dir,
@@ -55,6 +64,19 @@ pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
         false, true,
     ).expect("pack_all scripts");
     (cache, scripts)
+}
+
+/// The leaked rev-274 [`CacheStore`] (obj/inv/interface metadata etc.),
+/// without also rebuilding a `ScriptProvider` (unlike [`shared_cache`]).
+/// Cheap after the first call -- `packed_cache` only packs once per
+/// process, via the same memoized `CACHE` cell `shared_cache` uses (and
+/// `EnvHarness::boot_inner` always calls `shared_cache` before any
+/// `cache()` caller could run, so the cell is populated by construction).
+/// Used by [`crate::action`]'s obj/iop lookups (`first_edible`,
+/// `first_wieldable`, `inv_com`), which run once per action-head per tick
+/// and must not pay for a script repack each time.
+pub fn cache() -> &'static CacheStore {
+    packed_cache()
 }
 
 pub struct EnvHarness {
@@ -222,9 +244,9 @@ impl EnvHarness {
     /// Heads are applied in the FROZEN intra-tick order `prayer -> equip ->
     /// eat -> spec -> attack -> move`; reordering this changes which head
     /// "wins" when two heads could otherwise interact within the same tick
-    /// (e.g. a prayer flick landing before/after an attack). Only
-    /// `attack`/`move` do anything as of this task -- `prayer`/`equip`/
-    /// `eat`/`spec` are reserved placeholders for Tasks 7-8.
+    /// (e.g. a prayer flick landing before/after an attack). As of this
+    /// task (Task 7), `equip`/`eat`/`attack`/`move` are wired up;
+    /// `prayer`/`spec` remain reserved placeholders for Task 8.
     ///
     /// Note: the combat interaction set by `Engage` does not persist across
     /// ticks on its own (nothing here re-arms it), so a caller that wants
@@ -236,8 +258,28 @@ impl EnvHarness {
             let engine = unsafe { &mut *engine_ptr };
 
             // prayer (Task 8: reserved, no-op)
-            // equip  (Task 7: reserved, no-op)
-            // eat    (Task 7: reserved, no-op)
+
+            // equip: wield the first backpack weapon (M1: act.equip == 1
+            // is the only defined gear-set index -- the scenario's spec
+            // weapon). Fires the item's own OpHeld{op} (op = the obj's
+            // iop-table index for "Wield", NOT necessarily 1 -- see
+            // `action::first_wieldable`) through the real handler.
+            if act.equip == 1 {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    if let Some((slot, obj, op)) = crate::action::first_wieldable(active) {
+                        crate::action::op_held(active, op, obj, slot, crate::action::inv_com());
+                    }
+                }
+            }
+            // eat: op the first edible backpack slot (fires the item's own
+            // OpHeld{op} for its "Eat" iop entry).
+            if act.eat {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    if let Some((slot, obj, op)) = crate::action::first_edible(active) {
+                        crate::action::op_held(active, op, obj, slot, crate::action::inv_com());
+                    }
+                }
+            }
             // spec   (Task 8: reserved, no-op)
 
             // attack
@@ -411,9 +453,74 @@ impl EnvHarness {
             CoordGrid::new((bx as i32 + 1 + jb_x) as u16, bl, (bz as i32 + jb_z) as u16),
         );
 
+        // See `open_standard_interfaces` doc comment: a freshly-spawned
+        // bot's *first* login script run leaves the backpack inv
+        // unregistered (`inv_transmits` empty, standard tabs unresolved),
+        // so OpHeld-based actions (eat/equip, Task 7) would be silently
+        // rejected without this.
+        self.open_standard_interfaces(a);
+        self.open_standard_interfaces(b);
+
         self.apply_loadout_stats_inv(a, &sc.sides[0]);
         self.apply_loadout_stats_inv(b, &sc.sides[1]);
         (a, b)
+    }
+
+    /// Re-runs `[proc,initalltabs]` (`content/274/scripts/login_logout/login.rs2`)
+    /// for `pid`, right after spawn.
+    ///
+    /// # Why this is needed (discovered while wiring Task 7's eat/equip
+    /// actions, which fire `OpHeld{1..5}`)
+    ///
+    /// `OpHeld`'s handler (`rs-engine/src/handlers/opheld.rs:132-153`)
+    /// rejects the op unless `com` (the inventory-interface component)
+    /// resolves to a visible+operable interface *and* is registered in
+    /// `player.inv_transmits` for the target inv. Both are normally
+    /// established once, during login, by the `Login` trigger script
+    /// (`content/274/scripts/login_logout/login.rs2`), whose `[proc,initalltabs]`
+    /// runs `inv_transmit(inv, inventory:inv); if_settab(inventory, ^tab_inventory);`
+    /// (and the equivalent for "worn"/other tabs).
+    ///
+    /// `Engine::spawn_player` does drive that same `Login` trigger via
+    /// `accept_login` (`rs-engine/src/engine.rs`). But empirically (see
+    /// `rl-env/tests/action_eat_equip.rs` and the discovery spike behind
+    /// this comment), on a freshly booted `Engine` that *first* run of
+    /// `[proc,initalltabs]` leaves `player.inv_transmits` completely empty
+    /// and every standard tab (`player.tabs`) holding the interface
+    /// system's `0xFFFF` "unresolved" sentinel instead of the real
+    /// component ids -- reproduced deterministically across independent
+    /// fresh-boot trials, for both the first- and second-spawned player in
+    /// a scenario, so it is not an ordering artifact of spawning two
+    /// players. A second invocation of the *exact same* script, run here,
+    /// resolves every tab correctly and is idempotent (`INV_TRANSMIT`'s vm
+    /// op dedupes/replaces existing bindings for the same `com`; see
+    /// `rs-engine/rs-vm/src/ops/inv.rs` op 4331). The underlying cold-start
+    /// resolution gap looks like a pre-existing bug in this vendored
+    /// engine's script/interface-symbol pipeline, not something specific
+    /// to this action-space feature; root-causing it lives outside
+    /// `rl-env`'s scope (would touch `rs-engine`/`rs-vm` internals) and is
+    /// out of scope for Task 7. This re-run is the "minimal, correct step
+    /// that opens/registers the standard inventory interface on the
+    /// spawned bot" called out in the Task 7 brief's known-risk note: it
+    /// drives the exact canonical, content-defined login path a second
+    /// time rather than bypassing OpHeld's validation or poking
+    /// `inv_transmits`/`tabs` state directly.
+    fn open_standard_interfaces(&mut self, pid: u16) {
+        let Some(uid) = self.engine.get_player(pid).map(|p| p.player.uid) else {
+            return;
+        };
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let _ = engine.run_script_by_name(
+                "[proc,initalltabs]",
+                Some(rs_vm::subject::ScriptSubject::Player(uid)),
+                None,
+                Some(true),
+                None,
+                None,
+            );
+        });
     }
 
     /// Applies a [`crate::scenario::Loadout`]'s stats and backpack inventory
