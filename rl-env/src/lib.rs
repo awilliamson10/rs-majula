@@ -1,3 +1,5 @@
+pub mod scenario;
+
 use once_cell::sync::OnceCell;
 use std::path::Path;
 use rs_engine::{Engine, TickStats, LoginRequest};
