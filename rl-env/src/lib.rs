@@ -1,3 +1,4 @@
+pub mod action;
 pub mod scenario;
 
 use once_cell::sync::OnceCell;
@@ -210,6 +211,70 @@ impl EnvHarness {
             );
             p.player.opcalled = true;
         }
+    }
+
+    /// Applies one tick's worth of [`crate::action::MultiAction`] to `pid`
+    /// (with `opp` as the combat/observation counterpart), inside
+    /// `with_engine` since the attack and move heads both touch the
+    /// thread-local `engine()`/`cache()` state (the latter via
+    /// `MoveGameClick`'s handler).
+    ///
+    /// Heads are applied in the FROZEN intra-tick order `prayer -> equip ->
+    /// eat -> spec -> attack -> move`; reordering this changes which head
+    /// "wins" when two heads could otherwise interact within the same tick
+    /// (e.g. a prayer flick landing before/after an attack). Only
+    /// `attack`/`move` do anything as of this task -- `prayer`/`equip`/
+    /// `eat`/`spec` are reserved placeholders for Tasks 7-8.
+    ///
+    /// Note: the combat interaction set by `Engage` does not persist across
+    /// ticks on its own (nothing here re-arms it), so a caller that wants
+    /// sustained combat must call this every tick, same as `attack_player`.
+    pub fn apply_actions(&mut self, pid: u16, opp: u16, act: &crate::action::MultiAction) {
+        use crate::action::AttackIntent;
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+
+            // prayer (Task 8: reserved, no-op)
+            // equip  (Task 7: reserved, no-op)
+            // eat    (Task 7: reserved, no-op)
+            // spec   (Task 8: reserved, no-op)
+
+            // attack
+            if let Some(active) = engine.get_player_mut(pid) {
+                match act.attack {
+                    AttackIntent::Engage => {
+                        active.player.set_interaction(
+                            InteractionTarget::Player { pid: opp },
+                            ServerTriggerType::ApPlayer2 as u8,
+                            true,
+                        );
+                        active.player.opcalled = true;
+                    }
+                    AttackIntent::Disengage => {
+                        active.player.clear_interaction();
+                    }
+                    AttackIntent::Hold => {}
+                }
+            }
+
+            // move: build a MoveGameClick to the relative destination tile
+            // and run it through the real handler (pathing/collision), not
+            // a direct state shortcut.
+            if act.move_dx != 0 || act.move_dz != 0 {
+                if let Some(active) = engine.get_player_mut(pid) {
+                    let c = active.player.pathing.coord;
+                    let dx = act.move_dx.clamp(-8, 8) as i32;
+                    let dz = act.move_dz.clamp(-8, 8) as i32;
+                    let dest = CoordGrid::new(
+                        (c.x() as i32 + dx) as u16,
+                        c.y(),
+                        (c.z() as i32 + dz) as u16,
+                    );
+                    crate::action::move_to(active, dest);
+                }
+            }
+        });
     }
 
     pub fn player_hp(&self, pid: u16) -> u16 {

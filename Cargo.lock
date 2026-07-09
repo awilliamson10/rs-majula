@@ -1860,6 +1860,7 @@ dependencies = [
  "rs-entity",
  "rs-grid",
  "rs-pack",
+ "rs-protocol",
  "rs-stat",
  "rs-util",
  "rs-vm",

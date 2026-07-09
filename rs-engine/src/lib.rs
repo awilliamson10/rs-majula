@@ -12,8 +12,10 @@ mod info;
 mod phases;
 mod player_save;
 
+pub use active_player::ActivePlayer;
 pub use clients::client_db::{DbRequest, DbResponse, db_client_task};
 pub use clients::client_ether::{EtherInbound, EtherOutbound, ether_client_task};
 pub use clients::client_game::{ClientHandle, ClientIO, create_io};
 pub use engine::{CycleResult, Engine, LoginRequest, TickStats, with_engine};
+pub use handlers::ClientGameHandler;
 pub use rs_entity::build::{MAX_NPCS, MAX_PLAYERS};

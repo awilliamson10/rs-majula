@@ -4,14 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rs-engine = { path = "../rs-engine" }
-rs-pack   = { path = "../rs-pack" }
-rs-entity = { path = "../rs-engine/rs-entity" }
-rs-vm     = { path = "../rs-engine/rs-vm" }
-rs-grid   = { path = "../rs-engine/rs-grid" }
-rs-stat   = { path = "../rs-engine/rs-stat" }
-rs-util   = { path = "../rs-engine/rs-util" }
-tokio     = { version = "1.52", features = ["sync", "rt"] }
-once_cell = "1"
-serde     = { version = "1", features = ["derive"] }
-ron       = "0.8"
+rs-engine   = { path = "../rs-engine" }
+rs-pack     = { path = "../rs-pack" }
+rs-entity   = { path = "../rs-engine/rs-entity" }
+rs-vm       = { path = "../rs-engine/rs-vm" }
+rs-grid     = { path = "../rs-engine/rs-grid" }
+rs-stat     = { path = "../rs-engine/rs-stat" }
+rs-util     = { path = "../rs-engine/rs-util" }
+rs-protocol = { workspace = true }
+tokio       = { version = "1.52", features = ["sync", "rt"] }
+once_cell   = "1"
+serde       = { version = "1", features = ["derive"] }
+ron         = "0.8"
