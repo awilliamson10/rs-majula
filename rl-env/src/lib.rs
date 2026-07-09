@@ -1,4 +1,5 @@
 pub mod action;
+pub mod observe;
 pub mod scenario;
 
 use once_cell::sync::OnceCell;
@@ -386,6 +387,25 @@ impl EnvHarness {
             dz,
             (dx * dx + dz * dz).sqrt(),
         ]
+    }
+
+    /// Per-head legality mask for `pid` (Task 9) -- see
+    /// [`crate::observe::Mask`]'s field docs for what each head checks. A
+    /// missing player (e.g. died/despawned) reads as fully illegal on every
+    /// head except `move_ok` (which has no player-state precondition),
+    /// mirroring [`Self::observe`]'s "never panic on absence" policy.
+    pub fn legal_mask(&self, pid: u16) -> crate::observe::Mask {
+        let p = self.engine.get_player(pid);
+        crate::observe::Mask {
+            move_ok: true,
+            attack_ok: p.is_some(),
+            prayer_ok: p.is_some_and(|a| a.player.stats.levels[5] > 0),
+            eat_ok: p.is_some_and(|a| crate::action::first_edible(a).is_some()),
+            equip_ok: p.is_some_and(|a| crate::action::first_wieldable(a).is_some()),
+            spec_ok: p.is_some_and(|a| {
+                crate::action::spec_energy(a) >= crate::action::SPEC_COST_DRAGON_DAGGER
+            }),
+        }
     }
 
     /// Reward = damage dealt to `opp` this step minus damage taken by `me`

@@ -264,3 +264,39 @@ pub fn first_edible(active: &ActivePlayer) -> Option<(u16, u16, usize)> {
 pub fn first_wieldable(active: &ActivePlayer) -> Option<(u16, u16, usize)> {
     find_first_iop(active, crate::cache(), "Wield")
 }
+
+// -- Legality mask support (Task 9) -----------------------------------------
+//
+// `first_edible`/`first_wieldable` above already take `&ActivePlayer` (not
+// `&mut`) -- Task 7 wrote them read-only from the start, since all the
+// actual mutation happens in `op_held`'s handler call, not the scan. So
+// there is no separate `_ro` variant to add here (the task brief's "add a
+// read-only variant if the existing one needs `&mut`" caveat doesn't apply):
+// `crate::observe`'s `legal_mask` calls `first_edible`/`first_wieldable`
+// directly.
+
+/// Special-attack energy cost of the dragon dagger's special attack, on the
+/// same 0..1000 scale as [`spec_energy`]'s return value -- i.e. this is
+/// *not* `25` (a 0..100 "percent" reading would suggest that), it's `250`
+/// out of `1000`. Sourced from the weapon's own obj param, not a guess:
+/// `content/274/scripts/skill_combat/configs/melee/daggers.obj:251,560`:
+/// `param=sa_energy,250` (the `oc_param(...,sa_energy)` read by
+/// `content/274/scripts/skill_combat/scripts/pvp/specs/scripts/pvp_dragon_dagger.rs2:2`,
+/// `~set_sa_vars(oc_param(inv_getobj(worn, ^wearpos_rhand), sa_energy))`,
+/// which feeds `[proc,sub_sa_energy]`'s `%sa_energy = max(sub(%sa_energy,
+/// $energy_used), 0)` against the same `%sa_energy` varp `spec_energy`
+/// reads).
+pub const SPEC_COST_DRAGON_DAGGER: i32 = 250;
+
+/// Reads a player's current special-attack energy (the `sa_energy` varp,
+/// [`VARP_SPEC_ENERGY`]) -- 0..1000 scale, e.g. `1000` = a full bar. Resolves
+/// the varp id via [`crate::cache`] each call rather than memoizing (unlike
+/// [`com_protect_melee`]/[`com_special_attack`]'s `OnceCell`s) since a varp
+/// id lookup is a cheap map get, not a full interface-tree scan.
+pub fn spec_energy(active: &ActivePlayer) -> i32 {
+    let varp = crate::cache()
+        .varps
+        .get_by_debugname(VARP_SPEC_ENERGY)
+        .expect("cache is missing the \"sa_energy\" varp");
+    active.player.vars.get(varp.id).as_int()
+}
