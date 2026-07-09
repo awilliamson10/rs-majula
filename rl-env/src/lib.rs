@@ -8,6 +8,7 @@ use rs_pack::cache::CacheStore;
 use rs_pack::cache::script::ScriptProvider;
 use rs_entity::InteractionTarget;
 use rs_grid::CoordGrid;
+use rs_vm::engine::with_engine;
 use rs_vm::trigger::ServerTriggerType;
 use tokio::sync::{mpsc::unbounded_channel, watch};
 
@@ -294,5 +295,112 @@ impl EnvHarness {
         self.buff_melee(a);
         self.buff_melee(b);
         (a, b)
+    }
+
+    /// Applies a [`crate::scenario::Scenario`] to a freshly-reset engine:
+    /// despawns any existing players, reseeds the RNG, draws deterministic
+    /// spawn-position jitter, spawns both sides, then applies each side's
+    /// stats + backpack inventory (worn equipment lands in a later task).
+    /// Returns `(pker_pid, opp_pid)`.
+    ///
+    /// # Determinism
+    /// The sequence -- despawn, reseed, draw jitter (side 0 then side 1,
+    /// x then z each), spawn (side 0 "pker" then side 1 "opponent"), apply
+    /// loadouts -- is fixed and identical on every call for a given seed, so
+    /// two harnesses booted with the same seed and given the same scenario
+    /// reach bit-identical spawn state (see `load_is_reproducible` test).
+    /// Reordering any of these steps changes the RNG draw stream and breaks
+    /// reproducibility.
+    pub fn load_scenario(&mut self, sc: &crate::scenario::Scenario) -> (u16, u16) {
+        // despawn everyone
+        let pids: Vec<u16> = (0..rs_engine::MAX_PLAYERS as u16)
+            .filter(|&p| self.engine.get_player(p).is_some())
+            .collect();
+        for p in pids {
+            let _ = self.engine.remove_player(p);
+        }
+        self.prev_hp.clear();
+
+        // Crisp deterministic fight stream: reseed, THEN draw jitter, THEN
+        // spawn. Train and replay run this identical sequence, so the whole
+        // episode (jitter + spawn scripts + combat) is reproducible.
+        self.engine.random.set_seed(sc.seed as i64);
+        let (bx, bl, bz) = sc.spot;
+        let jit = |r: &mut rs_util::random::JavaRandom, j: u8| -> i32 {
+            if j == 0 { 0 } else { r.next_int_bound(j as i32 * 2 + 1) - j as i32 }
+        };
+        let (ja_x, ja_z) = (
+            jit(&mut self.engine.random, sc.start_jitter),
+            jit(&mut self.engine.random, sc.start_jitter),
+        );
+        let (jb_x, jb_z) = (
+            jit(&mut self.engine.random, sc.start_jitter),
+            jit(&mut self.engine.random, sc.start_jitter),
+        );
+        let a = self.engine.spawn_player(
+            "pker",
+            CoordGrid::new((bx as i32 + ja_x) as u16, bl, (bz as i32 + ja_z) as u16),
+        );
+        let b = self.engine.spawn_player(
+            "opponent",
+            CoordGrid::new((bx as i32 + 1 + jb_x) as u16, bl, (bz as i32 + jb_z) as u16),
+        );
+
+        self.apply_loadout_stats_inv(a, &sc.sides[0]);
+        self.apply_loadout_stats_inv(b, &sc.sides[1]);
+        (a, b)
+    }
+
+    /// Applies a [`crate::scenario::Loadout`]'s stats and backpack inventory
+    /// to player `pid`. Obj/inv debugname lookups are resolved against
+    /// [`shared_cache`] *before* entering [`with_engine`], so they don't
+    /// depend on the engine's thread-local `cache()` being installed --
+    /// only the pure field mutations (stats, inventory add) and the final
+    /// `recalc_combat_and_appearance` (which does touch thread-local
+    /// engine/cache state via script triggers) run inside `with_engine`.
+    fn apply_loadout_stats_inv(&mut self, pid: u16, lo: &crate::scenario::Loadout) {
+        let (cache, _) = shared_cache();
+        let inv_id = cache.invs.get_by_debugname("inv").map(|i| i.id);
+        let stat_updates: Vec<(usize, u8)> = lo
+            .stats
+            .iter()
+            .filter_map(|(name, lvl)| crate::scenario::stat_index(name).map(|i| (i, *lvl)))
+            .collect();
+        let inv_items: Vec<(u16, u32, bool)> = lo
+            .inventory
+            .iter()
+            .filter_map(|(name, count)| {
+                cache
+                    .objs
+                    .get_by_debugname(name)
+                    .map(|obj| (obj.id, *count, obj.stackable))
+            })
+            .collect();
+
+        // accept_login (spawn_player) already ran with_engine and restored
+        // the previous (null) thread-local state on exit, so we re-install
+        // it here for the duration of the mutation + recalc, mirroring the
+        // raw-pointer pattern `Engine::spawn_player` uses to sidestep the
+        // double-mutable-borrow of `self` inside the closure.
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let Some(active) = engine.get_player_mut(pid) else {
+                return;
+            };
+            for (i, lvl) in &stat_updates {
+                active.player.stats.base_levels[*i] = *lvl as u16;
+                active.player.stats.levels[*i] = *lvl as u16;
+                active.player.stats.xp[*i] = rs_stat::get_exp_by_level(*lvl);
+            }
+            if let Some(inv_id) = inv_id {
+                if let Some(inv) = active.player.invs.get_mut(&inv_id) {
+                    for (obj_id, count, stackable) in &inv_items {
+                        inv.add(*obj_id, *count, *stackable);
+                    }
+                }
+            }
+            active.recalc_combat_and_appearance();
+        });
     }
 }

@@ -7,13 +7,13 @@ Scenario(
     sides: (
         Loadout(
             stats: [("attack", 99), ("strength", 99), ("defence", 99), ("hitpoints", 99), ("prayer", 99)],
-            worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "dragon_scimitar"],
-            inventory: [("shark", 10), ("dragon_dagger", 1)],
+            worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "rune_scimitar"],
+            inventory: [("shark", 10), ("dragon_dagger", 1), ("coins", 1000)],
         ),
         Loadout(
             stats: [("attack", 99), ("strength", 99), ("defence", 99), ("hitpoints", 99), ("prayer", 99)],
-            worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "dragon_scimitar"],
-            inventory: [("shark", 10), ("dragon_dagger", 1)],
+            worn: ["rune_full_helm", "rune_platebody", "rune_platelegs", "rune_scimitar"],
+            inventory: [("shark", 10), ("dragon_dagger", 1), ("coins", 1000)],
         ),
     ),
 )

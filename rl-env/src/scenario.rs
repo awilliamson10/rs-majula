@@ -40,3 +40,13 @@ impl Scenario {
         ron::from_str(&text).map_err(|e| ScenarioError::Parse(e.to_string()))
     }
 }
+
+/// OSRS stat order used by `stats.levels`: 0=Attack 1=Defence 2=Strength
+/// 3=Hitpoints 4=Ranged 5=Prayer 6=Magic ... (matches rs-stat PlayerStat).
+pub fn stat_index(name: &str) -> Option<usize> {
+    Some(match name {
+        "attack" => 0, "defence" | "defense" => 1, "strength" => 2,
+        "hitpoints" | "hp" => 3, "ranged" => 4, "prayer" => 5, "magic" => 6,
+        _ => return None,
+    })
+}

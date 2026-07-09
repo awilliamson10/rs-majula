@@ -1861,6 +1861,7 @@ dependencies = [
  "rs-grid",
  "rs-pack",
  "rs-stat",
+ "rs-util",
  "rs-vm",
  "serde",
  "tokio",
