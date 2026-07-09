@@ -73,7 +73,7 @@ impl EnvHarness {
     /// ~100k ticks/s); the `perf` bench under sustained combat shows ~60x
     /// (~0.9k vs ~50k+ ticks/s).
     pub fn boot() -> Self {
-        Self::boot_inner(true)
+        Self::boot_inner(true, 1084838400000)
     }
 
     /// Arena-mode boot: skips spawning the static world NPCs entirely, so
@@ -82,13 +82,19 @@ impl EnvHarness {
     /// mode -- static NPCs are ~98.6% of a full-world tick's cost and are
     /// irrelevant to a headless PvP env that only spawns its own bots.
     pub fn boot_arena() -> Self {
-        Self::boot_inner(false)
+        Self::boot_inner(false, 1084838400000)
     }
 
-    /// Shared `Engine::new` construction for [`Self::boot`] and
-    /// [`Self::boot_arena`]; `spawn_static_npcs` is forwarded straight to
-    /// [`Engine::new`]'s equivalent parameter.
-    fn boot_inner(spawn_static_npcs: bool) -> Self {
+    /// Arena-mode boot with an explicit RNG seed, for deterministic/repeatable
+    /// episodes (e.g. RL training with seeded resets).
+    pub fn boot_arena_seeded(seed: u64) -> Self {
+        Self::boot_inner(false, seed)
+    }
+
+    /// Shared `Engine::new` construction for [`Self::boot`], [`Self::boot_arena`],
+    /// and [`Self::boot_arena_seeded`]; `spawn_static_npcs` and `seed` are
+    /// forwarded straight to [`Engine::new`]'s equivalent parameters.
+    fn boot_inner(spawn_static_npcs: bool, seed: u64) -> Self {
         let (cache, scripts) = shared_cache();
         let cache_ptr = cache as *const CacheStore as *mut CacheStore;
 
@@ -115,6 +121,7 @@ impl EnvHarness {
             None,            // db_tx
             db_rx,
             spawn_static_npcs,
+            seed,
         );
 
         EnvHarness {

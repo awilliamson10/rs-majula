@@ -576,6 +576,7 @@ impl Engine {
         db_tx: Option<UnboundedSender<DbRequest>>,
         db_rx: UnboundedReceiver<DbResponse>,
         spawn_static_npcs: bool,
+        seed: u64,
     ) -> (Self, watch::Receiver<u64>) {
         let ops = register_ops();
 
@@ -622,7 +623,7 @@ impl Engine {
             db_ready: false,
             ether_ready: false,
             pending_logins: Vec::new(),
-            random: JavaRandom::new(1084838400000),
+            random: JavaRandom::new(seed as i64),
             vars,
             reusable_script: None,
         };

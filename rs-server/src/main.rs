@@ -385,6 +385,7 @@ async fn bootstrap(
         db_tx,
         db_rx,
         true, // the real server always spawns the full static world
+        1084838400000, // legacy fixed seed; not yet exposed as a server config option
     );
     tokio::spawn(engine_tick(engine, reload_rx, clock_rate_rx));
 
