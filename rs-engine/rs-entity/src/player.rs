@@ -141,6 +141,13 @@ impl ChatSettingsTradeDuel {
     }
 }
 
+/// A single hit landed on a player, as recorded by [`Player::hits`].
+#[derive(Debug, Clone, Copy)]
+pub struct HitEvent {
+    pub amount: u8,
+    pub kind: u8,
+}
+
 /// A player entity in the game world with full game state.
 ///
 /// Contains all per-player state: identity, movement/pathing, combat stats, skill
@@ -227,6 +234,12 @@ pub struct Player {
     pub next_target: Option<InteractionTarget>,
     pub walktrigger: Option<i32>,
     pub bot: bool,
+    /// Hits this player has taken since the field was last drained by an
+    /// observer. Unlike the `info` damage masks (cleared every tick by the
+    /// cleanup phase), this survives across `cycle()` so an RL env stepping
+    /// once per tick can read explicit, eat-proof damage events. Drained +
+    /// cleared by the env each step.
+    pub hits: Vec<HitEvent>,
 }
 
 impl Player {
@@ -333,6 +346,7 @@ impl Player {
             next_target: None,
             walktrigger: None,
             bot,
+            hits: Vec::new(),
         }
     }
 

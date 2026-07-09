@@ -1495,6 +1495,7 @@ impl ActivePlayer {
                 current.saturating_sub(amount);
             amount as u8
         };
+        self.player.hits.push(HitEvent { amount: taken, kind: damage_type });
         let remaining = self.player.stats.levels[PlayerStat::Hitpoints as usize] as u8;
         let base = self.player.stats.base_levels[PlayerStat::Hitpoints as usize] as u8;
 
