@@ -240,6 +240,14 @@ pub struct Player {
     /// once per tick can read explicit, eat-proof damage events. Drained +
     /// cleared by the env each step.
     pub hits: Vec<HitEvent>,
+    /// The engine clock value ([`crate`]-external `Engine::clock`, at the
+    /// moment [`crate`]-external `ActivePlayer::damage` ran) of the most
+    /// recent hit landed on this player, if any. Unlike `hits` (an
+    /// accumulator an observer drains, and therefore *consumes*), this is a
+    /// plain overwrite -- it survives being read, so a "did this player get
+    /// hit last tick" query (e.g. the RL env's `IDX_OPP_RECENT_HIT`
+    /// observation field) works regardless of accumulator-draining order.
+    pub last_hit_tick: Option<u32>,
 }
 
 impl Player {
@@ -347,6 +355,7 @@ impl Player {
             walktrigger: None,
             bot,
             hits: Vec::new(),
+            last_hit_tick: None,
         }
     }
 

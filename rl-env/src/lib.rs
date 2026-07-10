@@ -375,7 +375,12 @@ impl EnvHarness {
                         (c.z() as i32 + dz) as u16,
                     );
                     crate::action::move_to(active, dest);
-                    resolved.push(ResolvedKind::Move { dx: act.move_dx, dz: act.move_dz });
+                    // Record the CLAMPED (actually-dispatched) dx/dz, not
+                    // the raw requested `act.move_dx/dz` -- the dispatched
+                    // move itself clamps to +/-8 above, so recording the
+                    // raw value would silently desync the log from what
+                    // Phase C replay would need to reproduce this tick.
+                    resolved.push(ResolvedKind::Move { dx: dx as i8, dz: dz as i8 });
                 }
             }
         });
@@ -463,7 +468,19 @@ impl EnvHarness {
             let maxhp = (o.player.stats.base_levels[3] as f32).max(1.0);
             let frac = (hp / maxhp).clamp(0.0, 1.0);
             v[ob::IDX_OPP_HP_BUCKET] = (frac * ob::OPP_HP_BUCKETS as f32).round();
-            v[ob::IDX_OPP_RECENT_HIT] = (!o.player.hits.is_empty()) as u8 as f32;
+            // Sourced from `last_hit_tick` (a plain overwrite), NOT
+            // `hits` (an accumulator `step_reward` drains) -- see
+            // `Player::last_hit_tick`'s doc comment. In the normal step
+            // loop (observe -> apply_actions -> cycle -> step_reward),
+            // `hits` is always empty by the time the *next* `observe()`
+            // runs (the prior step's `step_reward` already drained it),
+            // which would make a `hits`-sourced recent-hit flag a
+            // permanently-dead field. `last_hit_tick` survives being read,
+            // so this correctly reports "opponent was hit during the
+            // just-completed cycle" regardless of reward-draining order.
+            let cur_clock = self.engine.clock;
+            v[ob::IDX_OPP_RECENT_HIT] =
+                (o.player.last_hit_tick == Some(cur_clock.saturating_sub(1))) as u8 as f32;
         }
         (v, self.legal_mask(pid))
     }
@@ -543,6 +560,12 @@ impl EnvHarness {
     /// double-KO tick still resolves the same way Timeout does), and for
     /// `Timeout(n)`/`DeathOrTimeout(n)`, `episode_tick >= n` with neither
     /// side dead -> `Draw`. `None` means the episode has not ended yet.
+    ///
+    /// Note for Phase B callers: [`Self::step_reward`] already folds a
+    /// terminal `+-1.0` bonus into its return value for the same death
+    /// condition this resolves. A caller using both must not double-count
+    /// that bonus on the terminal step (e.g. by also adding a win/loss
+    /// bonus keyed off this method's `Outcome`).
     pub fn is_terminal(&self, me: u16, opp: u16, term: &crate::scenario::Terminal) -> Option<crate::reward::Outcome> {
         use crate::reward::Outcome;
         let me_dead = self.engine.get_player(me).map_or(true, |p| p.player.stats.levels[3] == 0);

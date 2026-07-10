@@ -43,7 +43,7 @@ pub const HEADICON_PROTECT_MELEE: u8 = 1 << 3;
 /// `content/274/scripts/_unpack/244/all.varp:4`: `[sa_energy]`. Used
 /// throughout `content/274/scripts/skill_combat/scripts/player/specwep.rs2`
 /// as `%sa_energy` (e.g. line 16: `if (%sa_energy = ^sa_max_energy)`, line
-/// 39: `%sa_energy = max(sub(%sa_energy, $energy_used), 0);`).
+/// 19: `%sa_energy = max(sub(%sa_energy, $energy_used), 0);`).
 pub const VARP_SPEC_ENERGY: &str = "sa_energy";
 
 /// Interface component id (`IfButton.com`) for the Protect-from-Melee prayer

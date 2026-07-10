@@ -76,7 +76,7 @@ impl Engine {
 
         let prev_coord = active.player.pathing.coord;
 
-        Self::check_afk(self.clock, active);
+        Self::check_afk(self.clock, self.arena_mode, active);
         if active.decode() {
             active.player.last_response = self.clock;
         }
@@ -99,11 +99,26 @@ impl Engine {
     /// zone ([`AFK_CHANCE1`]). Sets `afk_event_ready` on the player when
     /// the roll succeeds.
     ///
+    /// Skipped entirely in arena mode (`arena_mode == true`): AFK
+    /// auto-logout is meaningless for a headless RL bot arena, and this
+    /// check is the ONLY place an absolute (not episode-relative) clock
+    /// value gates a draw from `engine.random` -- the same RNG combat
+    /// uses. A reused arena harness (Nth `load_scenario` call, high
+    /// absolute clock) would otherwise cross the 500-tick boundary at a
+    /// different episode-relative tick than a fresh boot (clock 0),
+    /// consuming a different number of RNG draws and diverging the fight
+    /// from an otherwise-identical (seed, actions) replay. Gating the
+    /// whole draw off in arena mode removes that clock->RNG coupling.
+    ///
     /// # Side Effects
     ///
-    /// * Sets `active.player.afk_event_ready` to `true` or `false`.
+    /// * Sets `active.player.afk_event_ready` to `true` or `false`
+    ///   (arena mode: left unchanged).
     #[inline(always)]
-    fn check_afk(clock: u32, active: &mut ActivePlayer) {
+    fn check_afk(clock: u32, arena_mode: bool, active: &mut ActivePlayer) {
+        if arena_mode {
+            return;
+        }
         if clock.is_multiple_of(500) {
             let chance = if active.player.last_afk_zone == 1000 {
                 AFK_CHANCE2

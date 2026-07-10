@@ -1495,7 +1495,27 @@ impl ActivePlayer {
                 current.saturating_sub(amount);
             amount as u8
         };
-        self.player.hits.push(HitEvent { amount: taken, kind: damage_type });
+        // `engine()` is safe to call here: `damage` only ever runs from
+        // within `cycle()` (via VM ops / combat resolution), which always
+        // has the thread-local engine installed, and other `ActivePlayer`
+        // methods already read `engine()` the same way (see e.g.
+        // `process_walktrigger` above).
+        let eng = crate::engine::engine();
+        // Cheap O(1) overwrite regardless of mode -- unlike `hits` below,
+        // this can't leak. Lets the RL env's `IDX_OPP_RECENT_HIT`
+        // observation field ask "did this player get hit last tick"
+        // without depending on `hits`-draining order (see `Player::last_hit_tick`'s
+        // doc comment).
+        self.player.last_hit_tick = Some(eng.clock);
+        // Only accumulated in arena mode: this Vec is drained every step by
+        // the RL env's event-based reward (see `rl-env::step_reward`), but
+        // on the production `rs-server` nothing ever drains it, so pushing
+        // unconditionally here would grow it unbounded for a player's whole
+        // session -- a memory leak in the engine's normal (non-arena)
+        // operation.
+        if eng.arena_mode {
+            self.player.hits.push(HitEvent { amount: taken, kind: damage_type });
+        }
         let remaining = self.player.stats.levels[PlayerStat::Hitpoints as usize] as u8;
         let base = self.player.stats.base_levels[PlayerStat::Hitpoints as usize] as u8;
 

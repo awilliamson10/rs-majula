@@ -58,6 +58,11 @@ pub const IDX_OPP_OVERHEAD: usize = 11;
 pub const IDX_OPP_WEAPON: usize = 12;
 /// Coarse HP-bar bucket in `[0, OPP_HP_BUCKETS]`, never the exact HP.
 pub const IDX_OPP_HP_BUCKET: usize = 13;
+/// `1.0` if the opponent was hit during the just-completed cycle, else
+/// `0.0`. Sourced from `Player::last_hit_tick` (a plain overwrite, distinct
+/// from the `hits` accumulator `step_reward` drains) -- see
+/// [`crate::EnvHarness::observe`]'s fill-logic comment for why `hits`
+/// itself can't be used here.
 pub const IDX_OPP_RECENT_HIT: usize = 14;
 /// TODO M1: opponent is-moving not yet sourced -- left 0.0.
 pub const IDX_OPP_ISMOVING: usize = 15;

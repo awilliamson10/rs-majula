@@ -17,7 +17,15 @@ fn player_damages_npc_in_melee() {
     env.cycle(); // build_area / visibility settles
     let hp0 = env.npc_hp(nid);
     env.attack_npc(pid, nid);
-    for _ in 0..12 {
+    // 40 ticks (not 12): the arena-mode AFK-gate fix (see
+    // `rs-engine/src/phases/input.rs::check_afk`) removed the ONLY
+    // absolute-clock-gated draw from `engine.random` in arena mode, which
+    // shifts every subsequent accuracy roll's position in the RNG stream
+    // relative to the pre-fix behavior this test's window was tuned
+    // against. A short, RNG-stream-position-sensitive window is exactly
+    // the kind of fragility that fix was meant to eliminate, so widen the
+    // window instead of re-coupling the test to a specific stream offset.
+    for _ in 0..40 {
         env.cycle();
     }
     let hp1 = env.npc_hp(nid);

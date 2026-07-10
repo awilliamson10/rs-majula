@@ -502,6 +502,15 @@ pub struct Engine {
     pub ether_ready: bool,
     pub pending_logins: Vec<PendingLogin>,
     pub random: JavaRandom,
+    /// `true` when this engine was constructed with `spawn_static_npcs =
+    /// false` (i.e. a headless RL/arena boot -- see [`Self::new`]'s
+    /// `spawn_static_npcs` doc). Used to gate engine behavior that is
+    /// meaningful for a real player session but not for a scripted arena
+    /// bot, and whose absolute-clock gating would otherwise couple
+    /// episode RNG draws to a *reused* harness's clock (breaking
+    /// train/replay determinism across episodes) -- see
+    /// `phases/input.rs::check_afk`.
+    pub arena_mode: bool,
     pub vars: VarSet,
     /// A reusable [`ScriptState`] kept alive between script invocations to
     /// avoid repeated heap allocations for the fixed-size stacks (int_stack,
@@ -624,6 +633,7 @@ impl Engine {
             ether_ready: false,
             pending_logins: Vec::new(),
             random: JavaRandom::new(seed as i64),
+            arena_mode: !spawn_static_npcs,
             vars,
             reusable_script: None,
         };
