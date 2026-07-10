@@ -634,6 +634,25 @@ impl EnvHarness {
         (a, b)
     }
 
+    /// Spawns one player at `spot`, opens the standard inventory/worn
+    /// interfaces (see [`Self::open_standard_interfaces`]'s cold-start note),
+    /// and applies `lo`'s stats/inventory/worn/vars. Returns the new pid.
+    /// This is the per-player spawn path [`crate::batch::BatchEnv`] uses to
+    /// populate its duels; it deliberately does NOT reseed the RNG or draw
+    /// jitter (the batch owns its own deterministic spawn order), so it is
+    /// independent of `load_scenario`'s single-duel spawn sequence.
+    pub fn spawn_and_equip(
+        &mut self,
+        name: &str,
+        spot: rs_grid::CoordGrid,
+        lo: &crate::scenario::Loadout,
+    ) -> u16 {
+        let pid = self.engine.spawn_player(name, spot);
+        self.open_standard_interfaces(pid);
+        self.apply_loadout_stats_inv(pid, lo);
+        pid
+    }
+
     /// Applies a [`crate::scenario::Scenario`] to a freshly-reset engine:
     /// despawns any existing players, reseeds the RNG, draws deterministic
     /// spawn-position jitter, spawns both sides, then applies each side's
