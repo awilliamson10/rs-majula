@@ -1,4 +1,5 @@
 pub mod action;
+pub mod batch;
 pub mod observe;
 pub mod reward;
 pub mod scenario;
