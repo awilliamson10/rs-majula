@@ -90,4 +90,26 @@ impl BatchEnv {
     pub fn duel_spots(&self) -> Vec<(u16, u8, u16)> {
         self.duels.iter().map(|d| d.spot).collect()
     }
+
+    /// Fills `out` (len == num_agents * OBS_STRIDE) with each agent's
+    /// 16-float Phase-A observation followed by its 6 mask bits.
+    pub fn write_obs(&self, out: &mut [f32]) {
+        debug_assert_eq!(out.len(), self.num_agents() * Self::OBS_STRIDE);
+        for (i, d) in self.duels.iter().enumerate() {
+            self.fill_agent(out, 2 * i, d.a, d.b);
+            self.fill_agent(out, 2 * i + 1, d.b, d.a);
+        }
+    }
+
+    fn fill_agent(&self, out: &mut [f32], agent: usize, me: u16, opp: u16) {
+        let base = agent * Self::OBS_STRIDE;
+        let (v, mask) = self.harness.observe(me, opp);
+        out[base..base + 16].copy_from_slice(&v[..16]);
+        out[base + 16] = mask.move_ok as u8 as f32;
+        out[base + 17] = mask.attack_ok as u8 as f32;
+        out[base + 18] = mask.prayer_ok as u8 as f32;
+        out[base + 19] = mask.eat_ok as u8 as f32;
+        out[base + 20] = mask.equip_ok as u8 as f32;
+        out[base + 21] = mask.spec_ok as u8 as f32;
+    }
 }
