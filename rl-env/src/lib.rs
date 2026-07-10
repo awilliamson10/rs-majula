@@ -516,16 +516,15 @@ impl EnvHarness {
     /// same-tick healing, so it can't be fooled that way (see
     /// `rl-env/tests/reward.rs::eat_on_damage_tick_does_not_hide_damage`).
     ///
-    /// # `hits` is drained here -- required call order
+    /// # `hits` is drained here
     /// This reads AND CLEARS both `me.player.hits` and `opp.player.hits`
     /// (the accumulator is a per-tick event queue, not a running total, so
     /// once read it must be emptied or the same hits would double-count on
-    /// the next call). [`Self::observe`] also reads `opp.player.hits`
-    /// (non-destructively, for `IDX_OPP_RECENT_HIT`). Within a single step,
-    /// callers MUST call `observe()` BEFORE `step_reward()` -- calling
-    /// `step_reward()` first drains the hits and `observe()` will then see
-    /// an empty accumulator and report no recent hit, even though a hit
-    /// landed this step.
+    /// the next call). [`Self::observe`]'s `IDX_OPP_RECENT_HIT` does NOT read
+    /// `hits` -- it derives recent-hit from `player.last_hit_tick` (an
+    /// overwrite, not a drainable queue; see the accessor's doc), so there is
+    /// no observe-vs-step_reward call-order constraint: draining `hits` here
+    /// cannot clobber the recent-hit observation.
     ///
     /// # Not safe to call twice per step (self-play trap)
     /// This is intended to be called exactly ONCE per step, for ONE agent's
