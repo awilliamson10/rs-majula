@@ -6,6 +6,7 @@
 use rs_grid::CoordGrid;
 use crate::EnvHarness;
 use crate::scenario::{Scenario, Loadout, Terminal};
+use crate::action::{MultiAction, AttackIntent};
 
 pub struct BatchConfig {
     pub scenario_path: String,
@@ -111,5 +112,77 @@ impl BatchEnv {
         out[base + 19] = mask.eat_ok as u8 as f32;
         out[base + 20] = mask.equip_ok as u8 as f32;
         out[base + 21] = mask.spec_ok as u8 as f32;
+    }
+
+    fn move_offset(m: i32) -> (i8, i8) {
+        // 0=stay,1=N,2=NE,3=E,4=SE,5=S,6=SW,7=W,8=NW  (N=+z, E=+x)
+        match m {
+            1 => (0, 1), 2 => (1, 1), 3 => (1, 0), 4 => (1, -1),
+            5 => (0, -1), 6 => (-1, -1), 7 => (-1, 0), 8 => (-1, 1),
+            _ => (0, 0),
+        }
+    }
+
+    fn decode_action(row: &[i32]) -> MultiAction {
+        let (dx, dz) = Self::move_offset(row[0]);
+        let attack = match row[1] { 1 => AttackIntent::Engage, 2 => AttackIntent::Disengage, _ => AttackIntent::Hold };
+        MultiAction {
+            move_dx: dx, move_dz: dz, attack,
+            prayer: row[2].clamp(0, 1) as u8,
+            eat: row[3] != 0,
+            equip: row[4].clamp(0, 1) as u8,
+            spec: row[5] != 0,
+        }
+    }
+
+    fn duel_terminal(&self, d: &Duel) -> bool {
+        let a_dead = self.harness.player_hp(d.a) == 0;
+        let b_dead = self.harness.player_hp(d.b) == 0;
+        let timed = self.timeout.map_or(false, |n| d.tick >= n);
+        a_dead || b_dead || (matches!(self.term, Terminal::Timeout(_) | Terminal::DeathOrTimeout(_)) && timed)
+    }
+
+    fn respawn(&mut self, i: usize) {
+        let (a, b, spot, eps) = {
+            let d = &self.duels[i];
+            (d.a, d.b, d.spot, d.episodes)
+        };
+        let _ = self.harness.engine.remove_player(a);
+        let _ = self.harness.engine.remove_player(b);
+        let na = self.harness.spawn_and_equip("pker",
+            CoordGrid::new(spot.0, spot.1, spot.2), &self.sides[0].clone());
+        let nb = self.harness.spawn_and_equip("opponent",
+            CoordGrid::new(spot.0 + 1, spot.1, spot.2), &self.sides[1].clone());
+        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1 };
+    }
+
+    pub fn step(&mut self, actions: &[i32], obs: &mut [f32], rewards: &mut [f32], dones: &mut [f32]) {
+        debug_assert_eq!(actions.len(), self.num_agents() * Self::ACT_STRIDE);
+        // 1. Apply both sides of every duel (no cycle yet).
+        for i in 0..self.duels.len() {
+            let (a, b) = (self.duels[i].a, self.duels[i].b);
+            let ra = 2 * i * Self::ACT_STRIDE;
+            let rb = (2 * i + 1) * Self::ACT_STRIDE;
+            let act_a = Self::decode_action(&actions[ra..ra + Self::ACT_STRIDE]);
+            let act_b = Self::decode_action(&actions[rb..rb + Self::ACT_STRIDE]);
+            self.harness.apply_actions(a, b, &act_a);
+            self.harness.apply_actions(b, a, &act_b);
+        }
+        // 2. One cycle advances every duel.
+        self.harness.cycle();
+        // 3. Reward + terminal + auto-reset, per duel (deterministic index order).
+        for i in 0..self.duels.len() {
+            self.duels[i].tick += 1;
+            let (a, b) = (self.duels[i].a, self.duels[i].b);
+            let (ra, rb) = self.harness.step_reward_pair(a, b, self.reward_w);
+            rewards[2 * i] = ra;
+            rewards[2 * i + 1] = rb;
+            let done = self.duel_terminal(&self.duels[i]);
+            dones[2 * i] = done as u8 as f32;
+            dones[2 * i + 1] = done as u8 as f32;
+            if done { self.respawn(i); }
+        }
+        // 4. Fresh observation.
+        self.write_obs(obs);
     }
 }
