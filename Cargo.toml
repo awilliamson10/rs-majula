@@ -20,6 +20,7 @@ members = [
     "rs-protocol/macros",
     "rs-server",
     "rl-env",
+    "rl-env-py",
     "rev-cfg",
 ]
 resolver = "2"

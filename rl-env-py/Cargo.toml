@@ -1,0 +1,13 @@
+[package]
+name = "rl-env-py"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rs_pk_env"
+crate-type = ["cdylib"]
+
+[dependencies]
+rl-env = { path = "../rl-env" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
