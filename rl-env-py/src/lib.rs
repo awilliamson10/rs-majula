@@ -5,11 +5,17 @@
 //! engines must be separate PROCESSES (rs-pathfinder process-global state);
 //! the Python side pins `num_envs == num_workers` accordingly (Plan B.2).
 
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rl_env::batch::{BatchConfig, BatchEnv as CoreBatchEnv};
 
-#[pyclass]
+// `unsendable`: BatchEnv wraps a Rust `Engine` holding a `*mut CacheStore`
+// (not `Sync`), and rs-pathfinder's process-global collision state means an
+// engine is thread/process-local by construction -- it is never moved across
+// threads. `unsendable` tells PyO3 to enforce that (access only from the
+// creating thread) instead of requiring `Sync`. The Python side already runs
+// one engine per worker process (Plan B.2's `num_envs == num_workers`).
+#[pyclass(unsendable)]
 struct BatchEnv {
     inner: CoreBatchEnv,
 }
