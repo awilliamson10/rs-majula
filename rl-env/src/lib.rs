@@ -1,4 +1,5 @@
 pub mod action;
+pub mod batch;
 pub mod observe;
 pub mod reward;
 pub mod scenario;
@@ -553,6 +554,36 @@ impl EnvHarness {
         r
     }
 
+    /// Snapshot-then-drain-BOTH reward, from both perspectives at once.
+    /// Unlike calling [`Self::step_reward`] twice (which drains the first
+    /// player's `hits` before the second call reads them — the self-play
+    /// trap documented on `step_reward`), this reads both `hits` sums FIRST,
+    /// then clears both, so each side's dealt/taken is correct. Terminal
+    /// ±1 is folded per side (opp dead -> +1, me dead -> -1), matching
+    /// `step_reward`'s bonus. Call exactly once per duel per step.
+    pub fn step_reward_pair(&mut self, a: u16, b: u16, w: f32) -> (f32, f32) {
+        let a_hits: u32 = self.engine.get_player(a)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        let b_hits: u32 = self.engine.get_player(b)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        if let Some(p) = self.engine.get_player_mut(a) { p.player.hits.clear(); }
+        if let Some(p) = self.engine.get_player_mut(b) { p.player.hits.clear(); }
+
+        let a_dead = self.engine.get_player(a).map_or(true, |p| p.player.stats.levels[3] == 0);
+        let b_dead = self.engine.get_player(b).map_or(true, |p| p.player.stats.levels[3] == 0);
+
+        // a deals b_hits, takes a_hits; b is the mirror.
+        let mut ra = w * (b_hits as f32 - a_hits as f32);
+        let mut rb = w * (a_hits as f32 - b_hits as f32);
+        if b_dead { ra += 1.0; }
+        if a_dead { ra -= 1.0; }
+        if a_dead { rb += 1.0; }
+        if b_dead { rb -= 1.0; }
+        (ra, rb)
+    }
+
     /// Resolves `term` against `me`/`opp`'s current liveness and
     /// [`Self::episode_tick`], from `me`'s perspective: `opp` dead -> `Win`,
     /// `me` dead -> `Loss` (checked first for `Death` so a mutual/ambiguous
@@ -602,6 +633,25 @@ impl EnvHarness {
         self.buff_melee(a);
         self.buff_melee(b);
         (a, b)
+    }
+
+    /// Spawns one player at `spot`, opens the standard inventory/worn
+    /// interfaces (see [`Self::open_standard_interfaces`]'s cold-start note),
+    /// and applies `lo`'s stats/inventory/worn/vars. Returns the new pid.
+    /// This is the per-player spawn path [`crate::batch::BatchEnv`] uses to
+    /// populate its duels; it deliberately does NOT reseed the RNG or draw
+    /// jitter (the batch owns its own deterministic spawn order), so it is
+    /// independent of `load_scenario`'s single-duel spawn sequence.
+    pub fn spawn_and_equip(
+        &mut self,
+        name: &str,
+        spot: rs_grid::CoordGrid,
+        lo: &crate::scenario::Loadout,
+    ) -> u16 {
+        let pid = self.engine.spawn_player(name, spot);
+        self.open_standard_interfaces(pid);
+        self.apply_loadout_stats_inv(pid, lo);
+        pid
     }
 
     /// Applies a [`crate::scenario::Scenario`] to a freshly-reset engine:
