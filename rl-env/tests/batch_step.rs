@@ -35,15 +35,59 @@ fn step_produces_damage_and_antisymmetric_reward() {
     }
 }
 
+// Ignored by default: each `batch_digest` child pays its own ~110s
+// world-cache-pack + engine-boot cost in a debug build, and this test spawns
+// three of them sequentially (~5-6 min total) -- too slow for the normal
+// `cargo test` loop. Run explicitly:
+//   cargo test -p rl-env --test batch_step determinism_across_processes -- --ignored --test-threads=1
 #[test]
-fn determinism_two_batches_identical_streams() {
-    let mut e1 = BatchEnv::new(cfg(2));
-    let mut e2 = BatchEnv::new(cfg(2));
-    let (o1, r1, d1) = run(&mut e1, 60);
-    let (o2, r2, d2) = run(&mut e2, 60);
-    assert_eq!(o1, o2, "obs streams diverged");
-    assert_eq!(r1, r2, "reward streams diverged");
-    assert_eq!(d1, d2, "done streams diverged");
+#[ignore]
+fn determinism_across_processes() {
+    // Two `BatchEnv`s (two `Engine`s) cannot coexist in one process:
+    // rs-pathfinder holds process-global `COLLISION_FLAGS`/`PATHFINDER`
+    // state, so an in-process "build two engines, compare their streams"
+    // test races on that global and can't distinguish a real
+    // batch-determinism bug from cross-engine corruption -- confirmed when
+    // an earlier version of this test (in-process, two engines) silently
+    // suppressed KOs once given a long enough horizon to reach a respawn.
+    // See `src/bin/batch_digest.rs`'s doc comment and the "Final-review fix
+    // wave" section of task-5-report.md.
+    //
+    // The only valid way to compare two batches' streams is therefore two
+    // SEPARATE OS processes -- which also matches how training actually
+    // runs (one process per parallel env). `batch_digest` runs exactly one
+    // `BatchEnv` to completion and prints a digest of its whole
+    // (obs, reward, done) stream; this test spawns it three times and
+    // compares.
+    let bin = env!("CARGO_BIN_EXE_batch_digest");
+    let run_digest = |seed: u64, ticks: u32| -> String {
+        let out = std::process::Command::new(bin)
+            .args([seed.to_string(), ticks.to_string()])
+            .output()
+            .expect("failed to spawn batch_digest");
+        assert!(out.status.success(), "batch_digest exited non-zero: {out:?}");
+        String::from_utf8(out.stdout).expect("batch_digest stdout not utf8")
+    };
+
+    // 250 ticks: single-engine KOs land roughly every ~55 ticks under this
+    // loadout, so this window comfortably covers several respawns per
+    // duel -- long enough to exercise the respawn RNG-interleaving
+    // determinism guarantee. The done_count assertion below is the safety
+    // net if that assumption ever drifts.
+    let run1 = run_digest(1000, 250); // same seed as run2
+    let run2 = run_digest(1000, 250); // separate process, identical args
+    let run3 = run_digest(7, 250);    // different seed
+
+    assert_eq!(run1, run2, "same-seed digests diverged across processes -- respawn determinism broken");
+    assert_ne!(run1, run3, "different-seed digests matched -- digest isn't actually sensitive to the RNG stream");
+
+    let done_count: u64 = run1
+        .split_whitespace()
+        .find_map(|tok| tok.strip_prefix("done_count="))
+        .expect("batch_digest output missing done_count field")
+        .parse()
+        .expect("done_count not a valid integer");
+    assert!(done_count > 0, "no terminal/respawn fired in 250 ticks -- test didn't cover the auto-reset path");
 }
 
 #[test]
@@ -98,4 +142,12 @@ fn many_respawns_do_not_exhaust_player_slots() {
     // mid-fight. What matters here is that repeated respawns still produce
     // a live, valid agent rather than panicking or stalling on pid reuse.
     assert!(env.agent_hp(0) > 0, "agent starved of a player slot");
+    // `step` drains `harness.recorded` every call (I1 fix), so after 3000
+    // steps at most one step's worth of dispatched actions should remain --
+    // it must not have grown unbounded with the step count.
+    assert!(
+        env.recorded_len() <= 2 * env.num_agents(),
+        "harness.recorded grew unbounded: {} entries after 3000 steps",
+        env.recorded_len()
+    );
 }

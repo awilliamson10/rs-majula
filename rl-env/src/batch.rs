@@ -82,6 +82,11 @@ impl BatchEnv {
     pub fn num_agents(&self) -> usize { self.duels.len() * 2 }
     pub fn num_duels(&self) -> usize { self.duels.len() }
 
+    /// Current length of `harness.recorded` *without* draining it -- test
+    /// hook proving `step`'s per-step drain (see the end of [`Self::step`])
+    /// actually bounds the accumulator instead of leaking across steps.
+    pub fn recorded_len(&self) -> usize { self.harness.recorded.len() }
+
     /// Test/introspection helpers.
     pub fn agent_hp(&self, agent: usize) -> u16 {
         let d = &self.duels[agent / 2];
@@ -184,5 +189,12 @@ impl BatchEnv {
         }
         // 4. Fresh observation.
         self.write_obs(obs);
+        // 5. `apply_actions` (step 1, twice per duel) appended every
+        // dispatched action to `self.harness.recorded` -- the accumulator
+        // Phase C replay drains via `drain_recorded()`. `BatchEnv` doesn't
+        // use the replay log, so leaving it unconsumed would grow it
+        // unbounded over a training run; drain (and discard) it here to
+        // bound it to at most one step's worth.
+        self.harness.drain_recorded();
     }
 }
