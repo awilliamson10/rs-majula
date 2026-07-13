@@ -53,10 +53,14 @@ pub const IDX_SELF_EATDELAY: usize = 6;
 pub const IDX_OPP_DX: usize = 7;
 pub const IDX_OPP_DZ: usize = 8;
 pub const IDX_OPP_DIST: usize = 9;
-/// TODO M1: opponent is-attacking not yet sourced -- left 0.0.
+/// `1.0` if the opponent has an attack cooldown pending (they just swung),
+/// else `0.0`. Client-visible: a real player sees the attack animation.
+/// Sourced from `action::attack_cooldown`.
 pub const IDX_OPP_ISATTACKING: usize = 10;
 pub const IDX_OPP_OVERHEAD: usize = 11;
-/// TODO M1: opponent weapon class not yet sourced -- left 0.0.
+/// Normalized weapon-category code in `[0.0, 1.0]` (`0.0` = unarmed /
+/// unknown) for whatever the opponent is wielding. Client-visible: a real
+/// player sees the opponent's weapon. Sourced from `action::weapon_class`.
 pub const IDX_OPP_WEAPON: usize = 12;
 /// Coarse HP-bar bucket in `[0, OPP_HP_BUCKETS]`, never the exact HP.
 pub const IDX_OPP_HP_BUCKET: usize = 13;
@@ -66,7 +70,11 @@ pub const IDX_OPP_HP_BUCKET: usize = 13;
 /// [`crate::EnvHarness::observe`]'s fill-logic comment for why `hits`
 /// itself can't be used here.
 pub const IDX_OPP_RECENT_HIT: usize = 14;
-/// TODO M1: opponent is-moving not yet sourced -- left 0.0.
+/// `1.0` if the opponent's tile changed during the just-completed tick,
+/// else `0.0`. Client-visible: a real player sees the opponent step.
+/// Sourced from [`crate::EnvHarness::note_positions`]'s previous-tick
+/// coordinate snapshot -- see [`crate::EnvHarness::note_positions`]'s doc
+/// comment for the required call order relative to `observe`.
 pub const IDX_OPP_ISMOVING: usize = 15;
 pub const OBS_LEN: usize = 16;
 

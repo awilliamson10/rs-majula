@@ -187,8 +187,14 @@ impl BatchEnv {
             dones[2 * i + 1] = done as u8 as f32;
             if done { self.respawn(i); }
         }
-        // 4. Fresh observation.
+        // 4. Fresh observation. Uses the PRE-this-tick `prev_coord` snapshot
+        // (from the end of the previous step) to derive is-moving for the
+        // tick just completed -- must run BEFORE `note_positions` below, or
+        // it would compare the just-cycled position against itself.
         self.write_obs(obs);
+        // Snapshot positions so the NEXT step's observe() can derive
+        // is-moving for the tick THAT step completes.
+        self.harness.note_positions();
         // 5. `apply_actions` (step 1, twice per duel) appended every
         // dispatched action to `self.harness.recorded` -- the accumulator
         // Phase C replay drains via `drain_recorded()`. `BatchEnv` doesn't

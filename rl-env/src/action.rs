@@ -371,3 +371,33 @@ pub fn eat_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
     let until = varp_int(active, VARP_EAT_DELAY);
     (until - clock as i32).max(0) as u32
 }
+
+// -- Opponent observations (Task 2) ------------------------------------------
+
+/// Normalized weapon-category code for whatever `active` is wielding, in
+/// `[0.0, 1.0]` (0.0 = unarmed / unknown). Client-visible: a real player sees
+/// the opponent's weapon. The obj's `category` (e.g. `weapon_slash` for
+/// `rune_scimitar`, `weapon_stab` for `dragon_dagger` -- confirmed against
+/// `content/274/scripts/skill_combat/configs/melee/*.obj`) is a
+/// content-declared param; we map the category id into a bounded float
+/// rather than exposing a raw id, so the network sees a stable small-range
+/// value.
+///
+/// Reads specifically the `WearPos::RightHand` slot of the "worn" inv, NOT
+/// "the first worn slot with any category": armour also carries a
+/// `category` (`rune_full_helm` -> `armour_helmet`, `rune_platebody` ->
+/// `armour_body`, etc. -- same config files), so scanning worn slots in
+/// order for the first one with *any* category would report whichever
+/// armour piece happens to be worn before the weapon slot instead of the
+/// weapon itself.
+pub fn weapon_class(active: &ActivePlayer) -> f32 {
+    const WEAPON_CLASS_SCALE: f32 = 64.0; // bounds the category id into ~[0,1]
+    let cache = crate::cache();
+    let Some(worn_inv) = cache.invs.get_by_debugname("worn").map(|i| i.id) else { return 0.0 };
+    let Some(inv) = active.player.invs.get(&worn_inv) else { return 0.0 };
+    let rhand = rs_pack::types::WearPos::RightHand as usize;
+    let Some(Some(item)) = inv.slots.get(rhand) else { return 0.0 };
+    let Some(obj) = cache.objs.get_by_id(item.obj) else { return 0.0 };
+    let Some(category) = obj.category else { return 0.0 };
+    ((category as f32) / WEAPON_CLASS_SCALE).clamp(0.0, 1.0)
+}

@@ -95,6 +95,11 @@ pub struct EnvHarness {
     /// reset in case a future caller wants HP-delta bookkeeping for
     /// something other than reward (e.g. logging/diagnostics).
     prev_hp: std::collections::HashMap<u16, u16>,
+    /// Previous-tick coordinate per pid, used to derive the client-visible
+    /// "is moving" observation (a real player sees the opponent step).
+    /// Updated by [`Self::note_positions`], which the caller runs once per
+    /// tick.
+    prev_coord: std::collections::HashMap<u16, (u16, u16)>,
     /// Per-episode tick counter, incremented once per [`Self::cycle`] call
     /// and reset to 0 by [`Self::load_scenario`] (and [`Self::reset_duel`]).
     /// Used by [`Self::is_terminal`] to resolve `Terminal::Timeout(n)` /
@@ -173,6 +178,7 @@ impl EnvHarness {
             _new_player_tx: new_player_tx,
             _reload_tx: reload_tx,
             prev_hp: std::collections::HashMap::new(),
+            prev_coord: std::collections::HashMap::new(),
             episode_tick: 0,
             recorded: Vec::new(),
         }
@@ -183,6 +189,27 @@ impl EnvHarness {
     pub fn cycle(&mut self) {
         self.engine.cycle();
         self.episode_tick = self.episode_tick.saturating_add(1);
+    }
+
+    /// Records every live player's current tile as "last tick's" position,
+    /// for [`Self::observe`]'s is-moving field ([`crate::observe::IDX_OPP_ISMOVING`]).
+    /// Call ONCE per tick, AFTER both [`Self::cycle`] AND the tick's
+    /// [`Self::observe`] call(s) -- NOT before `observe`, or `observe` would
+    /// compare the just-cycled position against itself (always reading
+    /// "not moving"). The snapshot taken here is consumed by the *next*
+    /// tick's `observe`, which diffs it against that tick's post-cycle
+    /// position to tell whether the entity moved during the tick just
+    /// completed.
+    pub fn note_positions(&mut self) {
+        let pids: Vec<u16> = (0..rs_engine::MAX_PLAYERS as u16)
+            .filter(|&p| self.engine.get_player(p).is_some())
+            .collect();
+        for p in pids {
+            if let Some(a) = self.engine.get_player(p) {
+                let c = a.player.pathing.coord;
+                self.prev_coord.insert(p, (c.x(), c.z()));
+            }
+        }
     }
 
     pub fn clock(&self) -> u64 {
@@ -485,6 +512,17 @@ impl EnvHarness {
             let cur_clock = self.engine.clock;
             v[ob::IDX_OPP_RECENT_HIT] =
                 (o.player.last_hit_tick == Some(cur_clock.saturating_sub(1))) as u8 as f32;
+            // Opponent is-attacking: they have an attack cooldown pending,
+            // i.e. they swung recently. Client-visible (you see the animation).
+            v[ob::IDX_OPP_ISATTACKING] =
+                (crate::action::attack_cooldown(o, self.engine.clock) > 0) as u8 as f32;
+            // Opponent weapon class: client-visible (you see their weapon).
+            v[ob::IDX_OPP_WEAPON] = crate::action::weapon_class(o);
+            // Opponent is-moving: their tile changed during the completed tick.
+            v[ob::IDX_OPP_ISMOVING] = match self.prev_coord.get(&opp) {
+                Some(&(px, pz)) => ((oc.x(), oc.z()) != (px, pz)) as u8 as f32,
+                None => 0.0,
+            };
         }
         (v, self.legal_mask(pid))
     }
@@ -630,6 +668,7 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.prev_coord.clear();
         self.episode_tick = 0;
         let a = self.engine.spawn_player("pker", CoordGrid::new(3200, 0, 3912));
         let b = self.engine.spawn_player("victim", CoordGrid::new(3201, 0, 3912));
@@ -680,6 +719,7 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.prev_coord.clear();
         self.episode_tick = 0;
 
         // Crisp deterministic fight stream: reseed, THEN draw jitter, THEN
