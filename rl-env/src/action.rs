@@ -390,8 +390,17 @@ pub fn eat_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
 /// order for the first one with *any* category would report whichever
 /// armour piece happens to be worn before the weapon slot instead of the
 /// weapon itself.
+///
+/// Normalizes by `cache.categories.count()`, NOT a hardcoded scale: category
+/// ids run well past 64 in the 274 cache (`rune_scimitar` -> 197,
+/// `dragon_dagger` -> 221, out of 297 total categories), so a fixed
+/// `/ 64.0` clamped every armed reading to a constant `1.0` -- a dead
+/// feature. In mirror melee both sides start with identical gear, so this
+/// value's only signal is "the opponent just swapped weapons" (e.g. to a
+/// dragon dagger for a spec); a constant can't carry that. Dividing by the
+/// real category count keeps every valid id (which is always `< count`, so
+/// a valid weapon's category never clamps) apart.
 pub fn weapon_class(active: &ActivePlayer) -> f32 {
-    const WEAPON_CLASS_SCALE: f32 = 64.0; // bounds the category id into ~[0,1]
     let cache = crate::cache();
     let Some(worn_inv) = cache.invs.get_by_debugname("worn").map(|i| i.id) else { return 0.0 };
     let Some(inv) = active.player.invs.get(&worn_inv) else { return 0.0 };
@@ -399,5 +408,6 @@ pub fn weapon_class(active: &ActivePlayer) -> f32 {
     let Some(Some(item)) = inv.slots.get(rhand) else { return 0.0 };
     let Some(obj) = cache.objs.get_by_id(item.obj) else { return 0.0 };
     let Some(category) = obj.category else { return 0.0 };
-    ((category as f32) / WEAPON_CLASS_SCALE).clamp(0.0, 1.0)
+    let scale = cache.categories.count().max(1) as f32;
+    ((category as f32) / scale).clamp(0.0, 1.0)
 }

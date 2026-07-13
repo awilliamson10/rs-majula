@@ -936,4 +936,24 @@ impl EnvHarness {
             active.recalc_combat_and_appearance();
         });
     }
+
+    /// Test-support: clears `pid`'s right-hand (weapon) slot, leaving all other
+    /// worn equipment in place. Used to prove `weapon_class` reads the weapon
+    /// slot rather than scanning armour.
+    pub fn unequip_rhand(&mut self, pid: u16) {
+        let (cache, _) = shared_cache();
+        let worn_id = cache.invs.get_by_debugname("worn").map(|i| i.id).unwrap_or(94);
+        let rhand = rs_pack::types::WearPos::RightHand as u16;
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let Some(active) = engine.get_player_mut(pid) else {
+                return;
+            };
+            if let Some(worn_inv) = active.player.invs.get_mut(&worn_id) {
+                worn_inv.remove(rhand, u32::MAX);
+            }
+            active.buildappearance(worn_id);
+        });
+    }
 }
