@@ -334,3 +334,40 @@ pub fn spec_energy(active: &ActivePlayer) -> i32 {
         .expect("cache is missing the \"sa_energy\" varp");
     active.player.vars.get(varp.id).as_int()
 }
+
+// -- Combat-timing observability (Task 1) -----------------------------------
+
+/// Player varp holding the tick at which the next attack becomes allowed.
+/// Content (`skill_combat/scripts/pvp/pvp_melee.rs2`) sets
+/// `%action_delay = add(map_clock, oc_param($rhand, attackrate))` after each
+/// swing, and refuses to attack while `%action_delay > map_clock`. So the
+/// ticks-remaining is `max(0, action_delay - clock)`.
+pub const VARP_ACTION_DELAY: &str = "action_delay";
+
+/// Player varp holding the tick at which eating becomes allowed again.
+/// Content (`player/scripts/consumption/consume.rs2`) sets
+/// `%eat_delay = calc(map_clock + $eat_delay)` and blocks while
+/// `%eat_delay >= map_clock`.
+pub const VARP_EAT_DELAY: &str = "eat_delay";
+
+fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
+    let varp = crate::cache()
+        .varps
+        .get_by_debugname(name)
+        .unwrap_or_else(|| panic!("cache is missing the {name:?} varp"));
+    active.player.vars.get(varp.id).as_int()
+}
+
+/// Ticks until `active` may attack again (0 = ready now). See
+/// [`VARP_ACTION_DELAY`]. This is THE combat-timing signal -- an agent that
+/// cannot see it can only learn a statistical prior over swing timing.
+pub fn attack_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
+    let until = varp_int(active, VARP_ACTION_DELAY);
+    (until - clock as i32).max(0) as u32
+}
+
+/// Ticks until `active` may eat again (0 = ready now). See [`VARP_EAT_DELAY`].
+pub fn eat_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
+    let until = varp_int(active, VARP_EAT_DELAY);
+    (until - clock as i32).max(0) as u32
+}

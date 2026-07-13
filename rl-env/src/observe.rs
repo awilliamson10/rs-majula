@@ -44,9 +44,11 @@ pub const IDX_SELF_PRAYER: usize = 1;
 pub const IDX_SELF_SPEC: usize = 2;
 pub const IDX_SELF_RUN: usize = 3;
 pub const IDX_SELF_OVERHEAD: usize = 4;
-/// TODO M1: self attack cooldown not yet sourced -- left 0.0.
+/// Ticks until the next attack is allowed (0 = ready now). Sourced from the
+/// `action_delay` varp; see `action::attack_cooldown`.
 pub const IDX_SELF_ATKCD: usize = 5;
-/// TODO M1: self eat delay not yet sourced -- left 0.0.
+/// Ticks until eating is allowed again (0 = ready now). Sourced from the
+/// `eat_delay` varp; see `action::eat_cooldown`.
 pub const IDX_SELF_EATDELAY: usize = 6;
 pub const IDX_OPP_DX: usize = 7;
 pub const IDX_OPP_DZ: usize = 8;

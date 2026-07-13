@@ -452,6 +452,9 @@ impl EnvHarness {
             v[ob::IDX_SELF_RUN] = m.player.runenergy as f32 / 10000.0;
             v[ob::IDX_SELF_OVERHEAD] =
                 (m.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0) as u8 as f32;
+            let clock = self.engine.clock;
+            v[ob::IDX_SELF_ATKCD] = crate::action::attack_cooldown(m, clock) as f32;
+            v[ob::IDX_SELF_EATDELAY] = crate::action::eat_cooldown(m, clock) as f32;
         }
         if let (Some(m), Some(o)) = (me, ot) {
             let (mc, oc) = (m.player.pathing.coord, o.player.pathing.coord);
