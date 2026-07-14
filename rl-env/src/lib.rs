@@ -212,6 +212,24 @@ impl EnvHarness {
         }
     }
 
+    /// Drops a pid's per-tick tracking state. Call when a player is removed --
+    /// the engine REUSES freed pids, so a stale `prev_coord` entry would
+    /// otherwise be inherited by whoever occupies that pid next.
+    pub fn forget_player(&mut self, pid: u16) {
+        self.prev_coord.remove(&pid);
+        self.prev_hp.remove(&pid);
+    }
+
+    /// Seeds a single pid's "previous" tile with its CURRENT tile, so the next
+    /// `observe()` sees prev == current and correctly reports "not moving".
+    /// Used right after a respawn: a freshly spawned player has not moved.
+    pub fn note_position(&mut self, pid: u16) {
+        if let Some(a) = self.engine.get_player(pid) {
+            let c = a.player.pathing.coord;
+            self.prev_coord.insert(pid, (c.x(), c.z()));
+        }
+    }
+
     pub fn clock(&self) -> u64 {
         self.engine.clock as u64
     }

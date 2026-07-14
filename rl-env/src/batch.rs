@@ -154,10 +154,18 @@ impl BatchEnv {
         };
         let _ = self.harness.engine.remove_player(a);
         let _ = self.harness.engine.remove_player(b);
+        self.harness.forget_player(a);
+        self.harness.forget_player(b);
         let na = self.harness.spawn_and_equip("pker",
             CoordGrid::new(spot.0, spot.1, spot.2), &self.sides[0].clone());
         let nb = self.harness.spawn_and_equip("opponent",
             CoordGrid::new(spot.0 + 1, spot.1, spot.2), &self.sides[1].clone());
+        // A freshly spawned player has not moved. Seed prev_coord with their
+        // spawn tile so the write_obs() later in THIS SAME step reports
+        // is-moving = 0.0 instead of comparing against a recycled pid's stale
+        // tile.
+        self.harness.note_position(na);
+        self.harness.note_position(nb);
         self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1 };
     }
 
@@ -202,5 +210,94 @@ impl BatchEnv {
         // unbounded over a training run; drain (and discard) it here to
         // bound it to at most one step's worth.
         self.harness.drain_recorded();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(m: usize) -> BatchConfig {
+        BatchConfig {
+            scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
+            num_duels: m, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
+        }
+    }
+
+    /// Regression for the `forget_player`/`note_position` fix `respawn`
+    /// applies around its `remove_player`/`spawn_and_equip` pair.
+    ///
+    /// # Why this is a `#[cfg(test)]` unit test, not an integration test
+    /// exercising `BatchEnv::step` end to end
+    ///
+    /// The engine's pid allocator (`PlayerList::next_pid`,
+    /// `rs-engine/src/engine.rs`) is FORWARD-ONLY: it fills
+    /// `cursor+1..MAX_PLAYERS-1` in ascending order and only falls back to
+    /// reusing a freed id once the cursor has climbed all the way to the top
+    /// of that range. A duel's own pids are also always numerically smaller
+    /// than any pid allocated after it, so once reuse finally kicks in, a
+    /// duel that respawns reclaims ITS OWN just-freed pids first (they're
+    /// the smallest free ids in existence) -- never a different duel's. Real
+    /// cross-duel pid reuse (what actually corrupts `prev_coord` in
+    /// production) requires an EARLIER duel's pids to still be sitting
+    /// free, unclaimed, when a LATER duel respawns after the cursor has
+    /// wrapped -- a scenario that needs a huge, specific amount of batch
+    /// churn to arise naturally (confirmed empirically: a `BatchEnv::step`
+    /// loop driven for 1200 ticks with a single duel never reused a pid at
+    /// all, fix or no fix). This test manufactures that exact scenario
+    /// directly -- via raw `harness.engine` spawn/remove calls this
+    /// `mod tests` can reach because it's compiled inside the crate (an
+    /// external `tests/*.rs` integration test cannot: `harness` and
+    /// `respawn` are both crate-private) -- and then calls the real,
+    /// private `respawn` under test.
+    #[test]
+    fn respawn_does_not_leave_stale_prev_coord_on_a_reused_pid() {
+        let mut env = BatchEnv::new(cfg(2));
+        // Fresh engine + 2 duels: duel0 = pids (1,2), duel1 = pids (3,4).
+        assert_eq!((env.duels[0].a, env.duels[0].b), (1, 2));
+        assert_eq!((env.duels[1].a, env.duels[1].b), (3, 4));
+        assert_ne!(env.duels[0].spot, env.duels[1].spot, "duels must occupy different tiles");
+
+        // Simulate duel0 having died at an earlier tick: record its
+        // players' (unmoved-since-spawn) tile as "last known", exactly what
+        // a real step loop's `note_positions()` does once per tick, then
+        // free its pids WITHOUT respawning it. Pids 1 and 2 are now the
+        // smallest free ids in existence -- nothing allocated after them
+        // can ever be smaller.
+        env.harness.note_position(1);
+        env.harness.note_position(2);
+        let _ = env.harness.engine.remove_player(1);
+        let _ = env.harness.engine.remove_player(2);
+
+        // Walk the allocator's cursor from 4 up to the top of its range
+        // (MAX_PLAYERS - 2) with throwaway spawn+remove pairs, so the next
+        // allocation's forward search is empty and it MUST wrap -- and the
+        // wrap phase always returns the SMALLEST free id, i.e. pid 1 (then
+        // 2), not one of these dummies or duel1's own pids.
+        let dummy_spot = CoordGrid::new(3300, 0, 3300);
+        let dummy_count = (rs_engine::MAX_PLAYERS as u16) - 2 - 4; // ids 5..=MAX_PLAYERS-2
+        for _ in 0..dummy_count {
+            let pid = env.harness.engine.spawn_player("dummy", dummy_spot);
+            let _ = env.harness.engine.remove_player(pid);
+        }
+
+        // The real `respawn` under test. duel1's new pids MUST come out as
+        // (1, 2) -- duel0's old identity -- per the reasoning above.
+        env.respawn(1);
+        assert_eq!(
+            (env.duels[1].a, env.duels[1].b), (1, 2),
+            "test setup did not force duel1's respawn to reuse duel0's old (1,2) pids"
+        );
+
+        let mut obs = vec![0.0f32; env.num_agents() * BatchEnv::OBS_STRIDE];
+        env.write_obs(&mut obs);
+        for agent in [2usize, 3] {
+            let base = agent * BatchEnv::OBS_STRIDE;
+            assert_eq!(
+                obs[base + crate::observe::IDX_OPP_ISMOVING], 0.0,
+                "agent {agent}: spurious is-moving=1.0 right after respawn \
+                 (stale prev_coord inherited from duel0's reused pid)"
+            );
+        }
     }
 }
