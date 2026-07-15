@@ -18,7 +18,19 @@ pub struct BatchConfig {
     /// explicit pid, so they never leak across duels. A stride comfortably
     /// beyond how far a bot wanders in one episode keeps collision isolated.
     pub spot_stride: i32,
+    /// Retained for API compatibility; the shaped reward now uses the four
+    /// coefficients below.
     pub reward_w: f32,
+    /// Dense shaping on FRESH damage. Keep SMALL -- PuffeRL clamps each step's
+    /// reward to [-1,1], and the kill must dominate the cumulative dense term.
+    /// Swept by Protein.
+    pub damage_coeff: f32,
+    /// Terminal reward for a kill. Dominant. Swept.
+    pub win_bonus: f32,
+    /// Terminal penalty for dying. Low but nonzero. Swept.
+    pub death_penalty: f32,
+    /// Terminal penalty for a timeout draw. Anti-stall. Swept.
+    pub timeout_penalty: f32,
 }
 
 pub(crate) struct Duel {
@@ -27,6 +39,12 @@ pub(crate) struct Duel {
     pub spot: (u16, u8, u16),
     pub tick: u32,
     pub episodes: u64,
+    /// Lowest HP each side has been reduced to THIS episode. Damage that does
+    /// not push a player below their own minimum is NOT "fresh" -- it is
+    /// damage they already took and healed back, and paying for it again is a
+    /// measured reward-farm exploit.
+    pub min_hp_a: u16,
+    pub min_hp_b: u16,
 }
 
 pub struct BatchEnv {
@@ -36,6 +54,10 @@ pub struct BatchEnv {
     pub(crate) term: Terminal,
     pub(crate) timeout: Option<u32>,
     pub(crate) reward_w: f32,
+    pub(crate) damage_coeff: f32,
+    pub(crate) win_bonus: f32,
+    pub(crate) death_penalty: f32,
+    pub(crate) timeout_penalty: f32,
 }
 
 impl BatchEnv {
@@ -70,12 +92,18 @@ impl BatchEnv {
                 CoordGrid::new(spot.0, spot.1, spot.2), &sc.sides[0]);
             let b = harness.spawn_and_equip("opponent",
                 CoordGrid::new(spot.0 + 1, spot.1, spot.2), &sc.sides[1]);
-            duels.push(Duel { a, b, spot, tick: 0, episodes: 0 });
+            let min_hp_a = harness.player_hp(a);
+            let min_hp_b = harness.player_hp(b);
+            duels.push(Duel { a, b, spot, tick: 0, episodes: 0, min_hp_a, min_hp_b });
         }
 
         BatchEnv {
             harness, duels, sides: sc.sides, term: sc.terminal,
             timeout, reward_w: cfg.reward_w,
+            damage_coeff: cfg.damage_coeff,
+            win_bonus: cfg.win_bonus,
+            death_penalty: cfg.death_penalty,
+            timeout_penalty: cfg.timeout_penalty,
         }
     }
 
@@ -92,6 +120,14 @@ impl BatchEnv {
         let d = &self.duels[agent / 2];
         let pid = if agent % 2 == 0 { d.a } else { d.b };
         self.harness.player_hp(pid)
+    }
+
+    /// Test-support: toggle auto-retaliate for one agent's player. See
+    /// `EnvHarness::set_auto_retaliate`.
+    pub fn set_agent_auto_retaliate(&mut self, agent: usize, on: bool) {
+        let d = &self.duels[agent / 2];
+        let pid = if agent % 2 == 0 { d.a } else { d.b };
+        self.harness.set_auto_retaliate(pid, on);
     }
     pub fn duel_spots(&self) -> Vec<(u16, u8, u16)> {
         self.duels.iter().map(|d| d.spot).collect()
@@ -167,7 +203,9 @@ impl BatchEnv {
         // tile.
         self.harness.note_position(na);
         self.harness.note_position(nb);
-        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1 };
+        let min_hp_a = self.harness.player_hp(na);
+        let min_hp_b = self.harness.player_hp(nb);
+        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1, min_hp_a, min_hp_b };
     }
 
     pub fn step(&mut self, actions: &[i32], obs: &mut [f32], rewards: &mut [f32], dones: &mut [f32]) {
@@ -188,9 +226,40 @@ impl BatchEnv {
         for i in 0..self.duels.len() {
             self.duels[i].tick += 1;
             let (a, b) = (self.duels[i].a, self.duels[i].b);
-            let (ra, rb) = self.harness.step_reward_pair(a, b, self.reward_w);
+
+            let (a_took, b_took) = self.harness.hits_pair(a, b);
+
+            // FRESH damage: only credit damage that pushes a player BELOW their
+            // episode minimum. Damage they healed back is not paid twice.
+            let hp_a = self.harness.player_hp(a);
+            let hp_b = self.harness.player_hp(b);
+            let fresh_on_a = self.duels[i].min_hp_a.saturating_sub(hp_a) as u32;
+            let fresh_on_b = self.duels[i].min_hp_b.saturating_sub(hp_b) as u32;
+            self.duels[i].min_hp_a = self.duels[i].min_hp_a.min(hp_a);
+            self.duels[i].min_hp_b = self.duels[i].min_hp_b.min(hp_b);
+            // Cap fresh damage by the damage actually dealt this step, so a
+            // non-combat HP drop could never be credited as a hit.
+            let fresh_dealt_by_a = fresh_on_b.min(b_took);
+            let fresh_dealt_by_b = fresh_on_a.min(a_took);
+
+            let d = self.damage_coeff;
+            let mut ra = d * (fresh_dealt_by_a as f32 - a_took as f32);
+            let mut rb = d * (fresh_dealt_by_b as f32 - b_took as f32);
+
+            let a_dead = hp_a == 0;
+            let b_dead = hp_b == 0;
+            let timed_out = self.timeout.map_or(false, |n| self.duels[i].tick >= n);
+
+            if b_dead { ra += self.win_bonus;  rb -= self.death_penalty; }
+            if a_dead { rb += self.win_bonus;  ra -= self.death_penalty; }
+            if !a_dead && !b_dead && timed_out {
+                ra -= self.timeout_penalty;
+                rb -= self.timeout_penalty;
+            }
+
             rewards[2 * i] = ra;
             rewards[2 * i + 1] = rb;
+
             let done = self.duel_terminal(&self.duels[i]);
             dones[2 * i] = done as u8 as f32;
             dones[2 * i + 1] = done as u8 as f32;
@@ -222,6 +291,7 @@ mod tests {
         BatchConfig {
             scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
             num_duels: m, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
+            damage_coeff: 0.005, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
         }
     }
 

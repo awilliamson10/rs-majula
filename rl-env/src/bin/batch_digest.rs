@@ -31,6 +31,10 @@ fn main() {
         base_seed: seed,
         spot_stride: 32,
         reward_w: 1.0,
+        damage_coeff: 0.005,
+        win_bonus: 1.0,
+        death_penalty: 0.1,
+        timeout_penalty: 0.4,
     });
 
     let na = env.num_agents();

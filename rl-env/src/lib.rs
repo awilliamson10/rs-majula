@@ -669,6 +669,55 @@ impl EnvHarness {
         (ra, rb)
     }
 
+    /// Snapshot-and-drain BOTH players' hit accumulators, returning the RAW
+    /// damage each one TOOK this step: `(a_took, b_took)`. This is the same
+    /// drain-both discipline as [`Self::step_reward_pair`] (read both sums
+    /// FIRST, then clear both), but it applies NO reward shaping -- the caller
+    /// owns the coefficients. `BatchEnv` uses this so the reward coefficients
+    /// can live in config and be swept.
+    ///
+    /// Also records last-dealt / last-taken magnitudes so the observation can
+    /// still see them after the drain.
+    pub fn hits_pair(&mut self, a: u16, b: u16) -> (u32, u32) {
+        let a_took: u32 = self.engine.get_player(a)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        let b_took: u32 = self.engine.get_player(b)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        if let Some(p) = self.engine.get_player_mut(a) { p.player.hits.clear(); }
+        if let Some(p) = self.engine.get_player_mut(b) { p.player.hits.clear(); }
+
+        self.last_taken.insert(a, a_took);
+        self.last_dealt.insert(a, b_took);
+        self.last_taken.insert(b, b_took);
+        self.last_dealt.insert(b, a_took);
+
+        (a_took, b_took)
+    }
+
+    /// Test-support: toggle a player's auto-retaliate. Auto-retaliate is gated by
+    /// the `option_nodef` varp (== `^player_auto_retaliate_on`, 0, its default), so
+    /// a player swings back the moment they're attacked. Setting it to 1 makes the
+    /// player tank without retaliating, letting a test isolate ONE side's damage.
+    pub fn set_auto_retaliate(&mut self, pid: u16, on: bool) {
+        let (cache, _) = shared_cache();
+        let varp = cache.varps.get_by_debugname("option_nodef").unwrap_or_else(|| {
+            panic!("set_auto_retaliate: unresolved varp debugname \"option_nodef\"")
+        });
+        let val = if on { 0 } else { 1 };
+        let (id, value, transmit) = (varp.id, VarValue::from_int(varp.var_type, val), varp.transmit);
+
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let Some(active) = engine.get_player_mut(pid) else {
+                return;
+            };
+            active.set_varp(id, value.clone(), transmit);
+        });
+    }
+
     /// Resolves `term` against `me`/`opp`'s current liveness and
     /// [`Self::episode_tick`], from `me`'s perspective: `opp` dead -> `Win`,
     /// `me` dead -> `Loss` (checked first for `Death` so a mutual/ambiguous

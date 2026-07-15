@@ -23,20 +23,23 @@ struct BatchEnv {
 #[pymethods]
 impl BatchEnv {
     #[new]
+    #[pyo3(signature = (scenario_path, num_duels, base_seed, spot_stride, reward_w,
+                        damage_coeff=0.005, win_bonus=1.0, death_penalty=0.1, timeout_penalty=0.4))]
     fn new(
         scenario_path: String,
         num_duels: usize,
         base_seed: u64,
         spot_stride: i32,
         reward_w: f32,
+        damage_coeff: f32,
+        win_bonus: f32,
+        death_penalty: f32,
+        timeout_penalty: f32,
     ) -> Self {
         BatchEnv {
             inner: CoreBatchEnv::new(BatchConfig {
-                scenario_path,
-                num_duels,
-                base_seed,
-                spot_stride,
-                reward_w,
+                scenario_path, num_duels, base_seed, spot_stride, reward_w,
+                damage_coeff, win_bonus, death_penalty, timeout_penalty,
             }),
         }
     }
