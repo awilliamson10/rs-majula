@@ -411,3 +411,76 @@ pub fn weapon_class(active: &ActivePlayer) -> f32 {
     let scale = cache.categories.count().max(1) as f32;
     ((category as f32) / scale).clamp(0.0, 1.0)
 }
+
+// -- Derived observations (Task 3) -------------------------------------------
+
+/// Player varp holding our current max hit (`%com_maxhit`), recomputed by the
+/// combat scripts from stats + gear.
+pub const VARP_COM_MAXHIT: &str = "com_maxhit";
+
+/// Our current max hit. Self state -- always fully visible to us.
+pub fn com_maxhit(active: &ActivePlayer) -> i32 {
+    varp_int(active, VARP_COM_MAXHIT)
+}
+
+/// Count of edible items in the backpack. Self state.
+pub fn food_count(active: &ActivePlayer) -> u32 {
+    let cache = crate::cache();
+    let Some(inv_id) = cache.invs.get_by_debugname("inv").map(|i| i.id) else { return 0 };
+    let Some(inv) = active.player.invs.get(&inv_id) else { return 0 };
+    inv.slots
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .filter(|item| {
+            cache
+                .objs
+                .get_by_id(item.obj)
+                .and_then(|o| o.iop.as_ref())
+                .is_some_and(|iop| iop.iter().any(|e| e.as_deref() == Some("Eat")))
+        })
+        .count() as u32
+}
+
+/// Soft KO probability for a DDS special attack fired NOW, in `[0,1]`.
+///
+/// FAITHFUL BY CONSTRUCTION: the only opponent inputs are `opp_hp_bucket` (the
+/// COARSE client HP bar, never exact HP) and `opp_prays_melee` (the overhead
+/// icon). This mirrors what a human PKer does -- eyeball the bar and decide.
+///
+/// Content mechanics (rev 274, verified):
+/// - DDS spec = TWO hits, each max `scale(115,100,%com_maxhit)` => x1.15.
+/// - Protect-from-melee => `scale(6,10,maxhit)` => x0.6.
+///
+/// The ramp is nh-trainer's shape: 0 well above the spec's reach, 1 well below
+/// it, linear across a margin band in between (the bucket is coarse, so a hard
+/// threshold would be false precision).
+pub fn spec_ko_chance(
+    me: &ActivePlayer,
+    opp_hp_bucket: f32,
+    opp_prays_melee: bool,
+    opp_max_hp: f32,
+) -> f32 {
+    let per_hit = (com_maxhit(me) as f32) * 1.15;
+    let mut spec_max = per_hit * 2.0; // DDS lands twice
+    if opp_prays_melee {
+        spec_max *= 0.6;
+    }
+    if spec_max <= 0.0 {
+        return 0.0;
+    }
+    // Estimate opponent HP from the COARSE bucket only.
+    let buckets = crate::observe::OPP_HP_BUCKETS as f32;
+    let hp_est = (opp_hp_bucket / buckets).clamp(0.0, 1.0) * opp_max_hp.max(1.0);
+
+    // Linear ramp across +/- margin around the spec's max reach.
+    let margin = (spec_max * 0.35).max(1.0);
+    let lower = (spec_max - margin).max(1.0);
+    let upper = spec_max + margin;
+    if hp_est <= lower {
+        1.0
+    } else if hp_est >= upper {
+        0.0
+    } else {
+        ((upper - hp_est) / (upper - lower)).clamp(0.0, 1.0)
+    }
+}

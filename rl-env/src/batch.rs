@@ -39,7 +39,7 @@ pub struct BatchEnv {
 }
 
 impl BatchEnv {
-    pub const OBS_STRIDE: usize = 22; // 16 obs + 6 mask
+    pub const OBS_STRIDE: usize = 26; // 20 obs + 6 mask
     pub const ACT_STRIDE: usize = 6;  // move,attack,prayer,eat,equip,spec
 
     /// `i`-th duel spot: a square grid around the scenario `spot`, columns
@@ -98,7 +98,7 @@ impl BatchEnv {
     }
 
     /// Fills `out` (len == num_agents * OBS_STRIDE) with each agent's
-    /// 16-float Phase-A observation followed by its 6 mask bits.
+    /// `OBS_LEN`-float observation followed by its 6 mask bits.
     pub fn write_obs(&self, out: &mut [f32]) {
         debug_assert_eq!(out.len(), self.num_agents() * Self::OBS_STRIDE);
         for (i, d) in self.duels.iter().enumerate() {
@@ -108,15 +108,16 @@ impl BatchEnv {
     }
 
     fn fill_agent(&self, out: &mut [f32], agent: usize, me: u16, opp: u16) {
+        use crate::observe::OBS_LEN;
         let base = agent * Self::OBS_STRIDE;
         let (v, mask) = self.harness.observe(me, opp);
-        out[base..base + 16].copy_from_slice(&v[..16]);
-        out[base + 16] = mask.move_ok as u8 as f32;
-        out[base + 17] = mask.attack_ok as u8 as f32;
-        out[base + 18] = mask.prayer_ok as u8 as f32;
-        out[base + 19] = mask.eat_ok as u8 as f32;
-        out[base + 20] = mask.equip_ok as u8 as f32;
-        out[base + 21] = mask.spec_ok as u8 as f32;
+        out[base..base + OBS_LEN].copy_from_slice(&v[..OBS_LEN]);
+        out[base + OBS_LEN + 0] = mask.move_ok as u8 as f32;
+        out[base + OBS_LEN + 1] = mask.attack_ok as u8 as f32;
+        out[base + OBS_LEN + 2] = mask.prayer_ok as u8 as f32;
+        out[base + OBS_LEN + 3] = mask.eat_ok as u8 as f32;
+        out[base + OBS_LEN + 4] = mask.equip_ok as u8 as f32;
+        out[base + OBS_LEN + 5] = mask.spec_ok as u8 as f32;
     }
 
     fn move_offset(m: i32) -> (i8, i8) {

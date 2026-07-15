@@ -76,7 +76,21 @@ pub const IDX_OPP_RECENT_HIT: usize = 14;
 /// coordinate snapshot -- see [`crate::EnvHarness::note_positions`]'s doc
 /// comment for the required call order relative to `observe`.
 pub const IDX_OPP_ISMOVING: usize = 15;
-pub const OBS_LEN: usize = 16;
+/// Soft probability that a DDS special attack, fired NOW, would kill the
+/// opponent. Computed ONLY from client-visible state: our own `com_maxhit`,
+/// the opponent's COARSE HP bucket (the HP bar), and their overhead prayer
+/// icon. Content mechanics: the DDS spec lands TWO hits, each
+/// `scale(115,100,%com_maxhit)` (x1.15); protect-from-melee applies
+/// `scale(6,10,maxhit)` (x0.6). This is the central PK decision.
+pub const IDX_SPEC_KO_CHANCE: usize = 16;
+/// Magnitude of the last damage WE dealt (normalized by /40). Survives
+/// `step_reward_pair`'s drain of the `hits` accumulator.
+pub const IDX_LAST_DEALT: usize = 17;
+/// Magnitude of the last damage WE took (normalized by /40).
+pub const IDX_LAST_TAKEN: usize = 18;
+/// Edible items remaining in the backpack, normalized by /28 (inventory size).
+pub const IDX_FOOD_REMAINING: usize = 19;
+pub const OBS_LEN: usize = 20;
 
 /// Client HP bar resolution (coarse) -- the number of discrete buckets the
 /// opponent's HP fraction is quantized into. Never expose the raw opponent

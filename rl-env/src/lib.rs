@@ -111,6 +111,11 @@ pub struct EnvHarness {
     /// `load_scenario`/`reset_duel`: draining is the caller's job, same as
     /// `player.hits`.
     recorded: Vec<crate::action::ResolvedAction>,
+    /// Last damage each pid DEALT and TOOK, in HP. Updated by
+    /// `step_reward_pair` (which is the one place that reads the `hits`
+    /// accumulator), so these survive the drain and remain observable.
+    last_dealt: std::collections::HashMap<u16, u32>,
+    last_taken: std::collections::HashMap<u16, u32>,
 }
 
 impl EnvHarness {
@@ -181,6 +186,8 @@ impl EnvHarness {
             prev_coord: std::collections::HashMap::new(),
             episode_tick: 0,
             recorded: Vec::new(),
+            last_dealt: std::collections::HashMap::new(),
+            last_taken: std::collections::HashMap::new(),
         }
     }
 
@@ -500,6 +507,11 @@ impl EnvHarness {
             let clock = self.engine.clock;
             v[ob::IDX_SELF_ATKCD] = crate::action::attack_cooldown(m, clock) as f32;
             v[ob::IDX_SELF_EATDELAY] = crate::action::eat_cooldown(m, clock) as f32;
+            v[ob::IDX_LAST_DEALT] =
+                self.last_dealt.get(&pid).copied().unwrap_or(0) as f32 / 40.0;
+            v[ob::IDX_LAST_TAKEN] =
+                self.last_taken.get(&pid).copied().unwrap_or(0) as f32 / 40.0;
+            v[ob::IDX_FOOD_REMAINING] = crate::action::food_count(m) as f32 / 28.0;
         }
         if let (Some(m), Some(o)) = (me, ot) {
             let (mc, oc) = (m.player.pathing.coord, o.player.pathing.coord);
@@ -517,6 +529,15 @@ impl EnvHarness {
             let maxhp = (o.player.stats.base_levels[3] as f32).max(1.0);
             let frac = (hp / maxhp).clamp(0.0, 1.0);
             v[ob::IDX_OPP_HP_BUCKET] = (frac * ob::OPP_HP_BUCKETS as f32).round();
+            let opp_max_hp = o.player.stats.base_levels[3] as f32;
+            let opp_prays_melee =
+                o.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
+            v[ob::IDX_SPEC_KO_CHANCE] = crate::action::spec_ko_chance(
+                m,
+                v[ob::IDX_OPP_HP_BUCKET],
+                opp_prays_melee,
+                opp_max_hp,
+            );
             // Sourced from `last_hit_tick` (a plain overwrite), NOT
             // `hits` (an accumulator `step_reward` drains) -- see
             // `Player::last_hit_tick`'s doc comment. In the normal step
@@ -627,6 +648,11 @@ impl EnvHarness {
         let b_hits: u32 = self.engine.get_player(b)
             .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
             .unwrap_or(0);
+        // `a_hits` is damage A TOOK; `b_hits` is damage B took (= A dealt).
+        self.last_taken.insert(a, a_hits);
+        self.last_dealt.insert(a, b_hits);
+        self.last_taken.insert(b, b_hits);
+        self.last_dealt.insert(b, a_hits);
         if let Some(p) = self.engine.get_player_mut(a) { p.player.hits.clear(); }
         if let Some(p) = self.engine.get_player_mut(b) { p.player.hits.clear(); }
 
@@ -952,6 +978,33 @@ impl EnvHarness {
                 active.set_varp(*id, value.clone(), *transmit);
             }
             active.recalc_combat_and_appearance();
+        });
+
+        // `recalc_combat_and_appearance` (above) only recomputes combat
+        // LEVEL/appearance -- it does NOT touch `%com_maxhit` and friends.
+        // Content only recalculates those via the `[proc,player_combat_stat]`
+        // script, normally triggered by an equip/appearance change
+        // (`player/scripts/appearance.rs2` -> `[proc,update_all]` ->
+        // `~player_combat_stat;`) or a prayer toggle
+        // (`skill_prayer/scripts/prayer.rs2`). Neither fires from this
+        // direct-field-mutation loadout path, so `%com_maxhit` would
+        // otherwise sit at its varp default forever -- silently dead-ending
+        // `action::com_maxhit`/`spec_ko_chance`. Run the same proc a real
+        // equip event would, exactly like `open_standard_interfaces` runs
+        // `[proc,initalltabs]`.
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            if let Some(uid) = engine.get_player(pid).map(|p| p.player.uid) {
+                let _ = engine.run_script_by_name(
+                    "[proc,player_combat_stat]",
+                    Some(rs_vm::subject::ScriptSubject::Player(uid)),
+                    None,
+                    Some(true),
+                    None,
+                    None,
+                );
+            }
         });
     }
 

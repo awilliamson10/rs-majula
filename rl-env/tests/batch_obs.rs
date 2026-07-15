@@ -21,12 +21,12 @@ fn write_obs_shape_and_mask_columns() {
         let base = a * BatchEnv::OBS_STRIDE;
         assert_eq!(out[base + ob::IDX_SELF_HP], 99.0, "agent {a} self-hp");
         // Mask columns are all 0/1.
-        for c in 16..22 {
+        for c in 20..26 {
             let v = out[base + c];
             assert!(v == 0.0 || v == 1.0, "mask col {c} agent {a} = {v}");
         }
-        // move_ok (col 16) is always legal.
-        assert_eq!(out[base + 16], 1.0, "move_ok must be 1");
+        // move_ok (col 20) is always legal.
+        assert_eq!(out[base + 20], 1.0, "move_ok must be 1");
     }
 }
 
