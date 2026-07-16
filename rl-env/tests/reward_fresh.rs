@@ -52,6 +52,10 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
     let hp_healed = env.agent_hp(1);
     assert!(hp_healed > hp_low, "B should have healed (got {hp_low} -> {hp_healed})");
 
+    // Sanity: phase 1 must actually be a positive baseline, otherwise the
+    // final comparison below could pass vacuously (0 < non-positive * 0.1).
+    assert!(r_phase1 > 0.0, "phase 1 should have earned a positive reward for fresh damage, got {r_phase1}");
+
     // Phase 3: A re-deals the damage B just healed back. Under FRESH-damage
     // accounting this must pay (close to) NOTHING, because it does not push B
     // below B's episode minimum.
@@ -64,9 +68,27 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
         r_phase3 += rew[0];
         if env.agent_hp(1) <= hp_low { break; } // stop once we're back at fresh ground
     }
+    let hp_after_phase3 = env.agent_hp(1);
 
+    // Sanity: A must have actually re-dealt damage in phase 3 (re-taken B
+    // below the healed-up level). If nothing was re-dealt, the test proves
+    // nothing about double-paying for healed-back HP.
     assert!(
-        r_phase3 < r_phase1 * 0.5,
+        hp_after_phase3 < hp_healed,
+        "B should have been re-damaged in phase 3 (got {hp_healed} -> {hp_after_phase3}); \
+         the test doesn't exercise the healing-farm path"
+    );
+
+    // Tight bound: under the (correct) fresh-damage logic, re-dealing HP that
+    // was already paid for (and never pushing B below its episode minimum,
+    // since B doesn't auto-retaliate so A takes ~nothing either) pays exactly
+    // 0.0. A loose bound (e.g. < r_phase1 * 0.5) would also pass under a raw
+    // dealt-taken regression whenever B doesn't fully heal back or the phase-3
+    // tick cap limits re-dealing -- so it wouldn't prove anything. This bound
+    // is tight enough that it FAILS under raw dealt-taken accounting (proven
+    // separately) and PASSES under fresh-damage accounting.
+    assert!(
+        r_phase3 < r_phase1 * 0.1,
         "re-dealing healed-back damage paid {r_phase3} vs {r_phase1} in phase 1 -- \
          the healing farm is still open"
     );
