@@ -54,10 +54,20 @@ fn score_is_emitted_on_terminal_and_is_in_range() {
 #[test]
 fn score_does_not_depend_on_reward_coefficients() {
     // THE property that makes sweeping the reward safe.
-    let run = |damage_coeff: f32, win_bonus: f32| -> Vec<f32> {
+    //
+    // Varies ALL FOUR swept coefficients -- `death_penalty` and
+    // `timeout_penalty` included, because they are applied at the same call
+    // site as the score and a leak through either would otherwise go
+    // unnoticed. Returns BOTH streams: the per-episode scores (which must
+    // match) and the per-step rewards (which must NOT), so the equality below
+    // can't pass by the coefficients having quietly had no effect at all.
+    let run = |damage_coeff: f32, win_bonus: f32, death_penalty: f32, timeout_penalty: f32|
+        -> (Vec<f32>, Vec<f32>) {
         let mut c = cfg();
         c.damage_coeff = damage_coeff;
         c.win_bonus = win_bonus;
+        c.death_penalty = death_penalty;
+        c.timeout_penalty = timeout_penalty;
         let mut env = BatchEnv::new(c);
         let na = env.num_agents();
         let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
@@ -67,15 +77,35 @@ fn score_does_not_depend_on_reward_coefficients() {
         let mut acts = vec![0i32; na * BatchEnv::ACT_STRIDE];
         for a in 0..na { acts[a * 6..a * 6 + 6].copy_from_slice(&[0, 1, 0, 0, 0, 0]); }
         let mut out = Vec::new();
+        let mut rewards = Vec::new();
         for _ in 0..600 {
             env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
             if scores[0] >= 0.0 { out.push(scores[0]); }
+            rewards.extend_from_slice(&rew);
         }
-        out
+        (out, rewards)
     };
+    let (a_scores, a_rewards) = run(0.01, 1.0, 0.1, 0.4);
+    let (b_scores, b_rewards) = run(0.05, 4.0, 0.7, 1.3);
+
+    // Non-vacuity: `assert_eq!` on two empty vecs passes trivially, which
+    // would make this whole test a no-op if the env stopped finishing
+    // episodes (or stopped emitting scores at all).
+    assert!(
+        !a_scores.is_empty(),
+        "no episode finished in 600 ticks -- the score-equality assertion below would be vacuous"
+    );
+    // Positive control: the coefficients we varied MUST actually move the
+    // reward stream. Without this, "the scores matched" could just mean the
+    // knobs were dead.
+    assert_ne!(
+        a_rewards, b_rewards,
+        "rewards were identical under different reward coefficients -- \
+         the coefficients aren't wired up, so the score-invariance below proves nothing"
+    );
+
     assert_eq!(
-        run(0.01, 1.0),
-        run(0.05, 4.0),
+        a_scores, b_scores,
         "score changed when only the REWARD coefficients changed -- \
          the sweep objective is not reward-independent"
     );

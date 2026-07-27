@@ -59,7 +59,7 @@ fn determinism_across_processes() {
     // SEPARATE OS processes -- which also matches how training actually
     // runs (one process per parallel env). `batch_digest` runs exactly one
     // `BatchEnv` to completion and prints a digest of its whole
-    // (obs, reward, done) stream; this test spawns it three times and
+    // (obs, reward, done, score) stream; this test spawns it three times and
     // compares.
     let bin = env!("CARGO_BIN_EXE_batch_digest");
     let run_digest = |seed: u64, ticks: u32| -> String {
@@ -90,6 +90,17 @@ fn determinism_across_processes() {
         .parse()
         .expect("done_count not a valid integer");
     assert!(done_count > 0, "no terminal/respawn fired in 250 ticks -- test didn't cover the auto-reset path");
+
+    // Same safety net for the score stream the digest now folds in: without
+    // this, a digest that emitted only `-1.0` sentinels would still compare
+    // equal across processes and silently cover nothing.
+    let score_count: u64 = run1
+        .split_whitespace()
+        .find_map(|tok| tok.strip_prefix("score_count="))
+        .expect("batch_digest output missing score_count field")
+        .parse()
+        .expect("score_count not a valid integer");
+    assert!(score_count > 0, "no episode score was emitted in 250 ticks -- the digest doesn't actually cover the score stream");
 }
 
 #[test]

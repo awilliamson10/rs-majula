@@ -45,6 +45,10 @@ pub(crate) struct Duel {
     /// measured reward-farm exploit.
     pub min_hp_a: u16,
     pub min_hp_b: u16,
+    /// Side B's hitpoints at the start of this episode -- the denominator of
+    /// the score's graded partial credit. Read from the freshly-equipped
+    /// player, so it follows the scenario loadout instead of a hardcode.
+    pub start_hp_b: u16,
     /// Total FRESH damage side A has dealt this episode (for the score).
     pub fresh_dealt_a: u32,
 }
@@ -62,24 +66,50 @@ pub struct BatchEnv {
     pub(crate) timeout_penalty: f32,
 }
 
-/// Opponent's max hitpoints (scenario loadout: 99). The score's graded
-/// partial credit is fresh damage as a fraction of this -- a fixed engine fact,
-/// NOT a reward coefficient.
-pub(crate) const OPP_MAX_HP: f32 = 99.0;
-
 /// REWARD-INDEPENDENT per-episode score for side A -- the sweep/eval objective.
 ///
 /// A clean win (opponent dead, we survived) is exactly `1.0`. Anything else
 /// (we died, a double-KO, or a timeout draw) is graded partial credit for the
 /// FRESH HP damage we dealt: `0.99 * (fresh_dealt_a / opp_max_hp)^2`, capped
-/// below 1. It uses ZERO reward coefficients (`damage_coeff`, `win_bonus`,
-/// ...), which is exactly what makes sweeping the reward against this objective
-/// safe -- the reward can be tuned freely without moving the score.
+/// below 1. `opp_max_hp` is side B's hitpoints at the start of the episode
+/// (`Duel::start_hp_b`), read from the scenario loadout -- an engine fact, NOT
+/// a reward coefficient.
+///
+/// # Why it takes no reward coefficient
+///
+/// It uses ZERO reward coefficients (`damage_coeff`, `win_bonus`, ...) BY
+/// CONSTRUCTION -- there is deliberately no parameter to thread one through.
+/// That is the whole point: it is the sweep/eval objective, so the reward can
+/// be tuned freely (by Protein or by hand) without moving the thing being
+/// optimised. Sweeping a reward against an objective derived from that same
+/// reward optimises the reward function against itself.
+///
+/// # ★ Caveat 1: under MIRROR self-play the mean score is ~skill-invariant
+///
+/// Both sides run the SAME policy, so by symmetry `P(A wins) ≈ 0.5` no matter
+/// how good that policy is. The mean mirror score therefore measures mutual
+/// aggression (how fast the two copies trade damage), NOT PK skill. This is a
+/// real skill objective ONLY when side A is the learner and side B is a fixed
+/// / frozen-pool opponent. **B.2 eval MUST grade against a fixed opponent --
+/// never wire the mean mirror score straight into the sweep.**
+///
+/// # ★ Caveat 2: the graded band is top-compressed
+///
+/// A win is `1.0`, but every double-KO scores `0.99` and near-losses cluster
+/// in `0.97..0.99`, so the metric applies little pressure to SURVIVE -- dying
+/// while dealing full damage is nearly as good as winning. Revisit the shape
+/// when building eval/Elo.
 pub(crate) fn episode_score(a_dead: bool, b_dead: bool, fresh_dealt_a: u32, opp_max_hp: f32) -> f32 {
     if b_dead && !a_dead {
         1.0
     } else {
-        let frac = (fresh_dealt_a as f32 / opp_max_hp).clamp(0.0, 1.0);
+        // `opp_max_hp` comes from the loadout, so guard the degenerate
+        // zero-HP case rather than emitting a NaN into the sweep objective.
+        let frac = if opp_max_hp > 0.0 {
+            (fresh_dealt_a as f32 / opp_max_hp).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         (0.99 * frac * frac).clamp(0.0, 1.0)
     }
 }
@@ -118,7 +148,11 @@ impl BatchEnv {
                 CoordGrid::new(spot.0 + 1, spot.1, spot.2), &sc.sides[1]);
             let min_hp_a = harness.player_hp(a);
             let min_hp_b = harness.player_hp(b);
-            duels.push(Duel { a, b, spot, tick: 0, episodes: 0, min_hp_a, min_hp_b, fresh_dealt_a: 0 });
+            let start_hp_b = harness.player_hp(b);
+            duels.push(Duel {
+                a, b, spot, tick: 0, episodes: 0, min_hp_a, min_hp_b,
+                start_hp_b, fresh_dealt_a: 0,
+            });
         }
 
         BatchEnv {
@@ -229,7 +263,11 @@ impl BatchEnv {
         self.harness.note_position(nb);
         let min_hp_a = self.harness.player_hp(na);
         let min_hp_b = self.harness.player_hp(nb);
-        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1, min_hp_a, min_hp_b, fresh_dealt_a: 0 };
+        let start_hp_b = self.harness.player_hp(nb);
+        self.duels[i] = Duel {
+            a: na, b: nb, spot, tick: 0, episodes: eps + 1, min_hp_a, min_hp_b,
+            start_hp_b, fresh_dealt_a: 0,
+        };
     }
 
     pub fn step(
@@ -299,10 +337,14 @@ impl BatchEnv {
             scores[i] = -1.0;
             if done {
                 // REWARD-INDEPENDENT score: a win is 1.0; a loss/draw is graded
-                // partial credit for how close we came. Uses NO reward
+                // partial credit for how close we came, out of the opponent's
+                // STARTING hitpoints (from the loadout). Uses NO reward
                 // coefficient -- that is what makes sweeping the reward safe.
+                // See `episode_score` for the metric's caveats.
                 scores[i] = episode_score(
-                    a_dead, b_dead, self.duels[i].fresh_dealt_a, OPP_MAX_HP,
+                    a_dead, b_dead,
+                    self.duels[i].fresh_dealt_a,
+                    self.duels[i].start_hp_b as f32,
                 );
                 self.respawn(i);
             }
@@ -337,6 +379,12 @@ mod tests {
         }
     }
 
+    /// Side B's starting hitpoints under `mirror_melee.ron`. The production
+    /// denominator is `Duel::start_hp_b` (read from the loadout at spawn);
+    /// this is just the value that scenario yields, so these unit tests pin
+    /// `episode_score`'s shape at a concrete, readable number.
+    const HP99: f32 = 99.0;
+
     // `episode_score` is the sweep objective. These unit tests pin every
     // branch DETERMINISTICALLY -- the integration env (mirror melee, seed 1000)
     // never organically produces a clean side-A solo kill (it yields double-KOs
@@ -344,14 +392,14 @@ mod tests {
     #[test]
     fn episode_score_clean_win_is_exactly_one() {
         // Opponent dead, we survived -> 1.0, regardless of fresh damage dealt.
-        assert_eq!(episode_score(false, true, 12, OPP_MAX_HP), 1.0);
-        assert_eq!(episode_score(false, true, 99, OPP_MAX_HP), 1.0);
+        assert_eq!(episode_score(false, true, 12, HP99), 1.0);
+        assert_eq!(episode_score(false, true, 99, HP99), 1.0);
     }
 
     #[test]
     fn episode_score_double_ko_is_graded_not_a_win() {
         // Both dead is NOT a win (requires `!a_dead`): graded partial, < 1.0.
-        let s = episode_score(true, true, 99, OPP_MAX_HP);
+        let s = episode_score(true, true, 99, HP99);
         assert!(s < 1.0, "double-KO must not score a full win, got {s}");
         // fresh == opp_max_hp -> frac == 1 -> 0.99.
         assert!((s - 0.99).abs() < 1e-6, "expected 0.99 at full fresh damage, got {s}");
@@ -360,9 +408,9 @@ mod tests {
     #[test]
     fn episode_score_loss_is_graded_by_fresh_damage_and_below_one() {
         // We died, opponent lived: graded partial credit for fresh damage.
-        let none = episode_score(true, false, 0, OPP_MAX_HP);
-        let half = episode_score(true, false, 50, OPP_MAX_HP);
-        let near = episode_score(true, false, 90, OPP_MAX_HP);
+        let none = episode_score(true, false, 0, HP99);
+        let half = episode_score(true, false, 50, HP99);
+        let near = episode_score(true, false, 90, HP99);
         assert_eq!(none, 0.0, "no fresh damage -> 0.0");
         assert!(half > none && near > half, "score must rise with fresh damage");
         assert!(near < 1.0, "a loss can never reach a full win, got {near}");
@@ -372,9 +420,31 @@ mod tests {
     fn episode_score_is_clamped_to_unit_interval() {
         // Fresh damage exceeding opp_max_hp (e.g. overkill accounting) stays
         // bounded; a graded loss never reaches or exceeds 1.0.
-        let over = episode_score(true, true, 1000, OPP_MAX_HP);
+        let over = episode_score(true, true, 1000, HP99);
         assert!((0.0..=1.0).contains(&over), "score {over} escaped [0,1]");
         assert!(over < 1.0, "a non-win must stay strictly below the 1.0 win, got {over}");
+    }
+
+    #[test]
+    fn episode_score_scales_with_the_loadouts_hitpoints_not_a_hardcoded_99() {
+        // The denominator is the OPPONENT'S STARTING HP (`Duel::start_hp_b`),
+        // so a 50-HP loadout reaches full graded credit at 50 fresh damage.
+        // Under the old hardcoded 99.0 this would have scored 0.99*(50/99)^2
+        // ~= 0.2526 instead.
+        let s = episode_score(true, true, 50, 50.0);
+        assert!((s - 0.99).abs() < 1e-6, "expected 0.99 at full fresh damage vs a 50 HP loadout, got {s}");
+        // Same fresh damage, tougher opponent -> strictly less credit.
+        assert!(episode_score(true, true, 50, 99.0) < s);
+    }
+
+    #[test]
+    fn episode_score_zero_max_hp_is_zero_not_nan() {
+        // Degenerate loadout: the denominator is now DATA (from the scenario),
+        // not a hardcoded 99.0, so a 0-HP side B must not divide-by-zero a
+        // NaN into the sweep objective.
+        let s = episode_score(true, false, 0, 0.0);
+        assert_eq!(s, 0.0, "0-HP opponent must score 0.0, got {s}");
+        assert!(!episode_score(true, true, 7, 0.0).is_nan(), "score must never be NaN");
     }
 
     #[test]
