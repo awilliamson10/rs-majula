@@ -47,6 +47,7 @@ fn main() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
 
     // Fold the whole stream into a few f64 accumulators. Both a plain sum
     // and a position-weighted sum are kept so a reordering of values (not
@@ -61,7 +62,7 @@ fn main() {
     let mut pos: u64 = 0;
 
     for _ in 0..ticks {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         for &v in obs.iter() {
             pos += 1;
             obs_sum += v as f64;

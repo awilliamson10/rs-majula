@@ -28,6 +28,7 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     let mut acts = vec![0i32; na * BatchEnv::ACT_STRIDE];
 
     // Phase 1: A attacks, B just tanks. Accumulate A's reward.
@@ -35,7 +36,7 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
     for _ in 0..25 {
         engage_row(&mut acts[0..6]);
         acts[6..12].copy_from_slice(&[0, 0, 0, 0, 0, 0]); // B idles
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 { break; }
         r_phase1 += rew[0];
     }
@@ -46,7 +47,7 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
     for _ in 0..12 {
         acts[0..6].copy_from_slice(&[0, 0, 0, 0, 0, 0]); // A idles
         eat_row(&mut acts[6..12]);                        // B eats
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 { break; }
     }
     let hp_healed = env.agent_hp(1);
@@ -63,7 +64,7 @@ fn damage_the_opponent_eats_back_is_not_paid_twice() {
     for _ in 0..10 {
         engage_row(&mut acts[0..6]);
         acts[6..12].copy_from_slice(&[0, 0, 0, 0, 0, 0]);
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 { break; }
         r_phase3 += rew[0];
         if env.agent_hp(1) <= hp_low { break; } // stop once we're back at fresh ground
@@ -106,6 +107,7 @@ fn the_kill_dominates_a_whole_fights_dense_reward() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     let mut acts = vec![0i32; na * BatchEnv::ACT_STRIDE];
     for a in 0..na { engage_row(&mut acts[a * 6..a * 6 + 6]); }
 
@@ -113,7 +115,7 @@ fn the_kill_dominates_a_whole_fights_dense_reward() {
     let mut dense_total = 0.0f32;
     let mut terminal_r = 0.0f32;
     for _ in 0..600 {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 { terminal_r = rew[0]; break; }
         dense_total += rew[0].abs();
     }

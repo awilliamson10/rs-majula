@@ -45,6 +45,8 @@ pub(crate) struct Duel {
     /// measured reward-farm exploit.
     pub min_hp_a: u16,
     pub min_hp_b: u16,
+    /// Total FRESH damage side A has dealt this episode (for the score).
+    pub fresh_dealt_a: u32,
 }
 
 pub struct BatchEnv {
@@ -58,6 +60,28 @@ pub struct BatchEnv {
     pub(crate) win_bonus: f32,
     pub(crate) death_penalty: f32,
     pub(crate) timeout_penalty: f32,
+}
+
+/// Opponent's max hitpoints (scenario loadout: 99). The score's graded
+/// partial credit is fresh damage as a fraction of this -- a fixed engine fact,
+/// NOT a reward coefficient.
+pub(crate) const OPP_MAX_HP: f32 = 99.0;
+
+/// REWARD-INDEPENDENT per-episode score for side A -- the sweep/eval objective.
+///
+/// A clean win (opponent dead, we survived) is exactly `1.0`. Anything else
+/// (we died, a double-KO, or a timeout draw) is graded partial credit for the
+/// FRESH HP damage we dealt: `0.99 * (fresh_dealt_a / opp_max_hp)^2`, capped
+/// below 1. It uses ZERO reward coefficients (`damage_coeff`, `win_bonus`,
+/// ...), which is exactly what makes sweeping the reward against this objective
+/// safe -- the reward can be tuned freely without moving the score.
+pub(crate) fn episode_score(a_dead: bool, b_dead: bool, fresh_dealt_a: u32, opp_max_hp: f32) -> f32 {
+    if b_dead && !a_dead {
+        1.0
+    } else {
+        let frac = (fresh_dealt_a as f32 / opp_max_hp).clamp(0.0, 1.0);
+        (0.99 * frac * frac).clamp(0.0, 1.0)
+    }
 }
 
 impl BatchEnv {
@@ -94,7 +118,7 @@ impl BatchEnv {
                 CoordGrid::new(spot.0 + 1, spot.1, spot.2), &sc.sides[1]);
             let min_hp_a = harness.player_hp(a);
             let min_hp_b = harness.player_hp(b);
-            duels.push(Duel { a, b, spot, tick: 0, episodes: 0, min_hp_a, min_hp_b });
+            duels.push(Duel { a, b, spot, tick: 0, episodes: 0, min_hp_a, min_hp_b, fresh_dealt_a: 0 });
         }
 
         BatchEnv {
@@ -205,11 +229,19 @@ impl BatchEnv {
         self.harness.note_position(nb);
         let min_hp_a = self.harness.player_hp(na);
         let min_hp_b = self.harness.player_hp(nb);
-        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1, min_hp_a, min_hp_b };
+        self.duels[i] = Duel { a: na, b: nb, spot, tick: 0, episodes: eps + 1, min_hp_a, min_hp_b, fresh_dealt_a: 0 };
     }
 
-    pub fn step(&mut self, actions: &[i32], obs: &mut [f32], rewards: &mut [f32], dones: &mut [f32]) {
+    pub fn step(
+        &mut self,
+        actions: &[i32],
+        obs: &mut [f32],
+        rewards: &mut [f32],
+        dones: &mut [f32],
+        scores: &mut [f32],
+    ) {
         debug_assert_eq!(actions.len(), self.num_agents() * Self::ACT_STRIDE);
+        debug_assert_eq!(scores.len(), self.duels.len());
         // 1. Apply both sides of every duel (no cycle yet).
         for i in 0..self.duels.len() {
             let (a, b) = (self.duels[i].a, self.duels[i].b);
@@ -241,6 +273,7 @@ impl BatchEnv {
             // non-combat HP drop could never be credited as a hit.
             let fresh_dealt_by_a = fresh_on_b.min(b_took);
             let fresh_dealt_by_b = fresh_on_a.min(a_took);
+            self.duels[i].fresh_dealt_a += fresh_dealt_by_a;
 
             let d = self.damage_coeff;
             let mut ra = d * (fresh_dealt_by_a as f32 - a_took as f32);
@@ -263,7 +296,16 @@ impl BatchEnv {
             let done = self.duel_terminal(&self.duels[i]);
             dones[2 * i] = done as u8 as f32;
             dones[2 * i + 1] = done as u8 as f32;
-            if done { self.respawn(i); }
+            scores[i] = -1.0;
+            if done {
+                // REWARD-INDEPENDENT score: a win is 1.0; a loss/draw is graded
+                // partial credit for how close we came. Uses NO reward
+                // coefficient -- that is what makes sweeping the reward safe.
+                scores[i] = episode_score(
+                    a_dead, b_dead, self.duels[i].fresh_dealt_a, OPP_MAX_HP,
+                );
+                self.respawn(i);
+            }
         }
         // 4. Fresh observation. Uses the PRE-this-tick `prev_coord` snapshot
         // (from the end of the previous step) to derive is-moving for the
@@ -293,6 +335,57 @@ mod tests {
             num_duels: m, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
             damage_coeff: 0.005, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
         }
+    }
+
+    // `episode_score` is the sweep objective. These unit tests pin every
+    // branch DETERMINISTICALLY -- the integration env (mirror melee, seed 1000)
+    // never organically produces a clean side-A solo kill (it yields double-KOs
+    // and B-wins), so the `1.0` win path can only be proven here.
+    #[test]
+    fn episode_score_clean_win_is_exactly_one() {
+        // Opponent dead, we survived -> 1.0, regardless of fresh damage dealt.
+        assert_eq!(episode_score(false, true, 12, OPP_MAX_HP), 1.0);
+        assert_eq!(episode_score(false, true, 99, OPP_MAX_HP), 1.0);
+    }
+
+    #[test]
+    fn episode_score_double_ko_is_graded_not_a_win() {
+        // Both dead is NOT a win (requires `!a_dead`): graded partial, < 1.0.
+        let s = episode_score(true, true, 99, OPP_MAX_HP);
+        assert!(s < 1.0, "double-KO must not score a full win, got {s}");
+        // fresh == opp_max_hp -> frac == 1 -> 0.99.
+        assert!((s - 0.99).abs() < 1e-6, "expected 0.99 at full fresh damage, got {s}");
+    }
+
+    #[test]
+    fn episode_score_loss_is_graded_by_fresh_damage_and_below_one() {
+        // We died, opponent lived: graded partial credit for fresh damage.
+        let none = episode_score(true, false, 0, OPP_MAX_HP);
+        let half = episode_score(true, false, 50, OPP_MAX_HP);
+        let near = episode_score(true, false, 90, OPP_MAX_HP);
+        assert_eq!(none, 0.0, "no fresh damage -> 0.0");
+        assert!(half > none && near > half, "score must rise with fresh damage");
+        assert!(near < 1.0, "a loss can never reach a full win, got {near}");
+    }
+
+    #[test]
+    fn episode_score_is_clamped_to_unit_interval() {
+        // Fresh damage exceeding opp_max_hp (e.g. overkill accounting) stays
+        // bounded; a graded loss never reaches or exceeds 1.0.
+        let over = episode_score(true, true, 1000, OPP_MAX_HP);
+        assert!((0.0..=1.0).contains(&over), "score {over} escaped [0,1]");
+        assert!(over < 1.0, "a non-win must stay strictly below the 1.0 win, got {over}");
+    }
+
+    #[test]
+    fn episode_score_uses_no_reward_coefficient() {
+        // The function's ONLY inputs are the two death flags, raw fresh HP
+        // damage, and the fixed opponent max HP. There is deliberately no
+        // `damage_coeff`/`win_bonus`/... parameter to thread a reward knob
+        // through -- if one were ever added, this call would stop compiling.
+        // This documents (and, via the signature, enforces) the property that
+        // `score_does_not_depend_on_reward_coefficients` proves end-to-end.
+        let _: fn(bool, bool, u32, f32) -> f32 = episode_score;
     }
 
     /// Regression for the `forget_player`/`note_position` fix `respawn`

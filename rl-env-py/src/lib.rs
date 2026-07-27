@@ -56,6 +56,10 @@ impl BatchEnv {
     fn act_stride(&self) -> usize {
         CoreBatchEnv::ACT_STRIDE
     }
+    #[getter]
+    fn num_duels(&self) -> usize {
+        self.inner.num_duels()
+    }
 
     /// Returns the current observation buffer as `(num_agents, OBS_STRIDE)`.
     fn reset<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
@@ -68,7 +72,10 @@ impl BatchEnv {
     }
 
     /// Applies `actions` `(num_agents, ACT_STRIDE)` i32, advances one tick,
-    /// and returns `(obs (N,OBS_STRIDE) f32, rewards (N,) f32, dones (N,) f32)`.
+    /// and returns `(obs (N,OBS_STRIDE) f32, rewards (N,) f32, dones (N,) f32,
+    /// scores (num_duels,) f32)`. `scores[i] >= 0.0` means duel `i` finished
+    /// an episode this step; the value is the REWARD-INDEPENDENT sweep/eval
+    /// score for that episode's side A. `-1.0` means no episode finished.
     fn step<'py>(
         &mut self,
         py: Python<'py>,
@@ -77,19 +84,23 @@ impl BatchEnv {
         Bound<'py, PyArray2<f32>>,
         Bound<'py, PyArray1<f32>>,
         Bound<'py, PyArray1<f32>>,
+        Bound<'py, PyArray1<f32>>,
     ) {
         let n = self.inner.num_agents();
+        let d = self.inner.num_duels();
         let a = actions.as_slice().expect("actions must be C-contiguous");
         let mut obs = vec![0.0f32; n * CoreBatchEnv::OBS_STRIDE];
         let mut rew = vec![0.0f32; n];
         let mut done = vec![0.0f32; n];
-        self.inner.step(a, &mut obs, &mut rew, &mut done);
+        let mut scores = vec![-1.0f32; d];
+        self.inner.step(a, &mut obs, &mut rew, &mut done, &mut scores);
         (
             obs.into_pyarray(py)
                 .reshape([n, CoreBatchEnv::OBS_STRIDE])
                 .unwrap(),
             rew.into_pyarray(py),
             done.into_pyarray(py),
+            scores.into_pyarray(py),
         )
     }
 }

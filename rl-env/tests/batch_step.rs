@@ -20,8 +20,9 @@ fn run(env: &mut BatchEnv, ticks: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     for _ in 0..ticks {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
     }
     (obs, rew, done)
 }
@@ -101,6 +102,7 @@ fn auto_reset_respawns_after_death() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
 
     let mut saw_done = false;
     // Combat under this loadout kills in ~100 ticks, well inside the 600-tick
@@ -111,7 +113,7 @@ fn auto_reset_respawns_after_death() {
     // already underway and HP is no longer full.
     let mut hp_at_reset = (0u16, 0u16);
     for _ in 0..600 {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 || done[1] == 1.0 {
             saw_done = true;
             hp_at_reset = (env.agent_hp(0), env.agent_hp(1));
@@ -135,8 +137,9 @@ fn many_respawns_do_not_exhaust_player_slots() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     for _ in 0..3000 {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
     }
     // Not asserting exactly 99: 3000 isn't guaranteed to land on a reset
     // boundary (see auto_reset_respawns_after_death), so the agent may be

@@ -30,8 +30,10 @@ def test_step_antisymmetric_reward():
     acts = np.tile(np.array([0, 1, 0, 0, 0, 0], dtype=np.int32), (4, 1))
     saw = False
     for _ in range(20):
-        obs, rew, done = env.step(acts)
+        obs, rew, done, scores = env.step(acts)
         assert obs.shape == (4, 26) and rew.shape == (4,) and done.shape == (4,)
+        assert scores.shape == (env.num_duels,)
+        assert all(s == -1.0 or 0.0 <= s <= 1.0 for s in scores)
         for i in range(2):
             assert abs(rew[2 * i] + rew[2 * i + 1]) < 1e-5
         if np.any(rew != 0):
