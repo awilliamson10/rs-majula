@@ -35,6 +35,8 @@ fn main() {
         win_bonus: 1.0,
         death_penalty: 0.1,
         timeout_penalty: 0.4,
+        min_sep: 1,
+        max_sep: 12,
     });
 
     let na = env.num_agents();

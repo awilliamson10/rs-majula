@@ -5,6 +5,7 @@ fn cfg() -> BatchConfig {
         scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
         num_duels: 1, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
         damage_coeff: 0.01, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
+        min_sep: 1, max_sep: 12,
     }
 }
 

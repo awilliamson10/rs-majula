@@ -453,6 +453,15 @@ impl EnvHarness {
         std::mem::take(&mut self.recorded)
     }
 
+    /// Current tile of `pid` as `(x, z)`; `(0, 0)` if absent. Same field path
+    /// [`Self::note_positions`] reads.
+    pub fn player_coord(&self, pid: u16) -> (u16, u16) {
+        self.engine
+            .get_player(pid)
+            .map(|p| (p.player.pathing.coord.x(), p.player.pathing.coord.z()))
+            .unwrap_or((0, 0))
+    }
+
     pub fn player_hp(&self, pid: u16) -> u16 {
         self.engine
             .get_player(pid)

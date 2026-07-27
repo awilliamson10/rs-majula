@@ -40,6 +40,11 @@ impl BatchEnv {
             inner: CoreBatchEnv::new(BatchConfig {
                 scenario_path, num_duels, base_seed, spot_stride, reward_w,
                 damage_coeff, win_bonus, death_penalty, timeout_penalty,
+                // Engagement-range randomization: the plan's defaults, not yet
+                // a Python-side knob (nothing in B.2a-1 sweeps them). Add a
+                // `#[pyo3(signature = ...)]` arg pair here if a later task
+                // needs to tune the opening range from the trainer.
+                min_sep: 1, max_sep: 12,
             }),
         }
     }

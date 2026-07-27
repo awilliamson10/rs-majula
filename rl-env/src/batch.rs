@@ -31,6 +31,13 @@ pub struct BatchConfig {
     pub death_penalty: f32,
     /// Terminal penalty for a timeout draw. Anti-stall. Swept.
     pub timeout_penalty: f32,
+    /// Minimum / maximum Chebyshev separation (tiles) between the two sides at
+    /// spawn. Randomized per episode from the engine RNG: this is the organic
+    /// PK variable (you close distance, or get jumped). NOT randomized: HP and
+    /// spec energy -- synthetic start states that never occur in real play are
+    /// a documented training confound.
+    pub min_sep: i32,
+    pub max_sep: i32,
 }
 
 pub(crate) struct Duel {
@@ -64,6 +71,8 @@ pub struct BatchEnv {
     pub(crate) win_bonus: f32,
     pub(crate) death_penalty: f32,
     pub(crate) timeout_penalty: f32,
+    pub(crate) min_sep: i32,
+    pub(crate) max_sep: i32,
 }
 
 /// REWARD-INDEPENDENT per-episode score for side A -- the sweep/eval objective.
@@ -127,6 +136,61 @@ impl BatchEnv {
         ((base.0 as i32 + gx) as u16, base.1, (base.2 as i32 + gz) as u16)
     }
 
+    /// Draws a seeded `(dx, dz)` offset for side B at a Chebyshev separation in
+    /// `[min_sep, max_sep]`.
+    ///
+    /// # ★ Determinism: the draw order is FIXED and load-bearing
+    ///
+    /// Exactly three bounded draws, ALWAYS in this order:
+    ///   1. `sep`  -- `next_int_bound(span + 1)`, the ring radius
+    ///   2. `side` -- `next_int_bound(4)`, which arm of the square ring
+    ///   3. `t`    -- `next_int_bound(2 * sep + 1)`, position along that arm
+    /// and it is called at exactly one point in the spawn sequence (after side
+    /// A is spawned, before side B is), identically in [`BatchEnv::new`] and
+    /// [`BatchEnv::respawn`]. A fixed `base_seed` therefore reproduces every
+    /// spawn of an entire run exactly -- the cross-process
+    /// `determinism_across_processes` gate depends on this. Adding, removing or
+    /// reordering ANY draw here (or moving the call relative to the spawns)
+    /// shifts the whole RNG stream and breaks it.
+    ///
+    /// Taking the RNG by `&mut` rather than `&mut self`: `new` builds its duels
+    /// before a `BatchEnv` exists, so there is no `self` to borrow there.
+    fn draw_offset(rng: &mut rs_util::random::JavaRandom, min_sep: i32, max_sep: i32) -> (i32, i32) {
+        let span = (max_sep - min_sep).max(0);
+        let sep = min_sep + rng.next_int_bound(span + 1);
+        // Pick a point on the square ring of Chebyshev radius `sep`: one arm
+        // is pinned at ±sep and the other coordinate sweeps [-sep, sep], so
+        // max(|dx|, |dz|) == sep on all four arms.
+        let side = rng.next_int_bound(4);
+        let t = rng.next_int_bound(2 * sep + 1) - sep;
+        match side {
+            0 => (sep, t),
+            1 => (-sep, t),
+            2 => (t, sep),
+            _ => (t, -sep),
+        }
+    }
+
+    /// Duel `i`'s two sides' current tiles, `((ax, az), (bx, bz))`.
+    ///
+    /// Side B's tile is a SEEDED DRAW (see [`Self::draw_offset`]), so anything
+    /// reconstructing a duel's spawn -- notably `tests/batch_obs.rs`'s
+    /// single-harness obs cross-check -- must READ it from here. Assuming the
+    /// old fixed `spot.0 + 1` silently desynchronises the moment the drawn
+    /// separation isn't 1.
+    pub fn duel_coords(&self, i: usize) -> ((u16, u16), (u16, u16)) {
+        let d = &self.duels[i];
+        (self.harness.player_coord(d.a), self.harness.player_coord(d.b))
+    }
+
+    /// Current Chebyshev separation of each duel's two sides (tiles).
+    pub fn duel_separations(&self) -> Vec<i32> {
+        (0..self.duels.len()).map(|i| {
+            let ((ax, az), (bx, bz)) = self.duel_coords(i);
+            (ax as i32 - bx as i32).abs().max((az as i32 - bz as i32).abs())
+        }).collect()
+    }
+
     pub fn new(cfg: BatchConfig) -> Self {
         let sc = Scenario::load(&cfg.scenario_path).expect("BatchEnv: load scenario");
         let mut harness = EnvHarness::boot_arena_seeded(cfg.base_seed);
@@ -144,8 +208,16 @@ impl BatchEnv {
             let spot = Self::spot_for(sc.spot, cfg.spot_stride, i);
             let a = harness.spawn_and_equip("pker",
                 CoordGrid::new(spot.0, spot.1, spot.2), &sc.sides[0]);
+            // Same seeded draw (and same position in the spawn sequence) as
+            // `respawn`, so the opening engagement range varies per duel and
+            // per episode. `.max(0)` only guards the u16 conversion: duel
+            // spots sit around x/z ~3200 (see the scenario's `spot`), so it
+            // never actually clamps and never shrinks the drawn separation.
+            let (dx, dz) = Self::draw_offset(&mut harness.engine.random, cfg.min_sep, cfg.max_sep);
+            let bx = (spot.0 as i32 + dx).max(0) as u16;
+            let bz = (spot.2 as i32 + dz).max(0) as u16;
             let b = harness.spawn_and_equip("opponent",
-                CoordGrid::new(spot.0 + 1, spot.1, spot.2), &sc.sides[1]);
+                CoordGrid::new(bx, spot.1, bz), &sc.sides[1]);
             let min_hp_a = harness.player_hp(a);
             let min_hp_b = harness.player_hp(b);
             let start_hp_b = harness.player_hp(b);
@@ -162,6 +234,8 @@ impl BatchEnv {
             win_bonus: cfg.win_bonus,
             death_penalty: cfg.death_penalty,
             timeout_penalty: cfg.timeout_penalty,
+            min_sep: cfg.min_sep,
+            max_sep: cfg.max_sep,
         }
     }
 
@@ -253,8 +327,15 @@ impl BatchEnv {
         self.harness.forget_player(b);
         let na = self.harness.spawn_and_equip("pker",
             CoordGrid::new(spot.0, spot.1, spot.2), &self.sides[0].clone());
+        // Read the bounds into locals BEFORE the draw: `draw_offset` takes the
+        // RNG by `&mut`, and that borrow ends at the call, leaving `self` free
+        // for `spawn_and_equip` below.
+        let (min_sep, max_sep) = (self.min_sep, self.max_sep);
+        let (dx, dz) = Self::draw_offset(&mut self.harness.engine.random, min_sep, max_sep);
+        let bx = (spot.0 as i32 + dx).max(0) as u16;
+        let bz = (spot.2 as i32 + dz).max(0) as u16;
         let nb = self.harness.spawn_and_equip("opponent",
-            CoordGrid::new(spot.0 + 1, spot.1, spot.2), &self.sides[1].clone());
+            CoordGrid::new(bx, spot.1, bz), &self.sides[1].clone());
         // A freshly spawned player has not moved. Seed prev_coord with their
         // spawn tile so the write_obs() later in THIS SAME step reports
         // is-moving = 0.0 instead of comparing against a recycled pid's stale
@@ -376,6 +457,7 @@ mod tests {
             scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
             num_duels: m, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
             damage_coeff: 0.005, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
+            min_sep: 1, max_sep: 12,
         }
     }
 
