@@ -220,11 +220,24 @@ impl EnvHarness {
     }
 
     /// Drops a pid's per-tick tracking state. Call when a player is removed --
-    /// the engine REUSES freed pids, so a stale `prev_coord` entry would
-    /// otherwise be inherited by whoever occupies that pid next.
+    /// the engine REUSES freed pids, so a stale entry would otherwise be
+    /// inherited by whoever occupies that pid next.
+    ///
+    /// EVERY per-pid map on this struct must be dropped here. `last_dealt` /
+    /// `last_taken` are observed directly ([`crate::observe::IDX_LAST_DEALT`] /
+    /// [`crate::observe::IDX_LAST_TAKEN`], via `unwrap_or(0)` in
+    /// [`Self::observe`]), so a leftover entry hands the NEXT occupant of this
+    /// pid the previous occupant's last-hit magnitudes -- 2 of 20 obs floats
+    /// silently wrong for one tick per respawn. That is invisible to short
+    /// tests (the pid allocator is forward-only and only recycles after its
+    /// cursor wraps ~2046 allocations) but is the steady state of a long
+    /// training run. See `batch.rs`'s
+    /// `stale_last_hit_magnitudes_are_cleared_when_a_pid_is_reused`.
     pub fn forget_player(&mut self, pid: u16) {
         self.prev_coord.remove(&pid);
         self.prev_hp.remove(&pid);
+        self.last_dealt.remove(&pid);
+        self.last_taken.remove(&pid);
     }
 
     /// Seeds a single pid's "previous" tile with its CURRENT tile, so the next
@@ -493,10 +506,11 @@ impl EnvHarness {
     /// appear in the vector -- this is the mission-critical faithfulness
     /// property (the agent must see only what a real 2004 client shows).
     ///
-    /// A handful of fields aren't readily sourced yet in M1
-    /// (is_attacking, opp weapon class, self attack/eat timers, opp
-    /// is_moving) and are left at `0.0` -- see the `TODO M1` comments on
-    /// their index constants in [`crate::observe`].
+    /// Every index in [`crate::observe`]'s map is filled: B.2a-1 sourced the
+    /// last placeholders -- self attack/eat cooldowns from their varps (Task
+    /// 1), opponent is-attacking / weapon class / is-moving (Task 2), and the
+    /// derived spec-KO chance, last-hit magnitudes and food count (Task 3).
+    /// Nothing is left pinned at a constant `0.0`.
     ///
     /// If either player is absent (e.g. died/despawned), the corresponding
     /// block is left all-zero rather than panicking, so a caller mid-episode
@@ -757,9 +771,12 @@ impl EnvHarness {
         }
     }
 
-    /// Despawns every currently-connected player, clears the `prev_hp`
-    /// reward bookkeeping (so the next `step_reward` call doesn't report a
-    /// phantom delta against a stale pre-reset HP value), and spawns a
+    /// Despawns every currently-connected player, clears ALL per-pid tracking
+    /// state -- `prev_hp` (so the next `step_reward` call doesn't report a
+    /// phantom delta against a stale pre-reset HP value), `prev_coord`, and
+    /// the `last_dealt`/`last_taken` magnitudes [`Self::observe`] reads (see
+    /// [`Self::forget_player`] for why a leftover entry is a wrong-obs bug) --
+    /// and spawns a
     /// fresh, XP-consistently-buffed attacker/victim pair adjacent to each
     /// other in the Scorpion Valley deep-wilderness zone. Returns their pids.
     pub fn reset_duel(&mut self) -> (u16, u16) {
@@ -771,6 +788,8 @@ impl EnvHarness {
         }
         self.prev_hp.clear();
         self.prev_coord.clear();
+        self.last_dealt.clear();
+        self.last_taken.clear();
         self.episode_tick = 0;
         let a = self.engine.spawn_player("pker", CoordGrid::new(3200, 0, 3912));
         let b = self.engine.spawn_player("victim", CoordGrid::new(3201, 0, 3912));
@@ -822,7 +841,22 @@ impl EnvHarness {
         }
         self.prev_hp.clear();
         self.prev_coord.clear();
+        self.last_dealt.clear();
+        self.last_taken.clear();
         self.episode_tick = 0;
+        // ★ Reset the ABSOLUTE engine clock every episode. Combat runs through
+        // the RuneScript VM, whose fight stream couples to the absolute clock
+        // (the exact class `check_afk`'s arena gate was added for). Without this
+        // reset a long-lived (reused) training harness runs its Nth episode at a
+        // high absolute clock and produces a DIFFERENT fight than a fresh-boot
+        // replay of the same (seed, actions) -- silently, and only past ~100
+        // ticks (which the old force-logout hid by ending every episode early).
+        // Resetting to 0 makes every episode -- reused or fresh -- run over the
+        // identical clock range, so absolute-clock coupling is structurally
+        // impossible in the arena. All players are despawned above and respawned
+        // below, so no stale `clock - x` (e.g. cooldown/last_response) survives
+        // the reset. Guarded by `gate_determinism::reused_harness_*`.
+        self.engine.clock = 0;
 
         // Crisp deterministic fight stream: reseed, THEN draw jitter, THEN
         // spawn. Train and replay run this identical sequence, so the whole

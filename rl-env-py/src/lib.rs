@@ -22,6 +22,10 @@ struct BatchEnv {
 
 #[pymethods]
 impl BatchEnv {
+    /// `reward_w` is INERT: it is retained for API compatibility (Python
+    /// callers still pass it positionally) but nothing reads it in the reward
+    /// path -- the shaped reward comes from `damage_coeff` / `win_bonus` /
+    /// `death_penalty` / `timeout_penalty`. See `BatchConfig::reward_w`.
     #[new]
     #[pyo3(signature = (scenario_path, num_duels, base_seed, spot_stride, reward_w,
                         damage_coeff=0.005, win_bonus=1.0, death_penalty=0.1, timeout_penalty=0.4))]

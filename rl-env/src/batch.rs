@@ -25,7 +25,9 @@ pub struct BatchConfig {
     /// reward to [-1,1], and the kill must dominate the cumulative dense term.
     /// Swept by Protein.
     pub damage_coeff: f32,
-    /// Terminal reward for a kill. Dominant. Swept.
+    /// Terminal reward for a kill you SURVIVE. Dominant. Swept. A double-KO
+    /// pays neither side this -- both just take `death_penalty` (see the
+    /// terminal block in [`BatchEnv::step`]).
     pub win_bonus: f32,
     /// Terminal penalty for dying. Low but nonzero. Swept.
     pub death_penalty: f32,
@@ -120,6 +122,57 @@ pub(crate) fn episode_score(a_dead: bool, b_dead: bool, fresh_dealt_a: u32, opp_
             0.0
         };
         (0.99 * frac * frac).clamp(0.0, 1.0)
+    }
+}
+
+/// TERMINAL payoff `(side A, side B)`, added on top of the tick's dense
+/// damage reward. Pure: a function of the outcome flags and the swept
+/// coefficients only, so every branch is unit-testable without having to
+/// coax a live fight into producing that outcome.
+///
+/// Payoff table at the shipped coefficients (win 1.0 / death 0.1 / timeout
+/// 0.4):
+///
+/// | outcome            | A    | B    |
+/// |--------------------|------|------|
+/// | clean win (B dies) | +1.0 | -0.1 |
+/// | clean loss (A dies)| -0.1 | +1.0 |
+/// | double-KO          | -0.1 | -0.1 |
+/// | timeout draw       | -0.4 | -0.4 |
+/// | still fighting     |  0.0 |  0.0 |
+///
+/// # ★ Why the double-KO branch is explicit
+///
+/// The win bonus is paid for KILLING AND SURVIVING, never for a trade. Two
+/// independent `if`s (`b_dead -> ra += win`; `a_dead -> ra -= death`) would
+/// pay each side of a mutual kill `win_bonus - death_penalty` = +0.9 -- i.e.
+/// suiciding into the opponent scores 90% of a clean win, so the policy has
+/// almost no incentive to survive its kill. A double-KO is just two deaths.
+///
+/// A death (either side's) takes precedence over `timed_out`: an episode that
+/// resolves by a kill on its very last legal tick is a kill, not a draw.
+///
+/// `episode_score` is deliberately NOT derived from this: it reads only the
+/// death flags and fresh damage, so the sweep objective stays
+/// reward-independent (`score_metric.rs`).
+pub(crate) fn terminal_reward(
+    a_dead: bool,
+    b_dead: bool,
+    timed_out: bool,
+    win_bonus: f32,
+    death_penalty: f32,
+    timeout_penalty: f32,
+) -> (f32, f32) {
+    if a_dead && b_dead {
+        (-death_penalty, -death_penalty)
+    } else if b_dead {
+        (win_bonus, -death_penalty)
+    } else if a_dead {
+        (-death_penalty, win_bonus)
+    } else if timed_out {
+        (-timeout_penalty, -timeout_penalty)
+    } else {
+        (0.0, 0.0)
     }
 }
 
@@ -416,12 +469,17 @@ impl BatchEnv {
             let b_dead = hp_b == 0;
             let timed_out = self.timeout.map_or(false, |n| self.duels[i].tick >= n);
 
-            if b_dead { ra += self.win_bonus;  rb -= self.death_penalty; }
-            if a_dead { rb += self.win_bonus;  ra -= self.death_penalty; }
-            if !a_dead && !b_dead && timed_out {
-                ra -= self.timeout_penalty;
-                rb -= self.timeout_penalty;
-            }
+            // Terminal payoff on top of the dense stream. Pure function of the
+            // outcome flags and the coefficients -- see `terminal_reward`,
+            // whose unit tests pin the whole payoff table (including the
+            // double-KO rule) without needing a live fight to produce each
+            // outcome.
+            let (ta, tb) = terminal_reward(
+                a_dead, b_dead, timed_out,
+                self.win_bonus, self.death_penalty, self.timeout_penalty,
+            );
+            ra += ta;
+            rb += tb;
 
             rewards[2 * i] = ra;
             rewards[2 * i + 1] = rb;
@@ -482,9 +540,12 @@ mod tests {
     const HP99: f32 = 99.0;
 
     // `episode_score` is the sweep objective. These unit tests pin every
-    // branch DETERMINISTICALLY -- the integration env (mirror melee, seed 1000)
-    // never organically produces a clean side-A solo kill (it yields double-KOs
-    // and B-wins), so the `1.0` win path can only be proven here.
+    // branch DETERMINISTICALLY. A live fight only ever exhibits the ONE outcome
+    // its seed and action script happen to produce, and the double-KO branch in
+    // particular is not reliably producible at all now that episodes resolve by
+    // real combat rather than by a simultaneous force-logout -- so the full
+    // table is proven here, and the integration tests only have to confirm that
+    // the outcome they DO produce is scored correctly.
     #[test]
     fn episode_score_clean_win_is_exactly_one() {
         // Opponent dead, we survived -> 1.0, regardless of fresh damage dealt.
@@ -552,6 +613,103 @@ mod tests {
         // This documents (and, via the signature, enforces) the property that
         // `score_does_not_depend_on_reward_coefficients` proves end-to-end.
         let _: fn(bool, bool, u32, f32) -> f32 = episode_score;
+    }
+
+    // ---- `terminal_reward`: the whole payoff table, deterministically ----
+    //
+    // These are the primary coverage for the terminal branch. Deliberately
+    // asymmetric, non-round coefficients so a branch that returned the WRONG
+    // constant (or swapped the two sides) cannot pass by numeric coincidence:
+    // every one of the three magnitudes is distinct, and none is the negation
+    // or the sum/difference of another.
+    const WIN: f32 = 1.0;
+    const DEATH: f32 = 0.1;
+    const TIMEOUT: f32 = 0.4;
+
+    #[test]
+    fn terminal_reward_clean_win_pays_the_bonus_to_the_survivor_only() {
+        // B dead, A alive: A survived its kill -> +win_bonus; B just died.
+        assert_eq!(
+            terminal_reward(false, true, false, WIN, DEATH, TIMEOUT),
+            (WIN, -DEATH)
+        );
+    }
+
+    #[test]
+    fn terminal_reward_clean_loss_is_the_mirror_image() {
+        // The table must be symmetric under swapping the two sides -- a
+        // hardcoded `ra`/`rb` mix-up in one branch shows up here.
+        assert_eq!(
+            terminal_reward(true, false, false, WIN, DEATH, TIMEOUT),
+            (-DEATH, WIN)
+        );
+    }
+
+    /// ★ Blocker 2 (whole-branch review): a double-KO must pay NEITHER side the
+    /// win bonus.
+    ///
+    /// Two independent `if`s used to pay each side `win_bonus - death_penalty`
+    /// = +0.9 for a mutual kill -- 90% of a clean win for suiciding into the
+    /// opponent. This was previously covered by a live integration test whose
+    /// fixture was the engine's ~101-tick force-logout removing BOTH players at
+    /// once (read as `a_dead && b_dead`). That force-logout is now gated off in
+    /// arena mode, episodes resolve by real combat, and a simultaneous mutual
+    /// kill is no longer reliably producible -- so the property lives here,
+    /// where it is exact and deterministic.
+    #[test]
+    fn terminal_reward_double_ko_pays_neither_side_the_win_bonus() {
+        let (a, b) = terminal_reward(true, true, false, WIN, DEATH, TIMEOUT);
+        assert_eq!((a, b), (-DEATH, -DEATH), "a double-KO is two deaths, not a win");
+        // Stated as the property, not just the constants: under the old
+        // two-`if` code both of these were +0.9 and this goes RED.
+        assert!(a < 0.0 && b < 0.0, "a mutual kill must be a net negative for both sides");
+    }
+
+    #[test]
+    fn terminal_reward_timeout_penalises_both_sides() {
+        assert_eq!(
+            terminal_reward(false, false, true, WIN, DEATH, TIMEOUT),
+            (-TIMEOUT, -TIMEOUT)
+        );
+    }
+
+    #[test]
+    fn terminal_reward_is_zero_while_the_fight_is_still_running() {
+        // Non-terminal ticks must add nothing to the dense stream -- otherwise
+        // every step of every episode carries a terminal coefficient.
+        assert_eq!(terminal_reward(false, false, false, WIN, DEATH, TIMEOUT), (0.0, 0.0));
+    }
+
+    #[test]
+    fn terminal_reward_a_death_on_the_timeout_tick_is_a_kill_not_a_draw() {
+        // The timeout tick can also be the tick someone dies. That is a real
+        // result and must pay the kill/death table, NOT the draw penalty --
+        // and it must not pay both (an `if timed_out` that wasn't mutually
+        // exclusive with the death branches would stack -0.4 on top).
+        assert_eq!(
+            terminal_reward(false, true, true, WIN, DEATH, TIMEOUT),
+            (WIN, -DEATH),
+            "a kill landing on the timeout tick must still be scored as a kill"
+        );
+        assert_eq!(
+            terminal_reward(true, false, true, WIN, DEATH, TIMEOUT),
+            (-DEATH, WIN)
+        );
+        assert_eq!(
+            terminal_reward(true, true, true, WIN, DEATH, TIMEOUT),
+            (-DEATH, -DEATH)
+        );
+    }
+
+    #[test]
+    fn terminal_reward_scales_with_the_swept_coefficients() {
+        // The coefficients are SWEPT, so the branches must read them rather
+        // than bake in the shipped 1.0/0.1/0.4. Distinct primes make a branch
+        // that returned the wrong one impossible to miss.
+        assert_eq!(terminal_reward(false, true, false, 3.0, 5.0, 7.0), (3.0, -5.0));
+        assert_eq!(terminal_reward(true, false, false, 3.0, 5.0, 7.0), (-5.0, 3.0));
+        assert_eq!(terminal_reward(true, true, false, 3.0, 5.0, 7.0), (-5.0, -5.0));
+        assert_eq!(terminal_reward(false, false, true, 3.0, 5.0, 7.0), (-7.0, -7.0));
     }
 
     /// Regression for the `forget_player`/`note_position` fix `respawn`
@@ -627,6 +785,111 @@ mod tests {
                 obs[base + crate::observe::IDX_OPP_ISMOVING], 0.0,
                 "agent {agent}: spurious is-moving=1.0 right after respawn \
                  (stale prev_coord inherited from duel0's reused pid)"
+            );
+        }
+    }
+
+    /// ★ The `last_dealt` / `last_taken` half of the same stale-per-pid-state
+    /// bug class as the test above. `EnvHarness::forget_player` dropped
+    /// `prev_coord`/`prev_hp` but NOT the two last-hit maps Task 3 added, so a
+    /// player spawned onto a recycled pid inherited the previous occupant's
+    /// last-hit magnitudes at `IDX_LAST_DEALT`/`IDX_LAST_TAKEN` (`observe`
+    /// reads them with `unwrap_or(0)`, so a leftover entry is indistinguishable
+    /// from a real hit) -- 2 of 20 observation floats wrong, once per episode,
+    /// forever, in any run long enough for the pid allocator to wrap.
+    ///
+    /// # Why it needs the same cursor-wrap machinery, and its own env
+    ///
+    /// Same reason as `respawn_does_not_leave_stale_prev_coord_on_a_reused_pid`
+    /// (read its doc comment): the allocator is FORWARD-ONLY, so pid reuse only
+    /// happens after the cursor has climbed to the top of its range. It cannot
+    /// share that test's fixture, though, because the two bugs need OPPOSITE
+    /// setups: that one requires `forget_player` NOT to have run on the pid
+    /// (a stale `prev_coord` is what it detects -- `observe` maps an ABSENT
+    /// `prev_coord` to is-moving `0.0`, so calling `forget_player` there would
+    /// silently destroy its discrimination), whereas this one must go through
+    /// the production path, where the pid IS forgotten when it is freed and
+    /// the fix is precisely that `forget_player` clears these two maps too.
+    ///
+    /// # Discrimination
+    ///
+    /// Delete the two `last_dealt`/`last_taken` removes from
+    /// `EnvHarness::forget_player` and the final assertions go RED: pid 1's
+    /// entry (`last_dealt = 11`) survives its owner's removal and the reused
+    /// pid observes `11.0 / 40.0`. The mid-test sanity assertion is what keeps
+    /// the final `== 0.0` from being vacuous -- it proves the values really
+    /// were nonzero and really do reach the observation.
+    #[test]
+    fn stale_last_hit_magnitudes_are_cleared_when_a_pid_is_reused() {
+        use rs_entity::player::HitEvent;
+        let mut env = BatchEnv::new(cfg(1));
+        assert_eq!((env.duels[0].a, env.duels[0].b), (1, 2));
+
+        // Record last-hit magnitudes through the PRODUCTION writer: push the
+        // hit events the engine's combat would, then let `hits_pair` (which
+        // `step` calls once per duel per tick) drain them into `last_dealt` /
+        // `last_taken`. Distinct amounts so a leak can't be mistaken for a
+        // coincidence.
+        env.harness.engine.get_player_mut(1).expect("pid 1 spawned")
+            .player.hits.push(HitEvent { amount: 7, kind: 0 });
+        env.harness.engine.get_player_mut(2).expect("pid 2 spawned")
+            .player.hits.push(HitEvent { amount: 11, kind: 0 });
+        assert_eq!(env.harness.hits_pair(1, 2), (7, 11));
+
+        // Non-vacuity: those magnitudes must actually be observable, or the
+        // `== 0.0` assertions at the end would pass no matter what.
+        let mut obs = vec![0.0f32; env.num_agents() * BatchEnv::OBS_STRIDE];
+        env.write_obs(&mut obs);
+        let agent0 = 0; // agent 0 == duel 0 side A == pid 1; its block starts at 0
+        assert_eq!(
+            obs[agent0 + crate::observe::IDX_LAST_DEALT], 11.0 / 40.0,
+            "fixture never reached the observation -- the assertions below would be vacuous"
+        );
+        assert_eq!(
+            obs[agent0 + crate::observe::IDX_LAST_TAKEN], 7.0 / 40.0,
+            "fixture never reached the observation -- the assertions below would be vacuous"
+        );
+
+        // Walk the allocator's cursor to the top of its forward range
+        // (`next_free_id` scans `cursor+1..MAX_PLAYERS-1`, then falls back to
+        // the SMALLEST free id), so the next allocation must wrap. Ids
+        // 3..=MAX_PLAYERS-2; duel0 still holds 1 and 2 at this point, so the
+        // dummies can only take ids above them. These are raw engine
+        // spawn/remove calls -- they never touch the last-hit maps.
+        let dummy_spot = CoordGrid::new(3300, 0, 3300);
+        let dummy_count = (rs_engine::MAX_PLAYERS as u16) - 4; // ids 3..=MAX_PLAYERS-2
+        let mut last_dummy = 0;
+        for _ in 0..dummy_count {
+            last_dummy = env.harness.engine.spawn_player("dummy", dummy_spot);
+            let _ = env.harness.engine.remove_player(last_dummy);
+        }
+        assert_eq!(
+            last_dummy, (rs_engine::MAX_PLAYERS as u16) - 2,
+            "cursor walk did not reach the top of the allocator's forward range"
+        );
+
+        // The real `respawn` under test: it frees pids 1 and 2 (calling
+        // `forget_player` on each, as production does) and immediately
+        // re-spawns -- and since the cursor has wrapped, 1 and 2 are the
+        // smallest free ids, so the new players land right back on them.
+        env.respawn(0);
+        assert_eq!(
+            (env.duels[0].a, env.duels[0].b), (1, 2),
+            "test setup did not force the respawn to reuse pids (1, 2)"
+        );
+
+        env.write_obs(&mut obs);
+        for agent in [0usize, 1] {
+            let base = agent * BatchEnv::OBS_STRIDE;
+            assert_eq!(
+                obs[base + crate::observe::IDX_LAST_DEALT], 0.0,
+                "agent {agent}: freshly spawned player observes a last-DEALT hit \
+                 inherited from the previous occupant of its reused pid"
+            );
+            assert_eq!(
+                obs[base + crate::observe::IDX_LAST_TAKEN], 0.0,
+                "agent {agent}: freshly spawned player observes a last-TAKEN hit \
+                 inherited from the previous occupant of its reused pid"
             );
         }
     }

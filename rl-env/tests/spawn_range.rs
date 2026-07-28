@@ -15,7 +15,7 @@ fn cfg(seed: u64) -> BatchConfig {
     BatchConfig {
         scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
         num_duels: 8, base_seed: seed, spot_stride: 32, reward_w: 1.0,
-        damage_coeff: 0.01, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
+        damage_coeff: 0.005, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
         min_sep: 1, max_sep: 12,
     }
 }
@@ -56,8 +56,10 @@ fn duels_start_at_varied_separations_within_bounds() {
 ///
 /// The band is [6,8], deliberately excluding the old hardcoded separation of
 /// 1: under the unfixed `respawn` this asserts `1` is in `6..=8` and FAILS.
-/// It needs no combat to happen -- the scenario's 400-tick timeout terminates
-/// the episode (and therefore respawns it) either way.
+/// It needs no particular combat outcome -- a real kill (~113 ticks under this
+/// loadout) or, failing that, the scenario's 400-tick timeout terminates the
+/// episode (and therefore respawns it) either way, both inside the 450-tick
+/// budget.
 #[test]
 fn respawned_duels_also_get_a_fresh_seeded_separation() {
     let mut c = cfg(1000);
@@ -122,8 +124,10 @@ fn respawn_draws_a_fresh_offset_every_episode_not_a_cached_one() {
     let mut done = vec![0.0f32; na];
     let mut scores = vec![-1.0f32; env.num_duels()];
 
-    // Budget covers EPISODES full-length episodes (the scenario times out at
-    // 400 ticks, so the duel always terminates and respawns) plus headroom.
+    // Budget covers EPISODES full-length episodes plus headroom: a mutual
+    // melee resolves by a real kill in ~113 ticks, and the scenario's 400-tick
+    // timeout is a hard backstop either way, so the duel always terminates and
+    // respawns well inside 1400 ticks.
     let mut offsets: Vec<(i32, i32)> = Vec::with_capacity(EPISODES);
     for _ in 0..1400 {
         env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);

@@ -72,11 +72,13 @@ fn determinism_across_processes() {
         String::from_utf8(out.stdout).expect("batch_digest stdout not utf8")
     };
 
-    // 250 ticks: single-engine KOs land roughly every ~55 ticks under this
-    // loadout, so this window comfortably covers several respawns per
-    // duel -- long enough to exercise the respawn RNG-interleaving
-    // determinism guarantee. The done_count assertion below is the safety
-    // net if that assumption ever drifts.
+    // 250 ticks: a mutual melee under this loadout resolves by a real kill in
+    // roughly ~113 ticks (episodes used to end at ~101 on the arena
+    // force-logout, now gated off -- see `rs-engine/src/phases/logout.rs`), so
+    // this window covers a couple of respawns per duel -- long enough to
+    // exercise the respawn RNG-interleaving determinism guarantee. The
+    // done_count assertion below is the safety net if that assumption ever
+    // drifts.
     let run1 = run_digest(1000, 250); // same seed as run2
     let run2 = run_digest(1000, 250); // separate process, identical args
     let run3 = run_digest(7, 250);    // different seed
@@ -117,8 +119,11 @@ fn auto_reset_respawns_after_death() {
     let mut scores = vec![-1.0f32; env.num_duels()];
 
     let mut saw_done = false;
-    // Combat under this loadout kills in ~100 ticks, well inside the 600-tick
+    // Combat under this loadout kills in ~113 ticks, well inside the 600-tick
     // budget and the 400-tick timeout backstop, so multiple auto-resets fire.
+    // (Before the arena force-logout was gated off in
+    // `rs-engine/src/phases/logout.rs`, episodes instead ended at ~101 ticks
+    // on a spurious simultaneous logout; the budget covers both.)
     // Snapshot HP right at a reset boundary rather than at the arbitrary
     // final tick: 600 isn't a multiple of the (deterministic but
     // non-round) fight length, so by tick 600 a fresh fight is typically
