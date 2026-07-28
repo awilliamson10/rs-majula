@@ -9,7 +9,7 @@
 // "Final-review fix wave" section of task-5-report.md).
 //
 // This binary runs exactly ONE `BatchEnv` to completion in its OWN process
-// and prints a digest of its entire (obs, reward, done) stream. The
+// and prints a digest of its entire (obs, reward, done, score) stream. The
 // determinism test runs it twice as SEPARATE OS processes with identical
 // args and asserts the digests match byte-for-byte -- each child spawns
 // exactly one engine, so this is the only valid way to compare two batches'
@@ -31,6 +31,12 @@ fn main() {
         base_seed: seed,
         spot_stride: 32,
         reward_w: 1.0,
+        damage_coeff: 0.005,
+        win_bonus: 1.0,
+        death_penalty: 0.1,
+        timeout_penalty: 0.4,
+        min_sep: 1,
+        max_sep: 12,
     });
 
     let na = env.num_agents();
@@ -43,6 +49,7 @@ fn main() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
 
     // Fold the whole stream into a few f64 accumulators. Both a plain sum
     // and a position-weighted sum are kept so a reordering of values (not
@@ -54,10 +61,23 @@ fn main() {
     let mut done_sum = 0.0f64;
     let mut done_wsum = 0.0f64;
     let mut done_count: u64 = 0;
+    // The score stream is folded in too, so the gate also covers the
+    // `fresh_dealt_a` accumulator and its per-episode reset -- both of which
+    // are carried across respawns and are invisible in obs/rew/done. The
+    // `-1.0` no-episode-finished sentinel is included (not skipped): every
+    // process runs this identical code, so any consistent treatment is fine,
+    // and folding it makes a shifted terminal STEP detectable too, not just a
+    // changed score value.
+    let mut score_sum = 0.0f64;
+    let mut score_wsum = 0.0f64;
+    // Sentinels excluded here, so a drift confined to the graded values can't
+    // be masked by a compensating change in how many sentinels were summed.
+    let mut score_finished_sum = 0.0f64;
+    let mut score_count: u64 = 0;
     let mut pos: u64 = 0;
 
     for _ in 0..ticks {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         for &v in obs.iter() {
             pos += 1;
             obs_sum += v as f64;
@@ -74,11 +94,22 @@ fn main() {
             done_wsum += v as f64 * pos as f64;
             if v == 1.0 { done_count += 1; }
         }
+        for &v in scores.iter() {
+            pos += 1;
+            score_sum += v as f64;
+            score_wsum += v as f64 * pos as f64;
+            if v >= 0.0 {
+                score_finished_sum += v as f64;
+                score_count += 1;
+            }
+        }
     }
 
     println!(
         "seed={seed} ticks={ticks} obs_sum={obs_sum:.10e} obs_wsum={obs_wsum:.10e} \
          rew_sum={rew_sum:.10e} rew_wsum={rew_wsum:.10e} done_sum={done_sum:.10e} \
-         done_wsum={done_wsum:.10e} done_count={done_count}"
+         done_wsum={done_wsum:.10e} done_count={done_count} \
+         score_sum={score_sum:.10e} score_wsum={score_wsum:.10e} \
+         score_finished_sum={score_finished_sum:.10e} score_count={score_count}"
     );
 }

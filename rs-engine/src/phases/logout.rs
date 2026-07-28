@@ -23,7 +23,8 @@ const TIMEOUT_NO_CONNECTION: u32 = 50;
 /// (60 seconds), bypassing logout prevention`. This is the backstop for silently dead
 /// connections (no FIN/RST ever arrives, so no disconnect signal fires): a
 /// live client always sends keepalives well within this window. Bots are
-/// exempt (they never send packets).
+/// exempt (they never send packets), as is the whole of arena mode (see
+/// [`Engine::logouts`]).
 const TIMEOUT_NO_RESPONSE: u32 = 100;
 
 impl Engine {
@@ -44,6 +45,23 @@ impl Engine {
     ///    combat), the prevention message is shown and the request is
     ///    cleared.
     /// 5. Otherwise, calls `active.logout()` to begin the logout sequence.
+    ///
+    /// Steps 1-2 (the connection-liveness paths: the reconnect grace window
+    /// and the no-response force-logout) are skipped entirely in arena mode
+    /// (`arena_mode == true`), mirroring the AFK gate in
+    /// `phases/input.rs::check_afk`. Both exist to reap clients whose socket
+    /// died silently; a headless RL arena has no sockets. Its players are
+    /// spawned through `spawn_player` -> `accept_login`, so they are flagged
+    /// `bot = false` and their `last_response` is frozen at their spawn tick
+    /// (the arena drives them by calling into the engine directly, never
+    /// through the packet-decode path that refreshes it). Without this gate
+    /// BOTH duelists are force-logged-out `TIMEOUT_NO_RESPONSE` ticks after
+    /// spawn, which `BatchEnv` reads as a mutual death -- so every episode
+    /// ended in a spurious ~101-tick double-KO and a real kill could never
+    /// land. Episodes are reset by `remove_player` from the arena's own
+    /// respawn path, not by this phase. Voluntary/script-driven logout
+    /// (steps 3-5) is untouched, and non-arena (real server) behavior is
+    /// unchanged.
     ///
     /// For each player marked for removal, the engine:
     ///
@@ -80,8 +98,11 @@ impl Engine {
                 active.player.disconnected_at = Some(self.clock);
             }
 
+            // Connection-liveness handling: the no-response force-logout and
+            // the reconnect grace window. Both are meaningless in arena mode
+            // (see `logouts`' doc comment) and skipped there.
             let mut force = false;
-            if !active.player.bot {
+            if !active.player.bot && !self.arena_mode {
                 force = self.clock - active.player.last_response >= TIMEOUT_NO_RESPONSE;
                 if let Some(at) = active.player.disconnected_at
                     && self.clock - at >= TIMEOUT_NO_CONNECTION

@@ -334,3 +334,153 @@ pub fn spec_energy(active: &ActivePlayer) -> i32 {
         .expect("cache is missing the \"sa_energy\" varp");
     active.player.vars.get(varp.id).as_int()
 }
+
+// -- Combat-timing observability (Task 1) -----------------------------------
+
+/// Player varp holding the tick at which the next attack becomes allowed.
+/// Content (`skill_combat/scripts/pvp/pvp_melee.rs2`) sets
+/// `%action_delay = add(map_clock, oc_param($rhand, attackrate))` after each
+/// swing, and refuses to attack while `%action_delay > map_clock`. So the
+/// ticks-remaining is `max(0, action_delay - clock)`.
+pub const VARP_ACTION_DELAY: &str = "action_delay";
+
+/// Player varp holding the tick at which eating becomes allowed again.
+/// Content (`player/scripts/consumption/consume.rs2`) sets
+/// `%eat_delay = calc(map_clock + $eat_delay)` and blocks while
+/// `%eat_delay >= map_clock`.
+pub const VARP_EAT_DELAY: &str = "eat_delay";
+
+fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
+    let varp = crate::cache()
+        .varps
+        .get_by_debugname(name)
+        .unwrap_or_else(|| panic!("cache is missing the {name:?} varp"));
+    active.player.vars.get(varp.id).as_int()
+}
+
+/// Ticks until `active` may attack again (0 = ready now). See
+/// [`VARP_ACTION_DELAY`]. This is THE combat-timing signal -- an agent that
+/// cannot see it can only learn a statistical prior over swing timing.
+pub fn attack_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
+    let until = varp_int(active, VARP_ACTION_DELAY);
+    (until - clock as i32).max(0) as u32
+}
+
+/// Ticks until `active` may eat again (0 = ready now). See [`VARP_EAT_DELAY`].
+pub fn eat_cooldown(active: &ActivePlayer, clock: u32) -> u32 {
+    let until = varp_int(active, VARP_EAT_DELAY);
+    (until - clock as i32).max(0) as u32
+}
+
+// -- Opponent observations (Task 2) ------------------------------------------
+
+/// Normalized weapon-category code for whatever `active` is wielding, in
+/// `[0.0, 1.0]` (0.0 = unarmed / unknown). Client-visible: a real player sees
+/// the opponent's weapon. The obj's `category` (e.g. `weapon_slash` for
+/// `rune_scimitar`, `weapon_stab` for `dragon_dagger` -- confirmed against
+/// `content/274/scripts/skill_combat/configs/melee/*.obj`) is a
+/// content-declared param; we map the category id into a bounded float
+/// rather than exposing a raw id, so the network sees a stable small-range
+/// value.
+///
+/// Reads specifically the `WearPos::RightHand` slot of the "worn" inv, NOT
+/// "the first worn slot with any category": armour also carries a
+/// `category` (`rune_full_helm` -> `armour_helmet`, `rune_platebody` ->
+/// `armour_body`, etc. -- same config files), so scanning worn slots in
+/// order for the first one with *any* category would report whichever
+/// armour piece happens to be worn before the weapon slot instead of the
+/// weapon itself.
+///
+/// Normalizes by `cache.categories.count()`, NOT a hardcoded scale: category
+/// ids run well past 64 in the 274 cache (`rune_scimitar` -> 197,
+/// `dragon_dagger` -> 221, out of 297 total categories), so a fixed
+/// `/ 64.0` clamped every armed reading to a constant `1.0` -- a dead
+/// feature. In mirror melee both sides start with identical gear, so this
+/// value's only signal is "the opponent just swapped weapons" (e.g. to a
+/// dragon dagger for a spec); a constant can't carry that. Dividing by the
+/// real category count keeps every valid id (which is always `< count`, so
+/// a valid weapon's category never clamps) apart.
+pub fn weapon_class(active: &ActivePlayer) -> f32 {
+    let cache = crate::cache();
+    let Some(worn_inv) = cache.invs.get_by_debugname("worn").map(|i| i.id) else { return 0.0 };
+    let Some(inv) = active.player.invs.get(&worn_inv) else { return 0.0 };
+    let rhand = rs_pack::types::WearPos::RightHand as usize;
+    let Some(Some(item)) = inv.slots.get(rhand) else { return 0.0 };
+    let Some(obj) = cache.objs.get_by_id(item.obj) else { return 0.0 };
+    let Some(category) = obj.category else { return 0.0 };
+    let scale = cache.categories.count().max(1) as f32;
+    ((category as f32) / scale).clamp(0.0, 1.0)
+}
+
+// -- Derived observations (Task 3) -------------------------------------------
+
+/// Player varp holding our current max hit (`%com_maxhit`), recomputed by the
+/// combat scripts from stats + gear.
+pub const VARP_COM_MAXHIT: &str = "com_maxhit";
+
+/// Our current max hit. Self state -- always fully visible to us.
+pub fn com_maxhit(active: &ActivePlayer) -> i32 {
+    varp_int(active, VARP_COM_MAXHIT)
+}
+
+/// Count of edible items in the backpack. Self state.
+pub fn food_count(active: &ActivePlayer) -> u32 {
+    let cache = crate::cache();
+    let Some(inv_id) = cache.invs.get_by_debugname("inv").map(|i| i.id) else { return 0 };
+    let Some(inv) = active.player.invs.get(&inv_id) else { return 0 };
+    inv.slots
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .filter(|item| {
+            cache
+                .objs
+                .get_by_id(item.obj)
+                .and_then(|o| o.iop.as_ref())
+                .is_some_and(|iop| iop.iter().any(|e| e.as_deref() == Some("Eat")))
+        })
+        .count() as u32
+}
+
+/// Soft KO probability for a DDS special attack fired NOW, in `[0,1]`.
+///
+/// FAITHFUL BY CONSTRUCTION: the only opponent inputs are `opp_hp_bucket` (the
+/// COARSE client HP bar, never exact HP) and `opp_prays_melee` (the overhead
+/// icon). This mirrors what a human PKer does -- eyeball the bar and decide.
+///
+/// Content mechanics (rev 274, verified):
+/// - DDS spec = TWO hits, each max `scale(115,100,%com_maxhit)` => x1.15.
+/// - Protect-from-melee => `scale(6,10,maxhit)` => x0.6.
+///
+/// The ramp is nh-trainer's shape: 0 well above the spec's reach, 1 well below
+/// it, linear across a margin band in between (the bucket is coarse, so a hard
+/// threshold would be false precision).
+pub fn spec_ko_chance(
+    me: &ActivePlayer,
+    opp_hp_bucket: f32,
+    opp_prays_melee: bool,
+    opp_max_hp: f32,
+) -> f32 {
+    let per_hit = (com_maxhit(me) as f32) * 1.15;
+    let mut spec_max = per_hit * 2.0; // DDS lands twice
+    if opp_prays_melee {
+        spec_max *= 0.6;
+    }
+    if spec_max <= 0.0 {
+        return 0.0;
+    }
+    // Estimate opponent HP from the COARSE bucket only.
+    let buckets = crate::observe::OPP_HP_BUCKETS as f32;
+    let hp_est = (opp_hp_bucket / buckets).clamp(0.0, 1.0) * opp_max_hp.max(1.0);
+
+    // Linear ramp across +/- margin around the spec's max reach.
+    let margin = (spec_max * 0.35).max(1.0);
+    let lower = (spec_max - margin).max(1.0);
+    let upper = spec_max + margin;
+    if hp_est <= lower {
+        1.0
+    } else if hp_est >= upper {
+        0.0
+    } else {
+        ((upper - hp_est) / (upper - lower)).clamp(0.0, 1.0)
+    }
+}

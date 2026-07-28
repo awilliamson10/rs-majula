@@ -22,21 +22,33 @@ struct BatchEnv {
 
 #[pymethods]
 impl BatchEnv {
+    /// `reward_w` is INERT: it is retained for API compatibility (Python
+    /// callers still pass it positionally) but nothing reads it in the reward
+    /// path -- the shaped reward comes from `damage_coeff` / `win_bonus` /
+    /// `death_penalty` / `timeout_penalty`. See `BatchConfig::reward_w`.
     #[new]
+    #[pyo3(signature = (scenario_path, num_duels, base_seed, spot_stride, reward_w,
+                        damage_coeff=0.005, win_bonus=1.0, death_penalty=0.1, timeout_penalty=0.4))]
     fn new(
         scenario_path: String,
         num_duels: usize,
         base_seed: u64,
         spot_stride: i32,
         reward_w: f32,
+        damage_coeff: f32,
+        win_bonus: f32,
+        death_penalty: f32,
+        timeout_penalty: f32,
     ) -> Self {
         BatchEnv {
             inner: CoreBatchEnv::new(BatchConfig {
-                scenario_path,
-                num_duels,
-                base_seed,
-                spot_stride,
-                reward_w,
+                scenario_path, num_duels, base_seed, spot_stride, reward_w,
+                damage_coeff, win_bonus, death_penalty, timeout_penalty,
+                // Engagement-range randomization: the plan's defaults, not yet
+                // a Python-side knob (nothing in B.2a-1 sweeps them). Add a
+                // `#[pyo3(signature = ...)]` arg pair here if a later task
+                // needs to tune the opening range from the trainer.
+                min_sep: 1, max_sep: 12,
             }),
         }
     }
@@ -53,6 +65,10 @@ impl BatchEnv {
     fn act_stride(&self) -> usize {
         CoreBatchEnv::ACT_STRIDE
     }
+    #[getter]
+    fn num_duels(&self) -> usize {
+        self.inner.num_duels()
+    }
 
     /// Returns the current observation buffer as `(num_agents, OBS_STRIDE)`.
     fn reset<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
@@ -65,7 +81,10 @@ impl BatchEnv {
     }
 
     /// Applies `actions` `(num_agents, ACT_STRIDE)` i32, advances one tick,
-    /// and returns `(obs (N,OBS_STRIDE) f32, rewards (N,) f32, dones (N,) f32)`.
+    /// and returns `(obs (N,OBS_STRIDE) f32, rewards (N,) f32, dones (N,) f32,
+    /// scores (num_duels,) f32)`. `scores[i] >= 0.0` means duel `i` finished
+    /// an episode this step; the value is the REWARD-INDEPENDENT sweep/eval
+    /// score for that episode's side A. `-1.0` means no episode finished.
     fn step<'py>(
         &mut self,
         py: Python<'py>,
@@ -74,19 +93,23 @@ impl BatchEnv {
         Bound<'py, PyArray2<f32>>,
         Bound<'py, PyArray1<f32>>,
         Bound<'py, PyArray1<f32>>,
+        Bound<'py, PyArray1<f32>>,
     ) {
         let n = self.inner.num_agents();
+        let d = self.inner.num_duels();
         let a = actions.as_slice().expect("actions must be C-contiguous");
         let mut obs = vec![0.0f32; n * CoreBatchEnv::OBS_STRIDE];
         let mut rew = vec![0.0f32; n];
         let mut done = vec![0.0f32; n];
-        self.inner.step(a, &mut obs, &mut rew, &mut done);
+        let mut scores = vec![-1.0f32; d];
+        self.inner.step(a, &mut obs, &mut rew, &mut done, &mut scores);
         (
             obs.into_pyarray(py)
                 .reshape([n, CoreBatchEnv::OBS_STRIDE])
                 .unwrap(),
             rew.into_pyarray(py),
             done.into_pyarray(py),
+            scores.into_pyarray(py),
         )
     }
 }

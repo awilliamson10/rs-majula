@@ -95,6 +95,11 @@ pub struct EnvHarness {
     /// reset in case a future caller wants HP-delta bookkeeping for
     /// something other than reward (e.g. logging/diagnostics).
     prev_hp: std::collections::HashMap<u16, u16>,
+    /// Previous-tick coordinate per pid, used to derive the client-visible
+    /// "is moving" observation (a real player sees the opponent step).
+    /// Updated by [`Self::note_positions`], which the caller runs once per
+    /// tick.
+    prev_coord: std::collections::HashMap<u16, (u16, u16)>,
     /// Per-episode tick counter, incremented once per [`Self::cycle`] call
     /// and reset to 0 by [`Self::load_scenario`] (and [`Self::reset_duel`]).
     /// Used by [`Self::is_terminal`] to resolve `Terminal::Timeout(n)` /
@@ -106,6 +111,11 @@ pub struct EnvHarness {
     /// `load_scenario`/`reset_duel`: draining is the caller's job, same as
     /// `player.hits`.
     recorded: Vec<crate::action::ResolvedAction>,
+    /// Last damage each pid DEALT and TOOK, in HP. Updated by
+    /// `step_reward_pair` (which is the one place that reads the `hits`
+    /// accumulator), so these survive the drain and remain observable.
+    last_dealt: std::collections::HashMap<u16, u32>,
+    last_taken: std::collections::HashMap<u16, u32>,
 }
 
 impl EnvHarness {
@@ -173,8 +183,11 @@ impl EnvHarness {
             _new_player_tx: new_player_tx,
             _reload_tx: reload_tx,
             prev_hp: std::collections::HashMap::new(),
+            prev_coord: std::collections::HashMap::new(),
             episode_tick: 0,
             recorded: Vec::new(),
+            last_dealt: std::collections::HashMap::new(),
+            last_taken: std::collections::HashMap::new(),
         }
     }
 
@@ -183,6 +196,58 @@ impl EnvHarness {
     pub fn cycle(&mut self) {
         self.engine.cycle();
         self.episode_tick = self.episode_tick.saturating_add(1);
+    }
+
+    /// Records every live player's current tile as "last tick's" position,
+    /// for [`Self::observe`]'s is-moving field ([`crate::observe::IDX_OPP_ISMOVING`]).
+    /// Call ONCE per tick, AFTER both [`Self::cycle`] AND the tick's
+    /// [`Self::observe`] call(s) -- NOT before `observe`, or `observe` would
+    /// compare the just-cycled position against itself (always reading
+    /// "not moving"). The snapshot taken here is consumed by the *next*
+    /// tick's `observe`, which diffs it against that tick's post-cycle
+    /// position to tell whether the entity moved during the tick just
+    /// completed.
+    pub fn note_positions(&mut self) {
+        let pids: Vec<u16> = (0..rs_engine::MAX_PLAYERS as u16)
+            .filter(|&p| self.engine.get_player(p).is_some())
+            .collect();
+        for p in pids {
+            if let Some(a) = self.engine.get_player(p) {
+                let c = a.player.pathing.coord;
+                self.prev_coord.insert(p, (c.x(), c.z()));
+            }
+        }
+    }
+
+    /// Drops a pid's per-tick tracking state. Call when a player is removed --
+    /// the engine REUSES freed pids, so a stale entry would otherwise be
+    /// inherited by whoever occupies that pid next.
+    ///
+    /// EVERY per-pid map on this struct must be dropped here. `last_dealt` /
+    /// `last_taken` are observed directly ([`crate::observe::IDX_LAST_DEALT`] /
+    /// [`crate::observe::IDX_LAST_TAKEN`], via `unwrap_or(0)` in
+    /// [`Self::observe`]), so a leftover entry hands the NEXT occupant of this
+    /// pid the previous occupant's last-hit magnitudes -- 2 of 20 obs floats
+    /// silently wrong for one tick per respawn. That is invisible to short
+    /// tests (the pid allocator is forward-only and only recycles after its
+    /// cursor wraps ~2046 allocations) but is the steady state of a long
+    /// training run. See `batch.rs`'s
+    /// `stale_last_hit_magnitudes_are_cleared_when_a_pid_is_reused`.
+    pub fn forget_player(&mut self, pid: u16) {
+        self.prev_coord.remove(&pid);
+        self.prev_hp.remove(&pid);
+        self.last_dealt.remove(&pid);
+        self.last_taken.remove(&pid);
+    }
+
+    /// Seeds a single pid's "previous" tile with its CURRENT tile, so the next
+    /// `observe()` sees prev == current and correctly reports "not moving".
+    /// Used right after a respawn: a freshly spawned player has not moved.
+    pub fn note_position(&mut self, pid: u16) {
+        if let Some(a) = self.engine.get_player(pid) {
+            let c = a.player.pathing.coord;
+            self.prev_coord.insert(pid, (c.x(), c.z()));
+        }
     }
 
     pub fn clock(&self) -> u64 {
@@ -401,6 +466,15 @@ impl EnvHarness {
         std::mem::take(&mut self.recorded)
     }
 
+    /// Current tile of `pid` as `(x, z)`; `(0, 0)` if absent. Same field path
+    /// [`Self::note_positions`] reads.
+    pub fn player_coord(&self, pid: u16) -> (u16, u16) {
+        self.engine
+            .get_player(pid)
+            .map(|p| (p.player.pathing.coord.x(), p.player.pathing.coord.z()))
+            .unwrap_or((0, 0))
+    }
+
     pub fn player_hp(&self, pid: u16) -> u16 {
         self.engine
             .get_player(pid)
@@ -432,10 +506,11 @@ impl EnvHarness {
     /// appear in the vector -- this is the mission-critical faithfulness
     /// property (the agent must see only what a real 2004 client shows).
     ///
-    /// A handful of fields aren't readily sourced yet in M1
-    /// (is_attacking, opp weapon class, self attack/eat timers, opp
-    /// is_moving) and are left at `0.0` -- see the `TODO M1` comments on
-    /// their index constants in [`crate::observe`].
+    /// Every index in [`crate::observe`]'s map is filled: B.2a-1 sourced the
+    /// last placeholders -- self attack/eat cooldowns from their varps (Task
+    /// 1), opponent is-attacking / weapon class / is-moving (Task 2), and the
+    /// derived spec-KO chance, last-hit magnitudes and food count (Task 3).
+    /// Nothing is left pinned at a constant `0.0`.
     ///
     /// If either player is absent (e.g. died/despawned), the corresponding
     /// block is left all-zero rather than panicking, so a caller mid-episode
@@ -452,6 +527,14 @@ impl EnvHarness {
             v[ob::IDX_SELF_RUN] = m.player.runenergy as f32 / 10000.0;
             v[ob::IDX_SELF_OVERHEAD] =
                 (m.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0) as u8 as f32;
+            let clock = self.engine.clock;
+            v[ob::IDX_SELF_ATKCD] = crate::action::attack_cooldown(m, clock) as f32;
+            v[ob::IDX_SELF_EATDELAY] = crate::action::eat_cooldown(m, clock) as f32;
+            v[ob::IDX_LAST_DEALT] =
+                self.last_dealt.get(&pid).copied().unwrap_or(0) as f32 / 40.0;
+            v[ob::IDX_LAST_TAKEN] =
+                self.last_taken.get(&pid).copied().unwrap_or(0) as f32 / 40.0;
+            v[ob::IDX_FOOD_REMAINING] = crate::action::food_count(m) as f32 / 28.0;
         }
         if let (Some(m), Some(o)) = (me, ot) {
             let (mc, oc) = (m.player.pathing.coord, o.player.pathing.coord);
@@ -469,6 +552,15 @@ impl EnvHarness {
             let maxhp = (o.player.stats.base_levels[3] as f32).max(1.0);
             let frac = (hp / maxhp).clamp(0.0, 1.0);
             v[ob::IDX_OPP_HP_BUCKET] = (frac * ob::OPP_HP_BUCKETS as f32).round();
+            let opp_max_hp = o.player.stats.base_levels[3] as f32;
+            let opp_prays_melee =
+                o.player.headicons & crate::action::HEADICON_PROTECT_MELEE != 0;
+            v[ob::IDX_SPEC_KO_CHANCE] = crate::action::spec_ko_chance(
+                m,
+                v[ob::IDX_OPP_HP_BUCKET],
+                opp_prays_melee,
+                opp_max_hp,
+            );
             // Sourced from `last_hit_tick` (a plain overwrite), NOT
             // `hits` (an accumulator `step_reward` drains) -- see
             // `Player::last_hit_tick`'s doc comment. In the normal step
@@ -482,6 +574,17 @@ impl EnvHarness {
             let cur_clock = self.engine.clock;
             v[ob::IDX_OPP_RECENT_HIT] =
                 (o.player.last_hit_tick == Some(cur_clock.saturating_sub(1))) as u8 as f32;
+            // Opponent is-attacking: they have an attack cooldown pending,
+            // i.e. they swung recently. Client-visible (you see the animation).
+            v[ob::IDX_OPP_ISATTACKING] =
+                (crate::action::attack_cooldown(o, self.engine.clock) > 0) as u8 as f32;
+            // Opponent weapon class: client-visible (you see their weapon).
+            v[ob::IDX_OPP_WEAPON] = crate::action::weapon_class(o);
+            // Opponent is-moving: their tile changed during the completed tick.
+            v[ob::IDX_OPP_ISMOVING] = match self.prev_coord.get(&opp) {
+                Some(&(px, pz)) => ((oc.x(), oc.z()) != (px, pz)) as u8 as f32,
+                None => 0.0,
+            };
         }
         (v, self.legal_mask(pid))
     }
@@ -568,6 +671,11 @@ impl EnvHarness {
         let b_hits: u32 = self.engine.get_player(b)
             .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
             .unwrap_or(0);
+        // `a_hits` is damage A TOOK; `b_hits` is damage B took (= A dealt).
+        self.last_taken.insert(a, a_hits);
+        self.last_dealt.insert(a, b_hits);
+        self.last_taken.insert(b, b_hits);
+        self.last_dealt.insert(b, a_hits);
         if let Some(p) = self.engine.get_player_mut(a) { p.player.hits.clear(); }
         if let Some(p) = self.engine.get_player_mut(b) { p.player.hits.clear(); }
 
@@ -582,6 +690,55 @@ impl EnvHarness {
         if a_dead { rb += 1.0; }
         if b_dead { rb -= 1.0; }
         (ra, rb)
+    }
+
+    /// Snapshot-and-drain BOTH players' hit accumulators, returning the RAW
+    /// damage each one TOOK this step: `(a_took, b_took)`. This is the same
+    /// drain-both discipline as [`Self::step_reward_pair`] (read both sums
+    /// FIRST, then clear both), but it applies NO reward shaping -- the caller
+    /// owns the coefficients. `BatchEnv` uses this so the reward coefficients
+    /// can live in config and be swept.
+    ///
+    /// Also records last-dealt / last-taken magnitudes so the observation can
+    /// still see them after the drain.
+    pub fn hits_pair(&mut self, a: u16, b: u16) -> (u32, u32) {
+        let a_took: u32 = self.engine.get_player(a)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        let b_took: u32 = self.engine.get_player(b)
+            .map(|p| p.player.hits.iter().map(|h| h.amount as u32).sum())
+            .unwrap_or(0);
+        if let Some(p) = self.engine.get_player_mut(a) { p.player.hits.clear(); }
+        if let Some(p) = self.engine.get_player_mut(b) { p.player.hits.clear(); }
+
+        self.last_taken.insert(a, a_took);
+        self.last_dealt.insert(a, b_took);
+        self.last_taken.insert(b, b_took);
+        self.last_dealt.insert(b, a_took);
+
+        (a_took, b_took)
+    }
+
+    /// Test-support: toggle a player's auto-retaliate. Auto-retaliate is gated by
+    /// the `option_nodef` varp (== `^player_auto_retaliate_on`, 0, its default), so
+    /// a player swings back the moment they're attacked. Setting it to 1 makes the
+    /// player tank without retaliating, letting a test isolate ONE side's damage.
+    pub fn set_auto_retaliate(&mut self, pid: u16, on: bool) {
+        let (cache, _) = shared_cache();
+        let varp = cache.varps.get_by_debugname("option_nodef").unwrap_or_else(|| {
+            panic!("set_auto_retaliate: unresolved varp debugname \"option_nodef\"")
+        });
+        let val = if on { 0 } else { 1 };
+        let (id, value, transmit) = (varp.id, VarValue::from_int(varp.var_type, val), varp.transmit);
+
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let Some(active) = engine.get_player_mut(pid) else {
+                return;
+            };
+            active.set_varp(id, value.clone(), transmit);
+        });
     }
 
     /// Resolves `term` against `me`/`opp`'s current liveness and
@@ -614,9 +771,12 @@ impl EnvHarness {
         }
     }
 
-    /// Despawns every currently-connected player, clears the `prev_hp`
-    /// reward bookkeeping (so the next `step_reward` call doesn't report a
-    /// phantom delta against a stale pre-reset HP value), and spawns a
+    /// Despawns every currently-connected player, clears ALL per-pid tracking
+    /// state -- `prev_hp` (so the next `step_reward` call doesn't report a
+    /// phantom delta against a stale pre-reset HP value), `prev_coord`, and
+    /// the `last_dealt`/`last_taken` magnitudes [`Self::observe`] reads (see
+    /// [`Self::forget_player`] for why a leftover entry is a wrong-obs bug) --
+    /// and spawns a
     /// fresh, XP-consistently-buffed attacker/victim pair adjacent to each
     /// other in the Scorpion Valley deep-wilderness zone. Returns their pids.
     pub fn reset_duel(&mut self) -> (u16, u16) {
@@ -627,6 +787,9 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.prev_coord.clear();
+        self.last_dealt.clear();
+        self.last_taken.clear();
         self.episode_tick = 0;
         let a = self.engine.spawn_player("pker", CoordGrid::new(3200, 0, 3912));
         let b = self.engine.spawn_player("victim", CoordGrid::new(3201, 0, 3912));
@@ -677,7 +840,23 @@ impl EnvHarness {
             let _ = self.engine.remove_player(p);
         }
         self.prev_hp.clear();
+        self.prev_coord.clear();
+        self.last_dealt.clear();
+        self.last_taken.clear();
         self.episode_tick = 0;
+        // ★ Reset the ABSOLUTE engine clock every episode. Combat runs through
+        // the RuneScript VM, whose fight stream couples to the absolute clock
+        // (the exact class `check_afk`'s arena gate was added for). Without this
+        // reset a long-lived (reused) training harness runs its Nth episode at a
+        // high absolute clock and produces a DIFFERENT fight than a fresh-boot
+        // replay of the same (seed, actions) -- silently, and only past ~100
+        // ticks (which the old force-logout hid by ending every episode early).
+        // Resetting to 0 makes every episode -- reused or fresh -- run over the
+        // identical clock range, so absolute-clock coupling is structurally
+        // impossible in the arena. All players are despawned above and respawned
+        // below, so no stale `clock - x` (e.g. cooldown/last_response) survives
+        // the reset. Guarded by `gate_determinism::reused_harness_*`.
+        self.engine.clock = 0;
 
         // Crisp deterministic fight stream: reseed, THEN draw jitter, THEN
         // spawn. Train and replay run this identical sequence, so the whole
@@ -891,6 +1070,53 @@ impl EnvHarness {
                 active.set_varp(*id, value.clone(), *transmit);
             }
             active.recalc_combat_and_appearance();
+        });
+
+        // `recalc_combat_and_appearance` (above) only recomputes combat
+        // LEVEL/appearance -- it does NOT touch `%com_maxhit` and friends.
+        // Content only recalculates those via the `[proc,player_combat_stat]`
+        // script, normally triggered by an equip/appearance change
+        // (`player/scripts/appearance.rs2` -> `[proc,update_all]` ->
+        // `~player_combat_stat;`) or a prayer toggle
+        // (`skill_prayer/scripts/prayer.rs2`). Neither fires from this
+        // direct-field-mutation loadout path, so `%com_maxhit` would
+        // otherwise sit at its varp default forever -- silently dead-ending
+        // `action::com_maxhit`/`spec_ko_chance`. Run the same proc a real
+        // equip event would, exactly like `open_standard_interfaces` runs
+        // `[proc,initalltabs]`.
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            if let Some(uid) = engine.get_player(pid).map(|p| p.player.uid) {
+                let _ = engine.run_script_by_name(
+                    "[proc,player_combat_stat]",
+                    Some(rs_vm::subject::ScriptSubject::Player(uid)),
+                    None,
+                    Some(true),
+                    None,
+                    None,
+                );
+            }
+        });
+    }
+
+    /// Test-support: clears `pid`'s right-hand (weapon) slot, leaving all other
+    /// worn equipment in place. Used to prove `weapon_class` reads the weapon
+    /// slot rather than scanning armour.
+    pub fn unequip_rhand(&mut self, pid: u16) {
+        let (cache, _) = shared_cache();
+        let worn_id = cache.invs.get_by_debugname("worn").map(|i| i.id).unwrap_or(94);
+        let rhand = rs_pack::types::WearPos::RightHand as u16;
+        let engine_ptr = &mut self.engine as *mut Engine;
+        with_engine(&mut self.engine, || {
+            let engine = unsafe { &mut *engine_ptr };
+            let Some(active) = engine.get_player_mut(pid) else {
+                return;
+            };
+            if let Some(worn_inv) = active.player.invs.get_mut(&worn_id) {
+                worn_inv.remove(rhand, u32::MAX);
+            }
+            active.buildappearance(worn_id);
         });
     }
 }

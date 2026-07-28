@@ -92,35 +92,37 @@ fn fight_is_bit_identical_across_runs() {
     assert!(h1.len() > 10, "the scripted fight actually ran");
 }
 
-/// Architecture-critical regression test: episode RNG must not depend on the
-/// engine's ABSOLUTE clock. `check_afk` (`rs-engine/src/phases/input.rs`)
-/// used to draw from `engine.random` -- the SAME RNG combat uses -- gated on
-/// `clock.is_multiple_of(500)`. `load_scenario` reseeds `engine.random` but
-/// never resets `engine.clock`, so a REUSED harness's Nth episode starts at
-/// a high absolute clock and crosses that 500-tick boundary at a different
-/// episode-relative tick than a fresh boot (clock 0) would, consuming a
-/// different number of RNG draws and silently diverging an otherwise
-/// identical (seed, actions) replay.
+/// Architecture-critical regression test: an episode's fight must not depend
+/// on the engine's ABSOLUTE clock. Combat runs through the RuneScript VM,
+/// whose stream couples to the absolute clock (the same class `check_afk`'s
+/// arena gate addressed). `load_scenario` reseeds `engine.random` every call,
+/// so the only thing that could differ between a fresh boot and a reused
+/// harness is the absolute clock -- which is why `load_scenario` now RESETS
+/// `engine.clock` to 0 each episode (see `EnvHarness::load_scenario`). This
+/// makes a reused harness's Nth episode run over the identical clock range as
+/// a fresh boot, so the coupling is structurally impossible.
 ///
 /// This runs TWO sequential scripted episodes on ONE reused
-/// `boot_arena_seeded` harness (same scenario, same scripted actions each
-/// time, so the same seed drives both since `load_scenario` reseeds
-/// `engine.random` every call) and asserts the two episodes' HP, position,
-/// and full resolved-action trajectories are bit-identical. If this ever
-/// fails, do NOT weaken the assertion -- it means some other absolute-clock
-/// -> RNG (or otherwise non-episode-relative state) coupling exists and
-/// needs to be found and gated the same way `check_afk` was.
+/// `boot_arena_seeded` harness and asserts their HP, position, and full
+/// resolved-action trajectories are bit-identical. It is NON-vacuous: the
+/// `clock > 100` assertion proves the harness really was at a high absolute
+/// clock going into the second episode, so the trajectory match can only hold
+/// because the per-episode clock reset neutralised it. If this ever fails, do
+/// NOT weaken the assertion -- it means the clock reset regressed, or some new
+/// non-episode-relative state coupling exists and must be found and reset/gated.
 #[test]
 fn reused_harness_episode_is_bit_identical_to_itself() {
     let sc = Scenario::load("scenarios/mirror_melee.ron").unwrap();
     let mut h = EnvHarness::boot_arena_seeded(sc.seed);
 
     let (h1, c1, l1) = run_on(&mut h, &sc);
-    // `h` is NOT re-booted here -- same harness, same underlying `Engine`,
-    // now sitting at whatever (high) absolute clock the first episode left
-    // it at. `load_scenario` (called again inside `run_on`) reseeds
-    // `engine.random` but -- prior to the arena-mode AFK gate -- left
-    // `engine.clock` untouched.
+    // `h` is NOT re-booted -- same harness/`Engine`, now sitting at the high
+    // absolute clock the first episode advanced it to. This is what makes the
+    // match below meaningful: without `load_scenario`'s clock reset the second
+    // episode would run at clock ~200-400 and diverge.
+    assert!(h.engine.clock > 100,
+        "reused harness must be at a high absolute clock (got {}) before the 2nd \
+         episode -- otherwise this test isn't exercising clock reuse", h.engine.clock);
     let (h2, c2, l2) = run_on(&mut h, &sc);
 
     assert_eq!(h1, h2, "HP trajectory must match across episodes on a reused harness");
@@ -142,6 +144,9 @@ fn reused_harness_episode_matches_fresh_boot() {
     // compare, so this harness is at a non-trivial absolute clock.
     let mut reused = EnvHarness::boot_arena_seeded(sc.seed);
     let _throwaway = run_on(&mut reused, &sc);
+    assert!(reused.engine.clock > 100,
+        "reused harness must be at a high absolute clock (got {}) before the compared \
+         episode -- otherwise this test isn't exercising clock reuse", reused.engine.clock);
     let (h_reused, c_reused, l_reused) = run_on(&mut reused, &sc);
 
     // Fresh boot: a brand-new harness at clock 0, same seed/scenario/actions.

@@ -4,6 +4,8 @@ fn cfg(m: usize) -> BatchConfig {
     BatchConfig {
         scenario_path: concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/mirror_melee.ron").into(),
         num_duels: m, base_seed: 1000, spot_stride: 32, reward_w: 1.0,
+        damage_coeff: 0.005, win_bonus: 1.0, death_penalty: 0.1, timeout_penalty: 0.4,
+        min_sep: 1, max_sep: 12,
     }
 }
 
@@ -19,8 +21,9 @@ fn run(env: &mut BatchEnv, ticks: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     for _ in 0..ticks {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
     }
     (obs, rew, done)
 }
@@ -57,7 +60,7 @@ fn determinism_across_processes() {
     // SEPARATE OS processes -- which also matches how training actually
     // runs (one process per parallel env). `batch_digest` runs exactly one
     // `BatchEnv` to completion and prints a digest of its whole
-    // (obs, reward, done) stream; this test spawns it three times and
+    // (obs, reward, done, score) stream; this test spawns it three times and
     // compares.
     let bin = env!("CARGO_BIN_EXE_batch_digest");
     let run_digest = |seed: u64, ticks: u32| -> String {
@@ -69,11 +72,13 @@ fn determinism_across_processes() {
         String::from_utf8(out.stdout).expect("batch_digest stdout not utf8")
     };
 
-    // 250 ticks: single-engine KOs land roughly every ~55 ticks under this
-    // loadout, so this window comfortably covers several respawns per
-    // duel -- long enough to exercise the respawn RNG-interleaving
-    // determinism guarantee. The done_count assertion below is the safety
-    // net if that assumption ever drifts.
+    // 250 ticks: a mutual melee under this loadout resolves by a real kill in
+    // roughly ~113 ticks (episodes used to end at ~101 on the arena
+    // force-logout, now gated off -- see `rs-engine/src/phases/logout.rs`), so
+    // this window covers a couple of respawns per duel -- long enough to
+    // exercise the respawn RNG-interleaving determinism guarantee. The
+    // done_count assertion below is the safety net if that assumption ever
+    // drifts.
     let run1 = run_digest(1000, 250); // same seed as run2
     let run2 = run_digest(1000, 250); // separate process, identical args
     let run3 = run_digest(7, 250);    // different seed
@@ -88,6 +93,17 @@ fn determinism_across_processes() {
         .parse()
         .expect("done_count not a valid integer");
     assert!(done_count > 0, "no terminal/respawn fired in 250 ticks -- test didn't cover the auto-reset path");
+
+    // Same safety net for the score stream the digest now folds in: without
+    // this, a digest that emitted only `-1.0` sentinels would still compare
+    // equal across processes and silently cover nothing.
+    let score_count: u64 = run1
+        .split_whitespace()
+        .find_map(|tok| tok.strip_prefix("score_count="))
+        .expect("batch_digest output missing score_count field")
+        .parse()
+        .expect("score_count not a valid integer");
+    assert!(score_count > 0, "no episode score was emitted in 250 ticks -- the digest doesn't actually cover the score stream");
 }
 
 #[test]
@@ -100,17 +116,21 @@ fn auto_reset_respawns_after_death() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
 
     let mut saw_done = false;
-    // Combat under this loadout kills in ~100 ticks, well inside the 600-tick
+    // Combat under this loadout kills in ~113 ticks, well inside the 600-tick
     // budget and the 400-tick timeout backstop, so multiple auto-resets fire.
+    // (Before the arena force-logout was gated off in
+    // `rs-engine/src/phases/logout.rs`, episodes instead ended at ~101 ticks
+    // on a spurious simultaneous logout; the budget covers both.)
     // Snapshot HP right at a reset boundary rather than at the arbitrary
     // final tick: 600 isn't a multiple of the (deterministic but
     // non-round) fight length, so by tick 600 a fresh fight is typically
     // already underway and HP is no longer full.
     let mut hp_at_reset = (0u16, 0u16);
     for _ in 0..600 {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
         if done[0] == 1.0 || done[1] == 1.0 {
             saw_done = true;
             hp_at_reset = (env.agent_hp(0), env.agent_hp(1));
@@ -134,8 +154,9 @@ fn many_respawns_do_not_exhaust_player_slots() {
     let mut obs = vec![0.0f32; na * BatchEnv::OBS_STRIDE];
     let mut rew = vec![0.0f32; na];
     let mut done = vec![0.0f32; na];
+    let mut scores = vec![-1.0f32; env.num_duels()];
     for _ in 0..3000 {
-        env.step(&acts, &mut obs, &mut rew, &mut done);
+        env.step(&acts, &mut obs, &mut rew, &mut done, &mut scores);
     }
     // Not asserting exactly 99: 3000 isn't guaranteed to land on a reset
     // boundary (see auto_reset_respawns_after_death), so the agent may be

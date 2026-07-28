@@ -17,9 +17,9 @@ def make(num_duels=2):
 def test_shapes_and_reset():
     env = make(2)
     assert env.num_agents == 4
-    assert env.obs_stride == 22 and env.act_stride == 6
+    assert env.obs_stride == 26 and env.act_stride == 6
     obs = env.reset()
-    assert obs.shape == (4, 22) and obs.dtype == np.float32
+    assert obs.shape == (4, 26) and obs.dtype == np.float32
     # self-HP column is 99 at spawn
     assert np.allclose(obs[:, 0], 99.0)
 
@@ -30,8 +30,10 @@ def test_step_antisymmetric_reward():
     acts = np.tile(np.array([0, 1, 0, 0, 0, 0], dtype=np.int32), (4, 1))
     saw = False
     for _ in range(20):
-        obs, rew, done = env.step(acts)
-        assert obs.shape == (4, 22) and rew.shape == (4,) and done.shape == (4,)
+        obs, rew, done, scores = env.step(acts)
+        assert obs.shape == (4, 26) and rew.shape == (4,) and done.shape == (4,)
+        assert scores.shape == (env.num_duels,)
+        assert all(s == -1.0 or 0.0 <= s <= 1.0 for s in scores)
         for i in range(2):
             assert abs(rew[2 * i] + rew[2 * i + 1]) < 1e-5
         if np.any(rew != 0):
