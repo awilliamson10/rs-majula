@@ -156,6 +156,20 @@ impl BatchEnv {
     /// Taking the RNG by `&mut` rather than `&mut self`: `new` builds its duels
     /// before a `BatchEnv` exists, so there is no `self` to borrow there.
     fn draw_offset(rng: &mut rs_util::random::JavaRandom, min_sep: i32, max_sep: i32) -> (i32, i32) {
+        // Both halves of this catch a MISCONFIGURATION that would otherwise
+        // fail far from its cause:
+        //   * `min_sep < 1` can draw `sep <= 0`, and `sep < 0` makes
+        //     `2 * sep + 1 <= 0`, which panics deep inside the engine RNG
+        //     (`next_int_bound` asserts `n > 0`). `sep == 0` would also spawn
+        //     side B on top of side A.
+        //   * an INVERTED band (e.g. 10..2) leaves `span == 0` via the
+        //     `.max(0)` below, silently pinning every duel to `min_sep` and
+        //     ignoring `max_sep` entirely -- a constant separation that looks
+        //     healthy in every metric.
+        debug_assert!(
+            min_sep >= 1 && max_sep >= min_sep,
+            "draw_offset needs 1 <= min_sep <= max_sep, got {min_sep}..{max_sep}"
+        );
         let span = (max_sep - min_sep).max(0);
         let sep = min_sep + rng.next_int_bound(span + 1);
         // Pick a point on the square ring of Chebyshev radius `sep`: one arm
