@@ -189,10 +189,11 @@ fn tapped_spawn_yields_a_decodable_login_burst_and_steady_state_stream() {
 ///
 /// Self-sufficient: this reads the tapes back off disk and checks (a) the raw
 /// files are byte-identical, (b) neither is vacuously empty, so a silently
-/// detached tap producing two empty-but-equal tapes cannot pass, and (c) a
-/// different seed produces a different tape -- which also proves `seed`
-/// actually reaches the engine (`EnvHarness::boot_seeded`), not just the
-/// tape's own recorded `seed` field.
+/// detached tap producing two empty-but-equal tapes cannot pass, and (c) the
+/// PARSED TICK PAYLOADS (not the raw files -- see the comment inline) differ
+/// under a different seed, which is what actually proves `seed`
+/// (`EnvHarness::boot_seeded`) reaches `Engine::random` rather than just
+/// landing in the tape's own header field.
 #[test]
 #[ignore = "spawns two full-world subprocesses; run on the desktop"]
 fn two_processes_at_the_same_seed_record_identical_tapes() {
@@ -220,8 +221,24 @@ fn two_processes_at_the_same_seed_record_identical_tapes() {
     assert_eq!(empty, 0, "{empty} ticks captured zero bytes -- the cross-process gate is vacuous");
 
     // Non-vacuity across seeds: a different seed must produce a different
-    // tape end to end (engine RNG, not just the recorded `seed` field), or
-    // the equality above proves nothing.
+    // PACKET STREAM. Comparing whole files (an earlier version of this test
+    // did that) is tautological -- `TapeWriter::finish` writes `seed` into
+    // the header at offset 8..16, so seeds 777 vs 888 make the files differ
+    // by construction whether or not the engine's RNG is touched at all.
+    // Comparing only the parsed tick payloads (which exclude the seed field)
+    // actually exercises whether `seed` reaches `Engine::random`. Empirically
+    // checked (not assumed): even over this idle 30-tick tutorial-spawn
+    // window, 27 of 30 ticks differ in payload between seed 777 and seed
+    // 888, including differing packet lengths (not just cipher noise on
+    // identical-length data) -- static-NPC wander behaviour near the spawn
+    // draws from the same seeded `JavaRandom`, so it's a genuine,
+    // observable engine effect, not something that needed a longer window.
     let bytes_c = run(&dir.join("tape_c.bin"), "888");
-    assert_ne!(bytes_a, bytes_c, "different seeds produced identical tapes -- the seed is inert");
+    let tc = TapeReader::parse(&bytes_c).expect("parses");
+    let pa: Vec<&Vec<u8>> = ta.ticks.iter().map(|t| &t.bytes).collect();
+    let pc: Vec<&Vec<u8>> = tc.ticks.iter().map(|t| &t.bytes).collect();
+    assert_ne!(
+        pa, pc,
+        "identical packet streams under different seeds -- the seed does not reach the engine RNG"
+    );
 }
