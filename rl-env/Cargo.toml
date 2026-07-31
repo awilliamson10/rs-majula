@@ -17,6 +17,9 @@ once_cell   = "1"
 serde       = { version = "1", features = ["derive"] }
 ron         = "0.8"
 
+# SPIKE (cache_dump bin) only.
+anyhow      = "1"
+
 [dev-dependencies]
 # SPIKE S1 only: mirror the bot handle's ISAAC streams from the test side.
 rs-crypto   = { workspace = true }
