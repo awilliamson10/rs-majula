@@ -82,6 +82,16 @@ impl TapeReader {
 }
 
 /// FNV-1a over the whole stream. Used by the cross-process determinism gate.
+///
+/// Hashes `ticks.len()` and each tick's `bytes.len()` in addition to the tick
+/// number and payload bytes -- without those length fields, the byte stream
+/// this feeds the hasher is just the tick-number bytes and payload bytes
+/// concatenated with no delimiter, so a single tick numbered 0 with payload
+/// `[1, 0, 0, 0]` serializes to the identical 8-byte stream (`[0,0,0,0,
+/// 1,0,0,0]`) as two empty ticks numbered 0 and 1 -- a real, checked
+/// collision (see `tests/tape_record.rs`'s
+/// `digest_is_sensitive_to_tick_structure_not_just_concatenated_bytes`), not
+/// a hypothetical one.
 pub fn digest(t: &Tape) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |b: u8| {
@@ -91,8 +101,14 @@ pub fn digest(t: &Tape) -> u64 {
     for b in t.seed.to_le_bytes() {
         eat(b);
     }
+    for b in (t.ticks.len() as u32).to_le_bytes() {
+        eat(b);
+    }
     for tick in &t.ticks {
         for b in tick.tick.to_le_bytes() {
+            eat(b);
+        }
+        for b in (tick.bytes.len() as u32).to_le_bytes() {
             eat(b);
         }
         for &b in &tick.bytes {
@@ -103,7 +119,6 @@ pub fn digest(t: &Tape) -> u64 {
 }
 
 use crate::EnvHarness;
-use rs_crypto::isaac::Isaac;
 use rs_grid::CoordGrid;
 
 /// Tutorial Island, level 0. Bounds are x 3053..=3156, z 3056..=3136
@@ -112,26 +127,34 @@ use rs_grid::CoordGrid;
 pub const TUTORIAL_SPAWN: (u16, u8, u16) = (3094, 0, 3107);
 
 /// Boots the FULL world (the agent needs banks, trees and NPCs -- arena mode
-/// is wrong here), spawns one fresh player on Tutorial Island, and records
-/// `ticks` ticks of its outbound stream.
+/// is wrong here), spawns one fresh player on Tutorial Island via
+/// [`rs_engine::Engine::spawn_player_tapped`], and records `ticks` ticks of
+/// its outbound stream.
 ///
 /// Returns `(tape_bytes, tutorial_varp_at_spawn)`.
 ///
-/// ★ The outbound ISAAC stream is already advanced by `accept_login` before a
-/// tap can be installed, so both the encoder and any mirror are re-seated to a
-/// fresh zero-seeded stream. Without this every opcode decrypts to plausible
-/// garbage (spec §10).
+/// # Why `spawn_player_tapped` and not `spawn_player` + a post-hoc tap
+///
+/// `spawn_player`'s fabricated `ClientIO` -- and the receiver for everything
+/// `accept_login`'s `on_login()` sends (`RebuildNormal`, `IfClose`,
+/// `UpdatePid`, `ResetClientVarCache`, `SyncVarps`, stats, run energy,
+/// `ResetAnims`) -- is dropped the moment `spawn_player` returns. A tap
+/// installed afterward (the earlier approach here) never sees any of that:
+/// nothing later recovers it, since a per-tick `rebuild_normal(false)` only
+/// re-sends the map rebuild once the player has moved more than 4 zones from
+/// the build area's origin, which a spawn-in-place tap never triggers.
+/// `spawn_player_tapped` keeps the receiver alive from before `accept_login`
+/// runs, so the tape captures the true login-through-steady-state feed a
+/// real client socket would have received. Because of that, the encoder and
+/// a decoder mirroring `Isaac::new(&[0; 4])` from scratch are ALREADY in
+/// lockstep -- no re-seat is needed (contrast the older, now-removed
+/// approach, which had to re-seat both sides after the fact because the tap
+/// attached mid-stream).
 pub fn record_tutorial_tape(ticks: u32, seed: u64) -> (Vec<u8>, i32) {
-    let mut env = EnvHarness::boot();
+    let mut env = EnvHarness::boot_seeded(seed);
     let (x, level, z) = TUTORIAL_SPAWN;
-    let pid = env.engine.spawn_player("tutorial", CoordGrid::new(x, level, z));
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    {
-        let p = env.engine.get_player_mut(pid).expect("spawned player");
-        p.handle.outbox = tx;
-        p.handle.isaac_encode = Isaac::new(&[0; 4]);
-    }
+    let (pid, mut rx) =
+        env.engine.spawn_player_tapped("tutorial", CoordGrid::new(x, level, z));
 
     let tutorial_varp = env.player_varp(pid, "tutorial");
 

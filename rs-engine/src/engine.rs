@@ -2067,16 +2067,54 @@ impl Engine {
     /// would (via `accept_login`'s appearance/login sequence), so it is not a
     /// free-standing struct insert -- it runs script logic on the new player.
     ///
+    /// Thin wrapper over [`Self::spawn_player_tapped`] that discards the
+    /// outbound receiver -- use that instead if the caller needs to observe
+    /// what was sent (e.g. to prove a real client's scene build works from a
+    /// recorded packet feed; see `rl-env`'s `tape` module).
+    ///
     /// # Panics
     ///
     /// Panics if no free player slot is available, i.e. all `MAX_PLAYERS`
     /// (2048) slots are already occupied.
     pub fn spawn_player(&mut self, username: &str, coord: CoordGrid) -> u16 {
+        self.spawn_player_tapped(username, coord).0
+    }
+
+    /// Same as [`Self::spawn_player`], but returns the receiving end of the
+    /// fabricated bot's outbound byte channel instead of letting it drop.
+    ///
+    /// `spawn_player` builds a real `ClientIO` (whose `handle` half feeds
+    /// `accept_login`) and lets the whole `io` value -- including
+    /// `io.bytes_rx`, the receiver for everything `accept_login`'s
+    /// `on_login()` sends (`RebuildNormal`, `ChatFilterSettings`, `IfClose`,
+    /// `UpdatePid`, `ResetClientVarCache`, `SyncVarps`, per-stat
+    /// `UpdateStat`, `UpdateRunEnergy`, `ResetAnims`) -- go out of scope at
+    /// the end of the function. A caller that only swaps in its OWN outbox
+    /// after `spawn_player` returns therefore never sees any of that: it is
+    /// unrecoverable, since `phases/info.rs`'s per-tick `rebuild_normal(false)`
+    /// only re-sends the map rebuild once the player has moved more than 4
+    /// zones from the build area's origin (`BuildArea::needs_rebuild`), which
+    /// a spawn-in-place tap never triggers.
+    ///
+    /// This variant builds the `io` here and hands the caller `io.bytes_rx`
+    /// directly, so the returned receiver captures the outbound stream from
+    /// the very first byte `accept_login` sends -- the genuine client feed a
+    /// real login would produce, not a mid-stream tap. Because the receiver
+    /// is live from before `accept_login` runs, the `IsaacPair` seeded here
+    /// (`[0; 4]` on both sides, same as `spawn_player`) stays in lockstep
+    /// with a decoder that mirrors it from scratch -- no re-seat needed on
+    /// either side.
+    pub fn spawn_player_tapped(
+        &mut self,
+        username: &str,
+        coord: CoordGrid,
+    ) -> (u16, UnboundedReceiver<Vec<u8>>) {
         use crate::clients::client_game::create_io;
         use rs_crypto::isaac::IsaacPair;
 
         let pid = self.player_list.next_pid().expect("free pid slot");
         let io = create_io(IsaacPair::new(&[0; 4], &[0; 4]));
+        let bytes_rx = io.bytes_rx;
         let request = LoginRequest {
             handle: io.handle,
             username: username.into(),
@@ -2123,7 +2161,7 @@ impl Engine {
                 engine.add_player(pid, active, pid as i64);
             }
         });
-        pid
+        (pid, bytes_rx)
     }
 
     /// Spawn an NPC of `id` at `coord` headlessly. Wraps the private
