@@ -2,13 +2,14 @@
 //!
 //! Bun `dlopen`s this and drives the engine directly — no sockets, no login
 //! handshake, no cache over HTTP. `bun:ffi` reads the returned pointers with
-//! `toArrayBuffer`, so buffers are handed over without copying on this side.
+//! `toArrayBuffer`, which is a VIEW, not a copy — see [`host_out_ptr`]'s doc
+//! comment for the buffer's validity window before holding onto one.
 //!
 //! ★ ONE ENGINE PER PROCESS: `rs-pathfinder` holds process-global collision
-//! state. Never call `host_new` twice in one process.
+//! state. `host_new` panics if called a second time in this process.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rl_env::tape::TUTORIAL_SPAWN;
 use rl_env::EnvHarness;
@@ -16,19 +17,10 @@ use rs_grid::CoordGrid;
 use rs_pack::cache::CacheStore;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-/// `rs_pack::CONTENT_DIR` / `PACK_DIR` are relative paths (`content/274`,
-/// `content/274/pack`) intended to be resolved against the workspace root.
-/// Whoever loads this cdylib (a `cargo test` binary, or Bun via `dlopen`)
-/// may be running with an arbitrary process cwd, so -- mirroring
-/// `rl_env::workspace_root`'s fix for the same problem -- resolve against
-/// `CARGO_MANIFEST_DIR` (baked in at compile time as `majula/rs-host`)
-/// instead of trusting the runtime cwd.
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("rs-host has a parent workspace directory")
-        .to_path_buf()
-}
+/// Guards against a second `host_new` in this process. `rs-pathfinder` holds
+/// process-global `COLLISION_FLAGS`; a second `Engine` would silently
+/// corrupt both instead of failing loud, so this asserts instead.
+static BOOTED: AtomicBool = AtomicBool::new(false);
 
 pub struct Host {
     env: EnvHarness,
@@ -39,23 +31,31 @@ pub struct Host {
     /// paired Sender to push client packets in.
     tx_in: tokio::sync::mpsc::Sender<Vec<u8>>,
     out: Vec<u8>,
-    cache: Box<CacheStore>,
+    /// The process's single, `'static` cache instance -- see [`rl_env::cache`]'s
+    /// doc comment. Deliberately NOT a `Box<CacheStore>` this `Host` owns:
+    /// an owned copy would (a) dangle every cache pointer Bun holds the
+    /// moment `host_free` runs, since nothing in the C ABI's contract says
+    /// cache pointers die with the `Host`, and (b) be a SEPARATE pack from
+    /// the one `EnvHarness::boot_seeded` -> `shared_cache()` already built
+    /// for the engine itself, so the client would decode against different
+    /// cache bytes than the engine runs on. `rl_env::cache()` returns the
+    /// same memoized, process-lifetime `&'static CacheStore` the engine
+    /// uses, packed at most once per process.
+    cache: &'static CacheStore,
     empty: Vec<u8>,
 }
 
 /// Boots the full world and spawns one fresh Tutorial Island player.
+///
+/// # Panics
+/// If called more than once in this process (see [`BOOTED`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn host_new(seed: u64) -> *mut c_void {
-    let root = workspace_root();
-    let content_dir = root.join(rs_pack::CONTENT_DIR);
-    let pack_dir = root.join(rs_pack::PACK_DIR);
-    let (cache, _scripts) = rs_pack::pack_all(
-        &content_dir,
-        &pack_dir,
-        true,
-        true,
-    )
-    .expect("pack cache");
+    assert!(
+        !BOOTED.swap(true, Ordering::SeqCst),
+        "host_new called twice -- ONE ENGINE PER PROCESS (rs-pathfinder's \
+         COLLISION_FLAGS is process-global)"
+    );
 
     // ★ AMENDED after Task 1: use `boot_seeded` and `spawn_player_tapped`.
     // A tap installed AFTER `spawn_player` misses `accept_login`'s entire
@@ -78,6 +78,11 @@ pub extern "C" fn host_new(seed: u64) -> *mut c_void {
         p.handle.inbox = rx_in;
     }
 
+    // `boot_seeded` (above) already populated the process's memoized cache
+    // cell via `shared_cache()` -- this just borrows that same instance, not
+    // a fresh pack. See `Host::cache`'s doc comment.
+    let cache = rl_env::cache();
+
     Box::into_raw(Box::new(Host {
         env,
         pid,
@@ -96,6 +101,34 @@ fn host_ref<'a>(h: *mut c_void) -> &'a mut Host {
 }
 
 /// Advances one tick and buffers that tick's outbound bytes. Returns their length.
+///
+/// # The caller MUST send `NoTimeout` at least every 100 ticks
+///
+/// This bot is `bot: false` (a genuine `accept_login`, not the `bot: true`
+/// fabricated-handle path -- deliberately NOT switched to avoid changing
+/// engine behaviour beyond the timeout), so it is on the *unguarded* side of
+/// `phases/logout.rs`'s no-response force-logout: `arena_mode` is `false`
+/// (this is a full-world boot), and `!bot && !arena_mode` is exactly the
+/// branch that force-logs-out a player once `clock - last_response >= 100`
+/// ticks (`TIMEOUT_NO_RESPONSE`). `last_response` only advances when
+/// `ActivePlayer::decode` sees at least one inbound message that tick. A
+/// real client answers this with the `NoTimeout` housekeeping packet, and
+/// the fused-loop consumer must do the same: push an encoded `NoTimeout`
+/// (rev-274 opcode 120, `Fixed` frame, zero-length payload -- see
+/// `rs-protocol/src/network/game/client_prot.rs`'s `rev = "274"` block)
+/// through [`host_send`] at least once every 100 ticks, or this player is
+/// force-logged-out around tick 100 and every subsequent `host_step` call
+/// returns 0 forever (the outbox sender is dropped with the removed
+/// player). See `rs-host/tests/no_response_force_logout.rs`'s
+/// `no_response_within_100_ticks_force_logs_out_the_bot` and
+/// `rs-host/tests/keepalive.rs`'s
+/// `no_timeout_keepalive_prevents_the_force_logout` for a discriminating
+/// demonstration of both directions (two separate test binaries/processes,
+/// each calling `host_new` exactly once -- see [`BOOTED`]).
+///
+/// ★ `rl_env::tape::record_tutorial_tape` (Task 1) has this exact same
+/// latent limit -- any tape recorded past ~100 ticks needs the same
+/// treatment. Not fixed here; flagged for whoever extends that recorder.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_step(h: *mut c_void) -> u32 {
     let host = host_ref(h);
@@ -107,11 +140,24 @@ pub extern "C" fn host_step(h: *mut c_void) -> u32 {
     host.out.len() as u32
 }
 
+/// Zero-copy view of the last [`host_step`] call's outbound bytes.
+///
+/// # Validity
+/// The returned pointer is valid ONLY until the next [`host_step`] or
+/// [`host_free`] call on this handle. `host_step` does `out.clear()` then
+/// `extend_from_slice`, which reallocates whenever a tick's payload exceeds
+/// the buffer's current capacity -- guaranteed to happen at least once,
+/// since tick 0's login burst dwarfs the ~tens-of-bytes steady-state tick.
+/// `bun:ffi`'s `toArrayBuffer` hands back a VIEW over this pointer, not a
+/// copy, so a caller that holds one across a `host_step` call is reading
+/// freed or reused memory. Copy the bytes out before stepping again.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_out_ptr(h: *mut c_void) -> *const u8 {
     host_ref(h).out.as_ptr()
 }
 
+/// Length in bytes of the buffer [`host_out_ptr`] points at. Same validity
+/// window as `host_out_ptr` -- read together, before the next `host_step`.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_out_len(h: *mut c_void) -> usize {
     host_ref(h).out.len()
@@ -145,6 +191,9 @@ fn cache_slice<'a>(host: &'a Host, name: &str) -> &'a [u8] {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_cache_ptr(h: *mut c_void, name: *const c_char) -> *const u8 {
     let host = host_ref(h);
+    if name.is_null() {
+        return host.empty.as_ptr();
+    }
     let n = unsafe { CStr::from_ptr(name) }.to_str().unwrap_or("");
     cache_slice(host, n).as_ptr()
 }
@@ -152,6 +201,9 @@ pub extern "C" fn host_cache_ptr(h: *mut c_void, name: *const c_char) -> *const 
 #[unsafe(no_mangle)]
 pub extern "C" fn host_cache_len(h: *mut c_void, name: *const c_char) -> usize {
     let host = host_ref(h);
+    if name.is_null() {
+        return 0;
+    }
     let n = unsafe { CStr::from_ptr(name) }.to_str().unwrap_or("");
     cache_slice(host, n).len()
 }
@@ -175,9 +227,14 @@ pub extern "C" fn host_ondemand_len(h: *mut c_void, archive: u32, file: u32) -> 
     ondemand_slice(host_ref(h), archive, file).len()
 }
 
+/// Returns -1 (the same "absent/invalid" sentinel [`host_player_x`] /
+/// [`host_player_z`] use) if `name` is null, rather than dereferencing it.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_varp(h: *mut c_void, name: *const c_char) -> i32 {
     let host = host_ref(h);
+    if name.is_null() {
+        return -1;
+    }
     let n = unsafe { CStr::from_ptr(name) }.to_str().unwrap_or("");
     host.env.player_varp(host.pid, n)
 }

@@ -22,10 +22,44 @@ fn the_c_abi_exposes_a_live_engine_cache_and_packet_stream() {
     let bytes = unsafe { std::slice::from_raw_parts(rs_host::host_ondemand_ptr(h, 0, 1), len) };
     assert_eq!(&bytes[..2], &[0x1f, 0x8b], "on-demand blobs must be gzip wire bytes");
 
-    // Every tick produces outbound bytes: PlayerInfo is sent every tick, so a
-    // silent tap detach would show up as zeros here.
-    let mut empty = 0;
-    for _ in 0..10 {
+    // First tick: `host_out_ptr`/`host_out_len` are what Task 4 actually
+    // reads -- exercise them directly (not just `host_step`'s return), and
+    // check the documented shape: `host_out_len` must agree with the
+    // `host_step` return, and the buffer must begin with the RAW, non-ISAAC
+    // login response `[2, staffmodlevel, mouseTracked]` (Task 1's verified
+    // fact) -- this tick's buffer holds accept_login's whole buffered login
+    // burst plus tick 0's own cycle output, so that prefix must be first.
+    let step0 = rs_host::host_step(h);
+    let out_len = rs_host::host_out_len(h);
+    assert_eq!(
+        out_len, step0 as usize,
+        "host_out_len disagrees with host_step's own return for the same tick"
+    );
+    assert!(
+        out_len >= 3,
+        "tick 0's outbound buffer is only {out_len} bytes -- too short to \
+         hold the login response prefix"
+    );
+    let out0 = unsafe { std::slice::from_raw_parts(rs_host::host_out_ptr(h), out_len) };
+    // `[opcode, staffmodlevel, mouseTracked]`. `mouseTracked` is a hardcoded
+    // `1` (`Engine::accept_login`, `rs-engine/src/engine.rs:2580`); opcode 2
+    // is `LoginResponse::SuccessNormal`. `staffmodlevel` is
+    // `active.player.staff_mod_level.min(2)`, and a freshly-constructed
+    // `Player` defaults that field to `StaffModLevel::Developer` under
+    // `debug_assertions` (`rs-engine/rs-entity/src/player.rs:295`) or
+    // `StaffModLevel::Normal` in a release build (`:297`) -- so its exact
+    // value is build-profile-dependent, not something this test (which runs
+    // as a plain `cargo test`, i.e. always `debug_assertions`) should pin to
+    // a single number Task 4 might see differently under `--release`. Assert
+    // the two invariant bytes and the documented `.min(2)` clamp instead.
+    assert_eq!(out0[0], 2, "expected LoginResponse::SuccessNormal (2)");
+    assert!(out0[1] <= 2, "staffmodlevel must be clamped to <= 2, got {}", out0[1]);
+    assert_eq!(out0[2], 1, "mouseTracked is always 1");
+
+    // Remaining ticks: every tick produces outbound bytes. PlayerInfo is
+    // sent every tick, so a silent tap detach would show up as zeros here.
+    let mut empty = if step0 == 0 { 1 } else { 0 };
+    for _ in 0..9 {
         if rs_host::host_step(h) == 0 {
             empty += 1;
         }
