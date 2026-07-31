@@ -16,6 +16,31 @@
 //! decodes -- true here since we send and let the engine consume one
 //! packet at a time.
 //!
+//! # Why the outbound-emptiness check alone is not enough
+//!
+//! `ActivePlayer::decode` (`rs-engine/src/active_player.rs:1908-1942`) sets
+//! its `received` flag -- which is what refreshes `last_response` -- the
+//! moment `inbox.try_recv()` succeeds, BEFORE `read()` decrypts or
+//! recognizes any opcode. So ANY inbound bytes, correctly ISAAC-encoded or
+//! not, satisfy the "outbound stream never goes silent" check below. That
+//! check alone would not catch a Task-4 author who gets the encoding wrong:
+//! the engine's real `isaac_decode` still consumes one keystream value for
+//! every byte it POPS AS AN OPCODE ATTEMPT regardless of whether it turns
+//! out to be recognized, so a single wrongly-encoded byte permanently
+//! desyncs the engine's stream from anything encoded correctly afterward --
+//! while this test's own outbound-emptiness check would stay green the
+//! whole time, since `last_response` doesn't care whether the byte decoded
+//! to anything real.
+//!
+//! So after the keepalive loop, this also sends one real `MoveGameClick`
+//! (same wire shape as `spike_protocol_tap.rs`'s
+//! `inbound_packets_drive_the_real_client_handlers`) using the SAME
+//! continued `isaac_decode` mirror, and checks the bot actually moved via
+//! `host_player_x`/`host_player_z` -- the documented test-only use those
+//! accessors exist for. That only passes if the mirror is still in lockstep
+//! after four keepalives, i.e. if the keepalive encoding was genuinely
+//! correct and not just "some bytes showed up."
+//!
 //! In its own file/process for the same "one `host_new` per process"
 //! reason documented in `no_response_force_logout.rs`.
 
@@ -28,6 +53,12 @@ use rs_crypto::isaac::Isaac;
 /// the whole wire packet is this one ISAAC-encoded byte, no length prefix,
 /// no payload.
 const NO_TIMEOUT: u8 = 120;
+
+/// rev-274 `ClientProt::MoveGameClick` (`rs-protocol/.../client_prot.rs:523`,
+/// same constant `spike_protocol_tap.rs` uses). `VarByte` frame: wire =
+/// `[opcode+isaac][len:u8][payload]`. Payload per `MoveGameClick::decode`:
+/// `ctrl:g1, x:g2(BE), z:g2(BE)`.
+const MOVE_GAMECLICK: u8 = 207;
 
 #[test]
 #[ignore = "boots the full world; run on the desktop"]
@@ -51,14 +82,54 @@ fn no_timeout_keepalive_prevents_the_force_logout() {
         }
     }
 
+    // Weak on its own (see the module doc) -- kept as a coarse sanity check,
+    // not the discriminator. The real discriminator is the MoveGameClick
+    // check below.
     assert_eq!(
         empty, 0,
         "{empty} of 150 ticks produced no outbound bytes even with a \
-         NoTimeout keepalive sent every 40 ticks -- either the keepalive \
-         packet is not reaching the real client handler, or the ISAAC \
-         mirror fell out of lockstep. Contrast with \
-         no_response_force_logout.rs's negative control, which force-logs- \
-         out the same bot with zero inbound traffic."
+         keepalive sent every 40 ticks -- inbound bytes are not reaching \
+         `ActivePlayer::decode` at all (a stronger failure than a bad \
+         encoding: see the MoveGameClick check below for that case). \
+         Contrast with no_response_force_logout.rs's negative control, \
+         which force-logs-out the same bot with zero inbound traffic."
+    );
+
+    // The real discriminator: prove the ISAAC mirror is still in lockstep
+    // after four keepalives by sending a real, recognizable action and
+    // observing its effect through the test-only ground-truth accessors.
+    let start_x = rs_host::host_player_x(h);
+    let start_z = rs_host::host_player_z(h);
+    assert!(start_x >= 0 && start_z >= 0, "player missing after keepalive loop");
+
+    let dest_x = (start_x + 1) as u16;
+    let dest_z = start_z as u16;
+    let payload = [
+        0u8, // ctrl
+        (dest_x >> 8) as u8,
+        (dest_x & 0xFF) as u8,
+        (dest_z >> 8) as u8,
+        (dest_z & 0xFF) as u8,
+    ];
+    let mut buf = Vec::with_capacity(2 + payload.len());
+    buf.push((MOVE_GAMECLICK as u32).wrapping_add(isaac_decode.next_int()) as u8);
+    buf.push(payload.len() as u8);
+    buf.extend_from_slice(&payload);
+    rs_host::host_send(h, buf.as_ptr(), buf.len());
+
+    for _ in 0..10 {
+        rs_host::host_step(h);
+    }
+
+    let end_x = rs_host::host_player_x(h);
+    let end_z = rs_host::host_player_z(h);
+    assert_ne!(
+        (end_x, end_z),
+        (start_x, start_z),
+        "the bot never moved after a MoveGameClick sent right after four \
+         keepalives -- the ISAAC mirror desynced somewhere in the keepalive \
+         loop (a wrongly-encoded keepalive would pass the outbound-emptiness \
+         check above while silently breaking every packet sent after it)"
     );
 
     rs_host::host_free(h);

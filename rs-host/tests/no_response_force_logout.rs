@@ -16,24 +16,47 @@
 //! `no_timeout_keepalive_prevents_the_force_logout`) each need their own
 //! process.
 
+/// `TIMEOUT_NO_RESPONSE` (`phases/logout.rs:28`). Not `pub`, so re-declared
+/// here rather than imported; kept in sync by citing the source line.
+const TIMEOUT_NO_RESPONSE: u32 = 100;
+
 #[test]
 #[ignore = "boots the full world; run on the desktop"]
 fn no_response_within_100_ticks_force_logs_out_the_bot() {
     let h = rs_host::host_new(5150);
     assert!(!h.is_null());
 
-    let mut last = u32::MAX;
-    for _ in 0..150 {
-        last = rs_host::host_step(h);
+    // Record the FIRST silent tick, not just the last one -- "silent at
+    // tick 150" is equally consistent with a tap that never attached, a
+    // failed spawn, or a broken `host_new`. Pinning the first empty tick to
+    // a narrow window right after `TIMEOUT_NO_RESPONSE` (with every earlier
+    // tick required to be non-empty) is what actually distinguishes "died
+    // of the no-response timeout" from any of those other failure modes.
+    let mut first_empty: Option<u32> = None;
+    for tick in 0..150u32 {
+        if rs_host::host_step(h) == 0 {
+            first_empty = Some(tick);
+            break;
+        }
     }
 
-    assert_eq!(
-        last, 0,
-        "expected the bot to have been force-logged-out (silent outbox) by \
-         tick 150 with zero inbound traffic the whole run; got a nonzero \
-         tick instead -- either the no-response timeout no longer fires on \
-         this path, or something is unexpectedly feeding it traffic"
-    );
+    let window_start = TIMEOUT_NO_RESPONSE - 5;
+    let window_end = TIMEOUT_NO_RESPONSE + 15;
+    match first_empty {
+        Some(tick) => assert!(
+            (window_start..=window_end).contains(&tick),
+            "bot went silent at tick {tick}, expected it in \
+             [{window_start}, {window_end}] (around TIMEOUT_NO_RESPONSE = \
+             {TIMEOUT_NO_RESPONSE}); a much earlier tick means the tap \
+             never attached or the spawn failed, not the no-response \
+             timeout this test targets"
+        ),
+        None => panic!(
+            "expected the bot to be force-logged-out (silent outbox) \
+             within 150 ticks of zero inbound traffic; every tick produced \
+             outbound bytes instead -- the no-response timeout did not fire"
+        ),
+    }
 
     rs_host::host_free(h);
 }
