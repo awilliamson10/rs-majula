@@ -3,6 +3,7 @@ pub mod batch;
 pub mod observe;
 pub mod reward;
 pub mod scenario;
+pub mod tape;
 
 use once_cell::sync::OnceCell;
 use std::path::Path;
