@@ -66,5 +66,40 @@ fn the_c_abi_exposes_a_live_engine_cache_and_packet_stream() {
     }
     assert_eq!(empty, 0, "{empty} of 10 ticks produced no outbound bytes");
 
+    // `host_send`'s drop signal, exercised in BOTH directions against a real
+    // inbox. A dropped message is a permanent ISAAC desync that nothing else
+    // in the fused loop can observe (see `host_send`'s doc comment), so the
+    // return value is the only warning the consumer will ever get -- and a
+    // return value nothing checks is worth nothing.
+    //
+    // The inbox is a bounded `channel(128)` that the engine drains inside
+    // `cycle()`. Filling it without stepping is therefore the exact
+    // saturation an agent acting every tick can produce, not a contrived one.
+    // Done last: these bytes are junk and would desync the very mirror the
+    // other tests depend on.
+    const INBOX_CAPACITY: usize = 128; // `host_new`'s `channel::<Vec<u8>>(128)`
+    let junk = [0u8; 1];
+    for i in 0..INBOX_CAPACITY {
+        assert_eq!(
+            rs_host::host_send(h, junk.as_ptr(), junk.len()),
+            0,
+            "send {i} of {INBOX_CAPACITY} reported a drop while the inbox \
+             still had room"
+        );
+    }
+    assert_eq!(
+        rs_host::host_send(h, junk.as_ptr(), junk.len()),
+        1,
+        "the {}th send into a {INBOX_CAPACITY}-slot inbox was silently \
+         accepted -- a full channel must report the drop, or the consumer \
+         desyncs the engine's ISAAC stream with no way to find out",
+        INBOX_CAPACITY + 1
+    );
+    // A null pointer with a non-zero length delivers nothing either, and is
+    // reported the same way rather than passing for success.
+    assert_eq!(rs_host::host_send(h, std::ptr::null(), 4), 1);
+    // Nothing to deliver is not a drop.
+    assert_eq!(rs_host::host_send(h, junk.as_ptr(), 0), 0);
+
     rs_host::host_free(h);
 }

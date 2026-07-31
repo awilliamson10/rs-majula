@@ -7,6 +7,15 @@
 //!
 //! ★ ONE ENGINE PER PROCESS: `rs-pathfinder` holds process-global collision
 //! state. `host_new` panics if called a second time in this process.
+//!
+//! ★ SINGLE-THREADED CALLER ONLY. `Host` is neither `Send` nor `Sync`, and
+//! nothing here enforces that at the C boundary: every entry point fabricates
+//! a `&mut Host` out of a raw pointer (see [`host_ref`]) with no borrow
+//! tracking whatsoever, so two threads holding the same handle would hold two
+//! simultaneous `&mut` to the same `Host` -- instant UB, not a data race the
+//! engine would merely be slow about. `host_step` also mutates engine state
+//! that `rs-pathfinder` keeps process-global. Drive one handle from one
+//! thread; the fused loop's consumer (Bun) is single-threaded by construction.
 
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -165,16 +174,46 @@ pub extern "C" fn host_out_len(h: *mut c_void) -> usize {
 
 /// Pushes inbound client bytes into the player's inbox; the engine's own
 /// `decode` dispatches them through the real client-message handlers.
+///
+/// # Returns
+/// `0` if the bytes were queued, `1` if they were DROPPED (`len > 0` with a
+/// null `ptr`, or the 128-slot inbox was full).
+///
+/// # ★ A DROP IS A PERMANENT, SILENT ISAAC DESYNC -- never ignore this
+///
+/// `ActivePlayer::read` subtracts one `isaac_decode.next_int()` from every
+/// byte it pops as an opcode ATTEMPT, before it knows whether the opcode is
+/// real (`rs-engine/src/active_player.rs:1963-1975`). The client's encoder
+/// advances its own keystream for every byte it WROTE. So a message that
+/// never arrives leaves the two streams offset by however many bytes were
+/// lost, for the rest of the run: every packet after it decodes to noise.
+///
+/// Nothing downstream notices. `ActivePlayer::decode` sets `received = true`
+/// the moment `inbox.try_recv()` succeeds -- so the surviving traffic still
+/// refreshes `last_response`, the player stays logged in, `host_step` keeps
+/// returning bytes, and the frame keeps rendering. The failure surfaces only
+/// as an agent whose actions stop having effects.
+///
+/// Not reachable while the consumer sends a handful of bytes per tick against
+/// a 128-slot channel the engine drains every `cycle()`. It becomes reachable
+/// the moment an agent acts every tick, which is the whole point of this
+/// crate -- hence a return value rather than a comment.
 #[unsafe(no_mangle)]
-pub extern "C" fn host_send(h: *mut c_void, ptr: *const u8, len: usize) {
-    if ptr.is_null() || len == 0 {
-        return;
+pub extern "C" fn host_send(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
+    if len == 0 {
+        return 0;
+    }
+    if ptr.is_null() {
+        return 1;
     }
     let host = host_ref(h);
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
     // The engine's own `ActivePlayer::decode` drains this inbox during the
     // input phase and dispatches through the real client-message handlers.
-    let _ = host.tx_in.try_send(bytes);
+    match host.tx_in.try_send(bytes) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
 }
 
 fn cache_slice<'a>(host: &'a Host, name: &str) -> &'a [u8] {

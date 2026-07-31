@@ -207,7 +207,13 @@ fn two_processes_at_the_same_seed_record_identical_tapes() {
         std::fs::read(path).expect("tape file written")
     };
 
-    let dir = std::env::temp_dir();
+    // ★ A UNIQUE DIRECTORY, not bare `temp_dir()`. The desktop is shared and
+    // runs suites concurrently, so fixed `/tmp/tape_{a,b,c}.bin` paths let one
+    // run overwrite the tape another run is about to read back -- which would
+    // present as a spurious determinism failure, the single most alarming and
+    // least believable way for this suite to go red.
+    let dir = std::env::temp_dir().join(format!("cshanty-tape-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create the per-process tape directory");
     let bytes_a = run(&dir.join("tape_a.bin"), "777");
     let bytes_b = run(&dir.join("tape_b.bin"), "777");
 
@@ -241,4 +247,8 @@ fn two_processes_at_the_same_seed_record_identical_tapes() {
         pa, pc,
         "identical packet streams under different seeds -- the seed does not reach the engine RNG"
     );
+
+    // Only on success: a failing run is exactly the one where a human wants
+    // the tapes still on disk to diff.
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -123,13 +123,22 @@ fn no_timeout_keepalive_prevents_the_force_logout() {
 
     let end_x = rs_host::host_player_x(h);
     let end_z = rs_host::host_player_z(h);
-    assert_ne!(
+    // The DESTINATION, not merely "somewhere else". A single-tile walk on open
+    // Tutorial Island ground is deterministic and 10 ticks is ample for it, so
+    // pinning the exact tile is free and strictly stronger: `assert_ne!` would
+    // also be satisfied by the bot wandering off for some unrelated reason, or
+    // by a garbled packet that happened to decode to a different movement.
+    assert_eq!(
         (end_x, end_z),
-        (start_x, start_z),
-        "the bot never moved after a MoveGameClick sent right after four \
-         keepalives -- the ISAAC mirror desynced somewhere in the keepalive \
+        (start_x + 1, start_z),
+        "the bot did not walk to the tile the MoveGameClick asked for \
+         ({}, {}) after four keepalives -- it is at ({end_x}, {end_z}). \
+         Unchanged means the ISAAC mirror desynced somewhere in the keepalive \
          loop (a wrongly-encoded keepalive would pass the outbound-emptiness \
-         check above while silently breaking every packet sent after it)"
+         check above while silently breaking every packet sent after it); \
+         some OTHER tile means the packet decoded to something else entirely",
+        start_x + 1,
+        start_z
     );
 
     rs_host::host_free(h);

@@ -63,7 +63,17 @@ impl TapeReader {
         let seed = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
         let count = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
         let mut pos = 20;
-        let mut ticks = Vec::with_capacity(count);
+        // `count` comes straight off disk and is not yet corroborated by
+        // anything -- the loop below only discovers a lie about it once it
+        // walks off the end. `Vec::with_capacity` runs FIRST, so a corrupt
+        // header claiming 4 billion ticks aborts the process on the
+        // allocation before any of those truncation checks can return `Err`.
+        // Every tick costs at least its 8-byte header, so the file's own
+        // length is a hard ceiling on how many there can really be; clamping
+        // to it costs nothing on a well-formed tape (which reallocs at most
+        // once if the clamp bites) and turns an OOM abort into the `Err` the
+        // caller already handles.
+        let mut ticks = Vec::with_capacity(count.min(bytes.len() / 8));
         for _ in 0..count {
             if pos + 8 > bytes.len() {
                 return Err("truncated tick header".into());

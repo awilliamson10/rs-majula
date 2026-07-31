@@ -40,7 +40,11 @@ fn no_response_within_100_ticks_force_logs_out_the_bot() {
         }
     }
 
-    let window_start = TIMEOUT_NO_RESPONSE - 5;
+    // The window opens AT `TIMEOUT_NO_RESPONSE`, not a few ticks before it:
+    // the check is `clock - last_response >= 100`, so nothing legitimate can
+    // go silent earlier, and allowing tick 95 would only excuse a bug that
+    // silenced the outbox for a different reason.
+    let window_start = TIMEOUT_NO_RESPONSE;
     let window_end = TIMEOUT_NO_RESPONSE + 15;
     match first_empty {
         Some(tick) => assert!(
