@@ -1981,8 +1981,10 @@ version = "0.1.10"
 name = "rl-env"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "once_cell",
  "ron",
+ "rs-crypto",
  "rs-engine",
  "rs-entity",
  "rs-grid",
