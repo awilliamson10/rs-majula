@@ -350,7 +350,7 @@ pub const VARP_ACTION_DELAY: &str = "action_delay";
 /// `%eat_delay >= map_clock`.
 pub const VARP_EAT_DELAY: &str = "eat_delay";
 
-fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
+pub fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
     let varp = crate::cache()
         .varps
         .get_by_debugname(name)

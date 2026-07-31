@@ -101,3 +101,49 @@ pub fn digest(t: &Tape) -> u64 {
     }
     h
 }
+
+use crate::EnvHarness;
+use rs_crypto::isaac::Isaac;
+use rs_grid::CoordGrid;
+
+/// Tutorial Island, level 0. Bounds are x 3053..=3156, z 3056..=3136
+/// (`content/274/scripts/tutorial/scripts/util.rs2`, which cites the client's
+/// own region test). This tile sits inside them.
+pub const TUTORIAL_SPAWN: (u16, u8, u16) = (3094, 0, 3107);
+
+/// Boots the FULL world (the agent needs banks, trees and NPCs -- arena mode
+/// is wrong here), spawns one fresh player on Tutorial Island, and records
+/// `ticks` ticks of its outbound stream.
+///
+/// Returns `(tape_bytes, tutorial_varp_at_spawn)`.
+///
+/// ★ The outbound ISAAC stream is already advanced by `accept_login` before a
+/// tap can be installed, so both the encoder and any mirror are re-seated to a
+/// fresh zero-seeded stream. Without this every opcode decrypts to plausible
+/// garbage (spec §10).
+pub fn record_tutorial_tape(ticks: u32, seed: u64) -> (Vec<u8>, i32) {
+    let mut env = EnvHarness::boot();
+    let (x, level, z) = TUTORIAL_SPAWN;
+    let pid = env.engine.spawn_player("tutorial", CoordGrid::new(x, level, z));
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    {
+        let p = env.engine.get_player_mut(pid).expect("spawned player");
+        p.handle.outbox = tx;
+        p.handle.isaac_encode = Isaac::new(&[0; 4]);
+    }
+
+    let tutorial_varp = env.player_varp(pid, "tutorial");
+
+    let mut w = TapeWriter::new(seed);
+    for tick in 0..ticks {
+        env.engine.cycle();
+        let mut packets = Vec::new();
+        while let Ok(buf) = rx.try_recv() {
+            packets.push(buf);
+        }
+        w.record_tick(tick, &packets);
+    }
+
+    (w.finish(), tutorial_varp)
+}

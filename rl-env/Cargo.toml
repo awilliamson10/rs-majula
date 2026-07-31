@@ -20,6 +20,8 @@ ron         = "0.8"
 # SPIKE (cache_dump bin) only.
 anyhow      = "1"
 
-[dev-dependencies]
-# SPIKE S1 only: mirror the bot handle's ISAAC streams from the test side.
+# tape::record_tutorial_tape re-seats the outbound ISAAC stream after
+# accept_login (see tape.rs's doc comment) -- needed by the packet_tape bin,
+# so this must be a real dependency, not dev-only (the spike test that
+# originally pulled this in as dev-only mirrors it from the test side).
 rs-crypto   = { workspace = true }

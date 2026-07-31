@@ -255,6 +255,17 @@ impl EnvHarness {
         self.engine.clock as u64
     }
 
+    /// Reads a player varp by debugname. Panics if the cache has no such varp
+    /// — the same fail-loud policy `load_scenario` uses, because a silently
+    /// missing varp would read as a legitimate 0.
+    pub fn player_varp(&self, pid: u16, name: &str) -> i32 {
+        let active = self
+            .engine
+            .get_player(pid)
+            .unwrap_or_else(|| panic!("no player at pid {pid}"));
+        crate::action::varp_int(active, name)
+    }
+
     /// Latest per-phase tick timings published by the engine after the most
     /// recent `cycle()` (profiling). Fields are per-phase wall-ms.
     pub fn tick_stats(&self) -> TickStats {
