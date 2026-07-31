@@ -42,6 +42,34 @@ fn main() -> anyhow::Result<()> {
         println!("{name:<20} {:>9} bytes  crc={crc}", bytes.len());
     }
 
-    println!("\nwrote {} archives + crc to {}", store.jags.len(), out.display());
+    // On-demand blobs: `Vec<Vec<Box<[u8]>>>` indexed [archive][file], matching
+    // the client's `OnDemand.request(archive, file)`. Archives are
+    // 0=models 1=anims 2=midi 3=maps. These are the wire bytes (gzip + a
+    // 2-byte version suffix that the client strips in `OnDemand.loop`).
+    let od = out.join("ondemand");
+    let mut total = 0usize;
+    let mut bytes = 0usize;
+    for (archive, files) in store.ondemand.iter().enumerate() {
+        let dir = od.join(archive.to_string());
+        std::fs::create_dir_all(&dir)?;
+        let mut present = 0usize;
+        for (file, blob) in files.iter().enumerate() {
+            if blob.is_empty() {
+                continue; // versionlist marks these 0; the client never asks
+            }
+            std::fs::write(dir.join(format!("{file}.dat")), &blob[..])?;
+            present += 1;
+            bytes += blob.len();
+        }
+        println!("ondemand[{archive}]     {present:>6} files / {} slots", files.len());
+        total += present;
+    }
+
+    println!(
+        "\nwrote {} archives + crc + {total} ondemand files ({:.1} MB) to {}",
+        store.jags.len(),
+        bytes as f64 / 1e6,
+        out.display()
+    );
     Ok(())
 }
