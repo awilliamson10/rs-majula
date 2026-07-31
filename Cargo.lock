@@ -2110,6 +2110,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rs-host"
+version = "0.1.0"
+dependencies = [
+ "rl-env",
+ "rs-crypto",
+ "rs-grid",
+ "rs-pack",
+ "tokio",
+]
+
+[[package]]
 name = "rs-info"
 version = "0.1.10"
 dependencies = [

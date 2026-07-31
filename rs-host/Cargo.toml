@@ -1,0 +1,14 @@
+[package]
+name = "rs-host"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rl-env    = { path = "../rl-env" }
+rs-pack   = { path = "../rs-pack" }
+rs-grid   = { path = "../rs-engine/rs-grid" }
+rs-crypto = { workspace = true }
+tokio     = { version = "1.52", features = ["sync", "rt"] }
