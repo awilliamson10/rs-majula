@@ -24,6 +24,10 @@ use rl_env::tape::TUTORIAL_SPAWN;
 use rl_env::EnvHarness;
 use rs_grid::CoordGrid;
 use rs_pack::cache::CacheStore;
+// ★ THE ENGINE'S OWN STAT ORDER, not a literal 3. `Stats<6>` is a bare
+// `[u16; 6]` with nothing in it naming the slots, so a hardcoded index is a
+// silently-wrong reading waiting to happen. See [`host_npc_field`].
+use rs_pack::types::NpcStat;
 // ★ THE ENGINE'S OWN TELEPORT, not a coordinate assignment. `ScriptPlayer` is
 // the trait the content VM dispatches through: `p_teleport` (opcode 2088,
 // `rs-vm/src/ops/player.rs:923`) is literally `player.teleport(pop_coord(s)?)`
@@ -57,6 +61,16 @@ pub struct Host {
     /// uses, packed at most once per process.
     cache: &'static CacheStore,
     empty: Vec<u8>,
+    /// The nids [`host_npc_count`] last enumerated, sorted ascending.
+    ///
+    /// ★ A SNAPSHOT, not a live view, and that is what makes slot indices mean
+    /// anything: `host_npc_field` takes a SLOT, so the slot->nid mapping has to
+    /// hold still for the whole of a caller's read of one label frame. The
+    /// alternative — re-deriving the list inside every `host_npc_field` call —
+    /// would silently renumber the slots mid-frame if an npc wandered out of
+    /// range between two field reads, and the resulting row would be half one
+    /// npc and half another with nothing reporting an error.
+    npc_slots: Vec<u16>,
 }
 
 /// Boots the full world and spawns one fresh player at an ARBITRARY coordinate.
@@ -156,6 +170,7 @@ pub extern "C" fn host_new_at(seed: u64, x: u16, level: u8, z: u16) -> *mut c_vo
         out: Vec::new(),
         cache,
         empty: Vec::new(),
+        npc_slots: Vec::new(),
     })) as *mut c_void
 }
 
@@ -391,6 +406,218 @@ pub extern "C" fn host_player_z(h: *mut c_void) -> i32 {
         Some(p) => p.player.pathing.coord.z() as i32,
         None => -1,
     }
+}
+
+// -- the label channel -----------------------------------------------------------
+
+/// Returned by [`host_npc_field`] for a slot that does not exist or a field id
+/// that is not defined.
+///
+/// ★★ NOT -1, and this is not a style choice. `respawn_at`, `target_player` and
+/// `hunt_mode` are all `Option`s that report `None` as -1, so a -1 sentinel would
+/// make "this npc has no target" and "there is no such npc" the same value. A
+/// label file built on that ambiguity would train a model to predict a number
+/// that means two different things, and nothing anywhere would flag it.
+/// `i64::MIN` is not a value any field below can hold.
+///
+/// Same reasoning as [`HOST_VARP_UNKNOWN`], one type wider.
+pub const HOST_FIELD_UNKNOWN: i64 = i64::MIN;
+
+/// How far from the player [`host_npc_count`] looks, in tiles (Chebyshev), on
+/// the player's own level.
+///
+/// ★ NOT AN ARBITRARY NUMBER: it is `BuildArea::PREFERRED_VIEW_DISTANCE`
+/// (`rs-engine/rs-entity/src/build.rs:160`), the same distance
+/// `ActiveBuildArea::get_nearby_npcs` uses to decide which npcs the client is
+/// told about at all (`rs-engine/src/build.rs:200-229`). Matching it means the
+/// label domain is "the npcs a human at this client could be looking at", plus
+/// the ones standing dead in that same square waiting to respawn — which the
+/// client is told nothing about and which are the most interesting labels here.
+const LABEL_RADIUS: u16 = 15;
+
+/// Enumerates the npcs near the player and returns how many there are.
+///
+/// ★★ CALL THIS FIRST, EVERY FRAME. It is what BUILDS the slot list
+/// [`host_npc_field`] indexes; a caller that reads fields without refreshing
+/// reads whatever the previous frame enumerated. The slots are stable from this
+/// call until the next one, sorted ascending by nid, so slot `i` is the same npc
+/// on two consecutive frames as long as that npc stayed in range.
+///
+/// # ★ THE DOMAIN INCLUDES NPCs THE CLIENT CANNOT SEE, deliberately
+///
+/// This scans `npc_list` by coordinate rather than reading the player's
+/// `build_area.npcs` (the set the client has actually been told about). The
+/// difference is exactly the npcs that have been killed and are counting down to
+/// respawn: `Engine::despawn_npc` removes them from the zone and the renderer —
+/// so they vanish from the client's view — but leaves them in `npc_list` with
+/// `active = false`, their death coordinate, and `respawn_at` ticking down
+/// (`rs-engine/src/phases/npc.rs:117-126`). Enumerating only the client-visible
+/// set would make field 3 permanently -1, i.e. a label column with no variance,
+/// which is indistinguishable from not having the label at all.
+///
+/// # ★★ THIS IS A LABEL CHANNEL, NOT AN OBSERVATION
+///
+/// Nothing here may reach `ClientState`. The experiment this feeds asks whether a
+/// model trained on the client's information set INFERS state the client was
+/// never sent; if any of these values is also reachable from the observation, the
+/// model is handed the answer and the resulting number looks like a discovery
+/// while measuring a readout. Labels and observations are physically separate:
+/// separate accessors here, a separate `HostTruth` method, a separate protocol op
+/// and separate files. Same rule as [`host_varp`].
+///
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process — no unwinding across a C
+/// frame means no JS-visible error, just a dead host. Returns 0 rather than
+/// panicking when the player is gone.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
+    let host = host_ref(h);
+
+    // ★ Taken out of `host` rather than borrowed in place: the loop below holds
+    // an immutable borrow of `host.env` for its whole body, and pushing into a
+    // field of the same struct through it is not something the borrow checker
+    // will grant across a method call chain. `mem::take` also keeps the
+    // allocation across frames, so a 50-npc frame does not allocate.
+    let mut slots = std::mem::take(&mut host.npc_slots);
+    slots.clear();
+
+    let Some(p) = host.env.engine.get_player(host.pid) else {
+        host.npc_slots = slots;
+        return 0;
+    };
+    let coord = p.player.pathing.coord;
+    let (px, py, pz) = (coord.x(), coord.y(), coord.z());
+
+    for entry in host.env.engine.npc_list.npcs.iter() {
+        let Some(active) = entry.as_ref() else { continue };
+        let c = active.npc.pathing.coord;
+        // Same level only, matching `get_nearby_npcs`, which looks up zones on
+        // the observer's own `y` and so can never return an npc a floor away.
+        if c.y() != py {
+            continue;
+        }
+        // ★ `abs_diff` on u16, NOT a subtraction: coordinates are unsigned and
+        // an npc west of the player would underflow to ~65000 and be silently
+        // excluded — or, with the operands the other way round, silently
+        // included from anywhere in the world.
+        if c.x().abs_diff(px) > LABEL_RADIUS || c.z().abs_diff(pz) > LABEL_RADIUS {
+            continue;
+        }
+        slots.push(active.npc.uid.nid());
+    }
+
+    // ★ Sorted, so a slot index is joinable across ticks. `npc_list.npcs` is
+    // indexed BY nid so this scan already produces ascending order today; the
+    // sort makes that a guarantee of this function rather than an accident of
+    // the engine's storage layout, which the pid/nid allocator's forward-only
+    // wraparound could change.
+    slots.sort_unstable();
+
+    let n = slots.len() as u32;
+    host.npc_slots = slots;
+    n
+}
+
+/// One field of one enumerated npc. See [`host_npc_count`] for the slot list.
+///
+/// `field` is:
+///
+/// | id | meaning                                                        |
+/// |----|----------------------------------------------------------------|
+/// | 0  | `nid` — the engine's npc index                                  |
+/// | 1  | current hitpoints                                               |
+/// | 2  | max (base) hitpoints                                            |
+/// | 3  | `respawn_at` — TICKS REMAINING, or -1 when `None`                |
+/// | 4  | `target_player` — the pid this npc is fighting, or -1            |
+/// | 5  | `hunt_mode` — the hunt config id, or -1                          |
+/// | 6  | tile x                                                          |
+/// | 7  | tile z                                                          |
+/// | 8  | npc TYPE id (`uid.id()`)                                        |
+/// | 9  | `active` — 0 for an npc that is dead and awaiting respawn        |
+///
+/// Anything else returns [`HOST_FIELD_UNKNOWN`].
+///
+/// # ★ FIELDS 6, 7 AND 8 ARE NOT HIDDEN STATE — do not use them as probe targets
+///
+/// The client IS told an npc's type id and position; that is how it renders the
+/// model on the right tile. They are here as JOIN KEYS — field 8 is what lets a
+/// label row be matched to the packed npc config, and it is the independent path
+/// `tests/truth_accessors.rs` checks the hitpoints index against. A probe scored
+/// on them would report near-perfect accuracy for reading out a column it was
+/// handed. Fields 1-5 and 9 are the hidden ones. (There is no `level` field
+/// because [`host_npc_count`] filters to the player's own level, so it would be a
+/// constant.)
+///
+/// # ★★ THE HITPOINTS INDEX IS THE ENGINE'S OWN, NOT A LITERAL
+///
+/// `Stats<6>` is `[u16; 6]` and names nothing. `NpcStat::Hitpoints` is 3
+/// (`rs-pack/src/types.rs:1033-1040`) — the same slot `ActiveNpc::new` seeds from
+/// `npc_type.hitpoints` and `ActiveNpc::damage` decrements
+/// (`rs-engine/src/active_npc.rs:55,126`). It happens to coincide with
+/// `PlayerStat::Hitpoints`, but the two are different six/twenty-one-wide sets
+/// and the coincidence is not something to rely on: reading the enum costs
+/// nothing and cannot drift.
+///
+/// # ★ -1 IS A REAL VALUE HERE
+/// Fields 3, 4 and 5 report `None` as -1. That is why the sentinel is
+/// [`HOST_FIELD_UNKNOWN`] and not -1 — see its doc comment.
+///
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process. Both indexes are
+/// checked: the slot against the snapshot, the nid against `get_npc` (an npc can
+/// be removed between the count and the read — `EntityLifeTime` values other than
+/// `Respawn` are dropped from `npc_list` entirely).
+///
+/// ★★ LABEL CHANNEL, NOT OBSERVATION — see [`host_npc_count`].
+#[unsafe(no_mangle)]
+pub extern "C" fn host_npc_field(h: *mut c_void, slot: u32, field: u32) -> i64 {
+    let host = host_ref(h);
+    let Some(&nid) = host.npc_slots.get(slot as usize) else {
+        return HOST_FIELD_UNKNOWN;
+    };
+    let Some(active) = host.env.engine.get_npc(nid) else {
+        return HOST_FIELD_UNKNOWN;
+    };
+    let npc = &active.npc;
+    const HP: usize = NpcStat::Hitpoints as usize;
+    match field {
+        0 => nid as i64,
+        1 => npc.stats.level(HP) as i64,
+        2 => npc.stats.base_level(HP) as i64,
+        3 => npc.respawn_at.map_or(-1, |v| v as i64),
+        4 => npc.target_player.map_or(-1, |v| v as i64),
+        5 => npc.hunt_mode.map_or(-1, |v| v as i64),
+        6 => npc.pathing.coord.x() as i64,
+        7 => npc.pathing.coord.z() as i64,
+        8 => npc.uid.id() as i64,
+        9 => i64::from(npc.active),
+        _ => HOST_FIELD_UNKNOWN,
+    }
+}
+
+/// The engine's own tick counter.
+///
+/// # ★★ WHY THIS EXISTS AT ALL: `action_delay` IS NOT A COUNTDOWN
+///
+/// The attack cooldown needs NO new npc-style accessor — `action_delay` is a
+/// plain player varp (id 58 in `content/274/pack/varp.pack`) and [`host_varp`]
+/// already reads it. What it needs is this, because the varp holds an ABSOLUTE
+/// tick rather than a remaining count: content writes `%action_delay =
+/// calc(map_clock + 3)` and tests it with `if (%action_delay > map_clock)`
+/// (`content/274/scripts/quests/quest_legends/scripts/jungle_tree.rs2:61-66`).
+/// The cooldown is therefore `max(0, action_delay - clock)`, and a label built
+/// from the raw varp would be a monotonically rising tick number wearing the name
+/// "cooldown" — plausible, well-typed, and nonsense to train on.
+///
+/// `client-host/src/truth.ts`'s `actionDelay()` is where the subtraction lives.
+///
+/// ★★ LABEL CHANNEL, NOT OBSERVATION — see [`host_npc_count`].
+///
+/// # ★★ MUST NOT PANIC
+/// A field read on a struct this handle owns; nothing here can fail.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_clock(h: *mut c_void) -> i64 {
+    host_ref(h).env.engine.clock as i64
 }
 
 /// [`host_teleport`]: the player arrived at the coordinate asked for.
