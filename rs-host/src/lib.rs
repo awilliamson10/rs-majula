@@ -24,6 +24,11 @@ use rl_env::tape::TUTORIAL_SPAWN;
 use rl_env::EnvHarness;
 use rs_grid::CoordGrid;
 use rs_pack::cache::CacheStore;
+// ★ THE ENGINE'S OWN TELEPORT, not a coordinate assignment. `ScriptPlayer` is
+// the trait the content VM dispatches through: `p_teleport` (opcode 2088,
+// `rs-vm/src/ops/player.rs:923`) is literally `player.teleport(pop_coord(s)?)`
+// on this trait. See [`host_teleport`] for why that matters.
+use rs_vm::engine::ScriptPlayer;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Guards against a second `host_new` in this process. `rs-pathfinder` holds
@@ -385,6 +390,121 @@ pub extern "C" fn host_player_z(h: *mut c_void) -> i32 {
     match host.env.engine.get_player(host.pid) {
         Some(p) => p.player.pathing.coord.z() as i32,
         None => -1,
+    }
+}
+
+/// [`host_teleport`]: the player arrived at the coordinate asked for.
+pub const HOST_TELEPORT_OK: u32 = 0;
+/// [`host_teleport`]: there is no player on this handle any more (logged out,
+/// force-logged-out — see [`host_step`]'s keepalive note).
+pub const HOST_TELEPORT_NO_PLAYER: u32 = 1;
+/// [`host_teleport`]: the ENGINE refused. `Pathing::teleport` early-returns
+/// `None` when `rsmod::is_zone_allocated` says the destination zone is not in
+/// the collision map, and `ActivePlayer::tele` answers that with an "Invalid
+/// teleport!" game message and no movement at all
+/// (`rs-engine/src/active_player.rs:2510-2521`).
+pub const HOST_TELEPORT_REFUSED: u32 = 2;
+/// [`host_teleport`]: the coordinate does not fit `CoordGrid`'s packing and
+/// would have been SILENTLY MASKED into a different, perfectly valid one.
+pub const HOST_TELEPORT_OUT_OF_RANGE: u32 = 3;
+
+/// `CoordGrid` packs x and z into 14 bits each (`rs-grid/src/coord.rs:49`).
+const COORD_MAX: u16 = 0x3FFF;
+/// ...and the level into 2.
+const LEVEL_MAX: u8 = 3;
+
+/// Moves the player to an arbitrary coordinate: the segment boundary.
+///
+/// # ★★ THE CLIENT DOES NOT NECESSARILY FOLLOW, AND IT DOES NOT COMPLAIN
+///
+/// `ActivePlayer::rebuild_normal(false)` — the per-tick call at
+/// `phases/info.rs:76` that is the only thing which ever sends `REBUILD_NORMAL`
+/// during play — early-returns unless `BuildArea::needs_rebuild` is true, and
+/// that is `|zone_x - origin_x| > 4 || |zone_z - origin_z| > 4`
+/// (`rs-engine/rs-entity/src/build.rs:285-291`). A zone is 8 tiles, so a hop of
+/// 32 tiles or less sends NOTHING and the client keeps rendering the region it
+/// already had.
+///
+/// Nothing about that looks broken from the outside. The local player's own
+/// movement is encoded as a teleport RELATIVE TO THE BUILD AREA ORIGIN
+/// (`info.rs:238-252`), so the client's idea of the player's absolute tile stays
+/// correct — it is the world around the player that is stale. `sceneState` stays
+/// 2, the frame still composites, every loc and npc in the observation belongs to
+/// somewhere the player is not, and no error is raised anywhere.
+///
+/// So this returns a status and the CALLER confirms the rebuild by watching
+/// `client.mapBuildBaseX`/`mapBuildBaseZ`. See `client-host/src/teleport.ts`.
+///
+/// # ★ WHY `ScriptPlayer::teleport` AND NOT `pathing.set_coord`
+///
+/// This is the engine's own teleport, reached through the same trait method the
+/// content VM's `p_teleport` opcode dispatches to
+/// (`rs-vm/src/ops/player.rs:923`). It runs `ActivePlayer::tele`, which:
+///
+///   * refuses destinations in an unallocated zone rather than moving there
+///     (hence [`HOST_TELEPORT_REFUSED`]);
+///   * sets `pathing.tele`, which is what makes `PlayerInfo::write_local_player`
+///     choose the absolute-reposition encoding instead of a walk step — without
+///     it the client would be told the player took one step and would render it
+///     drifting a tile at a time while the engine had it somewhere else;
+///   * sets `pathing.jump` on a level change, and re-focuses the entity's facing
+///     direction.
+///
+/// A bare coordinate assignment skips every one of those.
+///
+/// # ★ THE ONE THING ADDED ON TOP: THE QUEUED PATH
+///
+/// `Pathing::reset` (run at the head of every tick) clears `walk_step`, the
+/// direction fields and the tele/jump flags but NOT `waypoint_index`
+/// (`rs-engine/rs-entity/src/pathing.rs`), and neither does `tele`. A player
+/// teleported mid-walk therefore keeps the waypoints it was walking to and the
+/// movement phase resumes them from the new coordinate — i.e. a segment that
+/// began with a 200-tile teleport would spend its first tens of ticks walking
+/// back toward the previous region. `clear_waypoints` is a plain data reset with
+/// no script execution, so it is safe to run outside a tick; the interaction
+/// target is deliberately NOT cleared here, because `clear_pending_action` fires
+/// `IfClose` triggers, and running content scripts outside `Engine::cycle` is not
+/// something this entry point can do safely (see the MUST NOT PANIC note below).
+///
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process — there is no JS-visible
+/// error, just a dead host. Nothing on this path can panic: the range check below
+/// runs BEFORE `CoordGrid::new`, which would otherwise mask silently
+/// (`x & 0x3FFF`, `y & 0x3`, `z & 0x3FFF`), and `is_zone_allocated` only indexes
+/// a global map with values that masking has already made in-range.
+///
+/// # Returns
+/// [`HOST_TELEPORT_OK`], [`HOST_TELEPORT_NO_PLAYER`], [`HOST_TELEPORT_REFUSED`]
+/// or [`HOST_TELEPORT_OUT_OF_RANGE`]. Success is confirmed by READING THE
+/// COORDINATE BACK, not by trusting that `tele` did anything — that is what turns
+/// the engine's silent "Invalid teleport!" into a status the caller can act on.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_teleport(h: *mut c_void, x: u16, level: u8, z: u16) -> u32 {
+    // ★ BEFORE `CoordGrid::new`, which masks rather than rejects. `bun:ffi`
+    // has already truncated anything above u16/u8 on the way in, so this is
+    // the second of two silent narrowings on the same value; the TypeScript
+    // side range-checks ahead of the call for the first one.
+    if x > COORD_MAX || z > COORD_MAX || level > LEVEL_MAX {
+        return HOST_TELEPORT_OUT_OF_RANGE;
+    }
+    let target = CoordGrid::new(x, level, z);
+
+    let host = host_ref(h);
+    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+        return HOST_TELEPORT_NO_PLAYER;
+    };
+
+    // See "THE ONE THING ADDED ON TOP" above. Before the teleport, so a path
+    // can never be consumed against the new coordinate.
+    p.player.pathing.clear_waypoints();
+    p.teleport(target);
+
+    // ★ Read it back. `tele` reports failure by sending a chat message, which
+    // this side cannot see, so "did it work" is answered by the coordinate.
+    if p.player.pathing.coord.packed() == target.packed() {
+        HOST_TELEPORT_OK
+    } else {
+        HOST_TELEPORT_REFUSED
     }
 }
 

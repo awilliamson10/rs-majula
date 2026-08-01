@@ -2117,6 +2117,7 @@ dependencies = [
  "rs-crypto",
  "rs-grid",
  "rs-pack",
+ "rs-vm",
  "tokio",
 ]
 
