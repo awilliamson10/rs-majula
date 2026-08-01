@@ -268,11 +268,22 @@ impl EnvHarness {
     /// — the same fail-loud policy `load_scenario` uses, because a silently
     /// missing varp would read as a legitimate 0.
     pub fn player_varp(&self, pid: u16, name: &str) -> i32 {
-        let active = self
-            .engine
-            .get_player(pid)
-            .unwrap_or_else(|| panic!("no player at pid {pid}"));
-        crate::action::varp_int(active, name)
+        self.try_player_varp(pid, name)
+            .unwrap_or_else(|| panic!("no player at pid {pid}, or cache is missing the {name:?} varp"))
+    }
+
+    /// Non-panicking varp read: `None` for a departed player OR a name the
+    /// cache does not know.
+    ///
+    /// ★★ THIS IS THE ONE THE C ABI MUST USE. `player_varp` asserts, which is
+    /// the right policy inside Rust (a silently missing varp reads as a
+    /// legitimate 0) and fatal across a C ABI: every panic in an `extern "C"`
+    /// fn aborts the process, so an unknown name arriving from TypeScript
+    /// killed the whole fused host with no JS-visible error. `player_varp` is
+    /// now a thin `unwrap` over this, so the two cannot drift.
+    pub fn try_player_varp(&self, pid: u16, name: &str) -> Option<i32> {
+        let active = self.engine.get_player(pid)?;
+        crate::action::try_varp_int(active, name)
     }
 
     /// Latest per-phase tick timings published by the engine after the most

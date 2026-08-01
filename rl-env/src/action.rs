@@ -355,11 +355,23 @@ pub const VARP_EAT_DELAY: &str = "eat_delay";
 /// plumbing, never an observation. `EnvHarness::player_varp` (`lib.rs`) is the
 /// one exported door onto it, and it carries the faithfulness caveat.
 pub(crate) fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
-    let varp = crate::cache()
-        .varps
-        .get_by_debugname(name)
-        .unwrap_or_else(|| panic!("cache is missing the {name:?} varp"));
-    active.player.vars.get(varp.id).as_int()
+    try_varp_int(active, name).unwrap_or_else(|| panic!("cache is missing the {name:?} varp"))
+}
+
+/// The non-panicking half of [`varp_int`], and the ONLY body -- `varp_int` is a
+/// thin `unwrap` over it so the two can never drift into disagreeing about what
+/// "unknown" means.
+///
+/// ★ Exists because every panic in an `extern "C"` fn ABORTS the process (the
+/// runtime cannot unwind across a C frame). `rs-host::host_varp` is reached
+/// from TypeScript with a caller-supplied string, so `varp_int`'s
+/// `unwrap_or_else(panic!)` turned a typo into a killed host with no
+/// JS-visible error -- measured: SIGABRT, "thread caused non-unwinding panic".
+pub(crate) fn try_varp_int(active: &ActivePlayer, name: &str) -> Option<i32> {
+    // Resolve the id FIRST and bail on `None`, rather than indexing a var
+    // table with something the cache never named.
+    let varp = crate::cache().varps.get_by_debugname(name)?;
+    Some(active.player.vars.get(varp.id).as_int())
 }
 
 /// Ticks until `active` may attack again (0 = ready now). See

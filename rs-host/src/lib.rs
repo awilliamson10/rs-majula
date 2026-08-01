@@ -266,16 +266,43 @@ pub extern "C" fn host_ondemand_len(h: *mut c_void, archive: u32, file: u32) -> 
     ondemand_slice(host_ref(h), archive, file).len()
 }
 
-/// Returns -1 (the same "absent/invalid" sentinel [`host_player_x`] /
-/// [`host_player_z`] use) if `name` is null, rather than dereferencing it.
+/// Returned by [`host_varp`] for a name the cache does not know, a null or
+/// non-UTF-8 name, or a player that is gone.
+///
+/// ★ NOT -1. A varp can legitimately hold -1 (`action_delay` and friends are
+/// signed and content writes negative values), so -1 as "unknown" would make a
+/// typo and a real reading indistinguishable to the caller. `i32::MIN` is not
+/// a value the var table ever holds.
+pub const HOST_VARP_UNKNOWN: i32 = i32::MIN;
+
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process — the runtime cannot
+/// unwind across a C frame, so there is no JS-visible error, just a dead host.
+/// `EnvHarness::player_varp` panics on an unknown name, so routing this through
+/// `try_player_varp` is the whole difference. Returns [`HOST_VARP_UNKNOWN`] for
+/// a null pointer, a non-UTF-8 name, an unknown name, or a departed player.
+///
+/// # ★ THIS IS ENGINE TRUTH — the reward/checkpoint channel
+/// `%tutorial` is the benchmark's primary metric. It is read by the SCORER and
+/// by parity tests, and it must never reach `ClientState`: the agent's
+/// observation is a pure function of the client's decoded state, and an
+/// engine-truth field in it would break faithfulness silently. The TypeScript
+/// side enforces that by exporting this accessor from `truth.ts` only.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_varp(h: *mut c_void, name: *const c_char) -> i32 {
     let host = host_ref(h);
     if name.is_null() {
-        return -1;
+        return HOST_VARP_UNKNOWN;
     }
-    let n = unsafe { CStr::from_ptr(name) }.to_str().unwrap_or("");
-    host.env.player_varp(host.pid, n)
+    // ★ NOT `.unwrap_or("")`: an empty name would then be looked up as if the
+    // caller had asked for it, and the cache's answer for "" is the same
+    // `None` — correct by accident today, wrong the moment "" is a debugname.
+    let Ok(n) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+        return HOST_VARP_UNKNOWN;
+    };
+    host.env
+        .try_player_varp(host.pid, n)
+        .unwrap_or(HOST_VARP_UNKNOWN)
 }
 
 /// Engine-truth position. ★ For the Task-4 state-parity test ONLY. The agent
