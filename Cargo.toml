@@ -21,6 +21,7 @@ members = [
     "rs-server",
     "rl-env",
     "rl-env-py",
+    "rs-host",
     "rev-cfg",
 ]
 resolver = "2"

@@ -350,7 +350,11 @@ pub const VARP_ACTION_DELAY: &str = "action_delay";
 /// `%eat_delay >= map_clock`.
 pub const VARP_EAT_DELAY: &str = "eat_delay";
 
-fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
+/// ★ `pub(crate)`, deliberately. This is raw engine ground truth read straight
+/// out of the player's var table -- instrumentation and derived-feature
+/// plumbing, never an observation. `EnvHarness::player_varp` (`lib.rs`) is the
+/// one exported door onto it, and it carries the faithfulness caveat.
+pub(crate) fn varp_int(active: &ActivePlayer, name: &str) -> i32 {
     let varp = crate::cache()
         .varps
         .get_by_debugname(name)

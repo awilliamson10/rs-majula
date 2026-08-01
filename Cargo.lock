@@ -1981,8 +1981,10 @@ version = "0.1.10"
 name = "rl-env"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "once_cell",
  "ron",
+ "rs-crypto",
  "rs-engine",
  "rs-entity",
  "rs-grid",
@@ -2105,6 +2107,17 @@ name = "rs-hero"
 version = "0.1.10"
 dependencies = [
  "rev-cfg",
+]
+
+[[package]]
+name = "rs-host"
+version = "0.1.0"
+dependencies = [
+ "rl-env",
+ "rs-crypto",
+ "rs-grid",
+ "rs-pack",
+ "tokio",
 ]
 
 [[package]]

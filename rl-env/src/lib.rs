@@ -3,6 +3,7 @@ pub mod batch;
 pub mod observe;
 pub mod reward;
 pub mod scenario;
+pub mod tape;
 
 use once_cell::sync::OnceCell;
 use std::path::Path;
@@ -129,6 +130,15 @@ impl EnvHarness {
         Self::boot_inner(true, 1084838400000)
     }
 
+    /// Full-world boot with an explicit RNG seed. Same shape as
+    /// [`Self::boot_arena_seeded`], but for the full-world path (needed for
+    /// the cross-process determinism gate to actually vary the engine, not
+    /// just the tape's own recorded `seed` field -- see `tape::digest`'s
+    /// caller in `packet_tape`).
+    pub fn boot_seeded(seed: u64) -> Self {
+        Self::boot_inner(true, seed)
+    }
+
     /// Arena-mode boot: skips spawning the static world NPCs entirely, so
     /// the engine ticks (near) nothing but whatever players the caller spawns
     /// (e.g. via `spawn_player`/`reset_duel`). This is the training-time
@@ -252,6 +262,17 @@ impl EnvHarness {
 
     pub fn clock(&self) -> u64 {
         self.engine.clock as u64
+    }
+
+    /// Reads a player varp by debugname. Panics if the cache has no such varp
+    /// — the same fail-loud policy `load_scenario` uses, because a silently
+    /// missing varp would read as a legitimate 0.
+    pub fn player_varp(&self, pid: u16, name: &str) -> i32 {
+        let active = self
+            .engine
+            .get_player(pid)
+            .unwrap_or_else(|| panic!("no player at pid {pid}"));
+        crate::action::varp_int(active, name)
     }
 
     /// Latest per-phase tick timings published by the engine after the most

@@ -16,3 +16,14 @@ tokio       = { version = "1.52", features = ["sync", "rt"] }
 once_cell   = "1"
 serde       = { version = "1", features = ["derive"] }
 ron         = "0.8"
+
+# SPIKE (cache_dump bin) only.
+anyhow      = "1"
+
+[dev-dependencies]
+# SPIKE S1 + tape_record's ISAAC-mirror tests only: mirror the bot handle's
+# ISAAC streams from the test side. Not needed by lib/bin code -- tape.rs's
+# recorder no longer re-seats (spawn_player_tapped's receiver is live from
+# before accept_login runs, so encoder and decoder are in lockstep by
+# construction; see tape.rs's doc comment).
+rs-crypto   = { workspace = true }
