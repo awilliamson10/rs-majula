@@ -54,12 +54,67 @@ pub struct Host {
     empty: Vec<u8>,
 }
 
-/// Boots the full world and spawns one fresh Tutorial Island player.
+/// Boots the full world and spawns one fresh player at an ARBITRARY coordinate.
+///
+/// ★ A SEPARATE ENTRY POINT rather than a new signature on [`host_new`]: every
+/// existing test and both `*-once.ts` runners call `host_new(seed)`, and
+/// changing that signature would be a wide, mechanical, error-prone edit for no
+/// gain. `host_new` is now a thin wrapper at `TUTORIAL_SPAWN`.
+///
+/// The engine places the player exactly where asked — there is no walkability
+/// check and no clamp on this path — so an unwalkable coordinate is the
+/// caller's problem, not a silent relocation.
+///
+/// # ★★ THIS IS A POST-LOGIN TELEPORT, NOT A LOGIN LOCATION
+///
+/// Read this before assuming a coordinate here produces a normal account there.
+/// `Engine::spawn_player_tapped` applies `coord` AFTER `accept_login` has
+/// returned (`rs-engine/src/engine.rs`: `active.player.pathing.coord = coord`,
+/// below the `remove_player`/`add_player` re-seat), and `accept_login` takes no
+/// coordinate at all. Every new player is constructed at
+/// `rs-engine/src/active_player.rs:182`'s hardcoded
+/// `CoordGrid::new(3094, 0, 3106)  // Tutorial island`, and `on_login()` fires
+/// the `[login,_]` trigger THERE.
+///
+/// So `content/274/scripts/login_logout/login.rs2:81`
+///
+/// ```text
+/// if (%tutorial < ^tutorial_complete & ~in_tutorial_island(coord) = true) {
+///     @start_tutorial;
+/// }
+/// ~initalltabs;
+/// ```
+///
+/// always sees a Tutorial Island coordinate and always JUMPS (`@` is a label
+/// jump — control never returns) to `start_tutorial`, which runs
+/// `if_settab(null, ...)` over every sidebar tab (`tutorial.rs2:31-43`).
+/// `~initalltabs` on the next line — the ONLY thing in the game that grants
+/// them — is unreachable no matter what coordinate is passed here.
+///
+/// The consequence is silent and downstream: `client-host/src/state.ts`
+/// resolves `inventoryComId` from the granted tab and returns -1 when there is
+/// none, so **every observation at a mainland spawn carries an empty inventory
+/// and nothing reports an error**. The engine's own `player.tabs` after a
+/// Lumbridge boot is `[65535 x7, None, 65535, 65535, Some(2449), Some(904),
+/// 65535, 65535]` — `start_tutorial`'s revocation pattern exactly, with only
+/// logout and game-options granted.
+///
+/// Also for this reason `%tutorial` settles at 1, not 0: `accept_login` leaves
+/// the `player_kit` modal open, the close below fires `[if_close,player_kit]`,
+/// and that queues `tutorial_designed_character`.
+///
+/// Fixing it means logging the player in AT the requested coordinate (or
+/// re-running `[login,_]` after the relocation) — an `rs-engine` change that
+/// also moves the existing tutorial path, so it is deliberately not done here.
+/// `rs-host/tests/mainland_spawn.rs` pins the placement;
+/// `python/tests/test_env.py` pins the tab consequence in both directions,
+/// including a `strict=True` xfail that will fail the suite the day this is
+/// fixed.
 ///
 /// # Panics
 /// If called more than once in this process (see [`BOOTED`]).
 #[unsafe(no_mangle)]
-pub extern "C" fn host_new(seed: u64) -> *mut c_void {
+pub extern "C" fn host_new_at(seed: u64, x: u16, level: u8, z: u16) -> *mut c_void {
     assert!(
         !BOOTED.swap(true, Ordering::SeqCst),
         "host_new called twice -- ONE ENGINE PER PROCESS (rs-pathfinder's \
@@ -77,7 +132,6 @@ pub extern "C" fn host_new(seed: u64) -> *mut c_void {
     // `[0; 4]`, so a from-scratch mirror is in lockstep by construction.
     let mut env = EnvHarness::boot_seeded(seed);
 
-    let (x, level, z) = TUTORIAL_SPAWN;
     let (pid, rx) = env.engine.spawn_player_tapped("agent", CoordGrid::new(x, level, z));
 
     let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Vec<u8>>(128);
@@ -101,6 +155,17 @@ pub extern "C" fn host_new(seed: u64) -> *mut c_void {
         cache,
         empty: Vec::new(),
     })) as *mut c_void
+}
+
+/// Tutorial Island, for every caller that predates [`host_new_at`].
+///
+/// ★ Kept byte-identical in behaviour to what it was before the split: same
+/// seed, same `TUTORIAL_SPAWN`, same `BOOTED` guard (inherited from
+/// `host_new_at`, so calling either one twice still aborts).
+#[unsafe(no_mangle)]
+pub extern "C" fn host_new(seed: u64) -> *mut c_void {
+    let (x, level, z) = TUTORIAL_SPAWN;
+    host_new_at(seed, x, level, z)
 }
 
 #[inline]
