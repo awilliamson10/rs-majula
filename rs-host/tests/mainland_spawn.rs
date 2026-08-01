@@ -50,14 +50,13 @@ fn a_mainland_spawn_is_alive_somewhere_other_than_tutorial_island() {
         "a fresh account must be at %tutorial = 0"
     );
 
-    // ★ AND IT DOES NOT STAY 0 — read this before trusting the assertion above
-    // as a description of the steady state. `accept_login`'s post-login sequence
-    // leaves the `player_kit` modal open; `spawn_player_tapped` closes it (see
-    // its comment in `rs-engine/src/engine.rs`), which fires
+    // ★ AND IT STAYS 0 here, which was NOT true before `accept_login` learned to
+    // take a spawn coordinate. A player logged in on Tutorial Island runs
+    // `start_tutorial`, which opens `player_kit`; closing that modal fires
     // `[if_close,player_kit]` -> `[queue,tutorial_designed_character]` ->
-    // `%tutorial = ^newbie_basics_instructor_designed_character` (= 1) on the
-    // first cycle that drains the queue. This assertion holds only because it
-    // runs BEFORE any `host_step`. The Python side pins the settled value.
+    // `%tutorial = 1`. A mainland login never opens it. See
+    // `mainland_login_grants_tabs.rs` for the assertion that pins this after
+    // live ticks rather than only at construction.
 
     // Ten ticks of a live world, so a spawn that aborts on the first cycle
     // fails here rather than in a Bun test twenty minutes later.

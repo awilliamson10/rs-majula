@@ -65,18 +65,14 @@ pub struct Host {
 /// check and no clamp on this path — so an unwalkable coordinate is the
 /// caller's problem, not a silent relocation.
 ///
-/// # ★★ THIS IS A POST-LOGIN TELEPORT, NOT A LOGIN LOCATION
+/// # ★★ THE COORDINATE IS A LOGIN LOCATION, AND IT ONLY RECENTLY BECAME ONE
 ///
-/// Read this before assuming a coordinate here produces a normal account there.
-/// `Engine::spawn_player_tapped` applies `coord` AFTER `accept_login` has
-/// returned (`rs-engine/src/engine.rs`: `active.player.pathing.coord = coord`,
-/// below the `remove_player`/`add_player` re-seat), and `accept_login` takes no
-/// coordinate at all. Every new player is constructed at
-/// `rs-engine/src/active_player.rs:182`'s hardcoded
-/// `CoordGrid::new(3094, 0, 3106)  // Tutorial island`, and `on_login()` fires
-/// the `[login,_]` trigger THERE.
+/// This is the trap that nearly sank G1c Task 1; do not undo it by "simplifying"
+/// `spawn_player_tapped` back into a post-login teleport.
 ///
-/// So `content/274/scripts/login_logout/login.rs2:81`
+/// `on_login()` fires the `[login,_]` trigger, and
+/// `content/274/scripts/login_logout/login.rs2:81` branches on where the player
+/// is STANDING at that moment:
 ///
 /// ```text
 /// if (%tutorial < ^tutorial_complete & ~in_tutorial_island(coord) = true) {
@@ -85,31 +81,32 @@ pub struct Host {
 /// ~initalltabs;
 /// ```
 ///
-/// always sees a Tutorial Island coordinate and always JUMPS (`@` is a label
-/// jump — control never returns) to `start_tutorial`, which runs
-/// `if_settab(null, ...)` over every sidebar tab (`tutorial.rs2:31-43`).
-/// `~initalltabs` on the next line — the ONLY thing in the game that grants
-/// them — is unreachable no matter what coordinate is passed here.
+/// `@` is a label jump — control never returns — so once `start_tutorial` is
+/// taken it nulls every sidebar tab (`tutorial.rs2:31-43`) and `~initalltabs`
+/// on the next line, the ONLY thing in the game that grants them, never runs.
 ///
-/// The consequence is silent and downstream: `client-host/src/state.ts`
-/// resolves `inventoryComId` from the granted tab and returns -1 when there is
-/// none, so **every observation at a mainland spawn carries an empty inventory
-/// and nothing reports an error**. The engine's own `player.tabs` after a
-/// Lumbridge boot is `[65535 x7, None, 65535, 65535, Some(2449), Some(904),
-/// 65535, 65535]` — `start_tutorial`'s revocation pattern exactly, with only
-/// logout and game-options granted.
+/// `accept_login` used to take no coordinate: every player was built at
+/// `rs-engine/src/active_player.rs:182`'s hardcoded
+/// `CoordGrid::new(3094, 0, 3106)  // Tutorial island`, logged in there, and was
+/// relocated afterwards. So EVERY headless spawn, anywhere in the world, ended
+/// up with no inventory tab. The cost was silent and entirely downstream:
+/// `client-host/src/state.ts` derives `inventoryComId` from the granted tab and
+/// returns -1 when there is none, so the observation carried an empty backpack
+/// and nothing errored. `accept_login` now takes `Option<CoordGrid>` and applies
+/// it before `add_player`/`on_login`; `spawn_player_tapped` passes it.
 ///
-/// Also for this reason `%tutorial` settles at 1, not 0: `accept_login` leaves
-/// the `player_kit` modal open, the close below fires `[if_close,player_kit]`,
-/// and that queues `tutorial_designed_character`.
+/// Two consequences worth knowing:
 ///
-/// Fixing it means logging the player in AT the requested coordinate (or
-/// re-running `[login,_]` after the relocation) — an `rs-engine` change that
-/// also moves the existing tutorial path, so it is deliberately not done here.
-/// `rs-host/tests/mainland_spawn.rs` pins the placement;
-/// `python/tests/test_env.py` pins the tab consequence in both directions,
-/// including a `strict=True` xfail that will fail the suite the day this is
-/// fixed.
+/// * A mainland spawn is a genuinely fresh account — `%tutorial` stays 0.
+///   (It used to settle at 1 everywhere: `start_tutorial` opens `player_kit`,
+///   `spawn_player_tapped` closes it, and `[if_close,player_kit]` queues
+///   `tutorial_designed_character`.)
+/// * A Tutorial Island spawn still gets the tutorial, tabs revoked and all —
+///   `host_new`'s behaviour is unchanged, which is what the existing suites pin.
+///
+/// Pinned by `rs-host/tests/mainland_login_grants_tabs.rs` (engine truth, on
+/// `player.tabs`), `rs-host/tests/mainland_spawn.rs` (placement) and
+/// `python/tests/test_env.py`'s `mainland` tests (the client-visible result).
 ///
 /// # Panics
 /// If called more than once in this process (see [`BOOTED`]).
