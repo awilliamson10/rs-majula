@@ -17,6 +17,16 @@ fn main() {
     let t = rl_env::tape::TapeReader::parse(&bytes).expect("self-parse");
     std::fs::write(&out, &bytes).expect("write tape");
 
-    println!("tape={out} ticks={ticks} seed={seed} bytes={} tutorial={tutorial} digest={:016x}",
+    // ★ `feed_bytes` — the sum of every tick's payload, with the tape's own
+    // 20-byte header and 60 per-tick 8-byte headers subtracted out — is what
+    // `client-host/test/live.test.ts` actually pins (`tapeFeedBytes === 2175`).
+    // `bytes` (the file's total size, 2675 at that pinning) used to be the
+    // only number printed here, which makes a reader do 2675 - 500 = 2175 in
+    // their head to compare against the test. Printed directly instead: the
+    // README's "verify bytes=2675" step is checking the same value the test
+    // checks, byte for byte.
+    let feed_bytes: usize = t.ticks.iter().map(|tick| tick.bytes.len()).sum();
+
+    println!("tape={out} ticks={ticks} seed={seed} bytes={} feed_bytes={feed_bytes} tutorial={tutorial} digest={:016x}",
              bytes.len(), rl_env::tape::digest(&t));
 }
