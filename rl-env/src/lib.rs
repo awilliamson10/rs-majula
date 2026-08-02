@@ -19,19 +19,37 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 
 static CACHE: OnceCell<&'static CacheStore> = OnceCell::new();
 
+/// Where `content/274` lives — the majula workspace root.
+///
 /// `rs_pack::CONTENT_DIR` / `PACK_DIR` are relative paths (`content/274`,
 /// `content/274/pack`) intended to be resolved against the workspace root.
 /// `cargo run` for `rs-server` is conventionally invoked from the workspace
 /// root, so the relative paths just work there. `cargo test` however sets
 /// the process cwd to the *package's* manifest directory (`rl-env/`), not
-/// the workspace root, so we resolve against the workspace root explicitly
-/// via `CARGO_MANIFEST_DIR` (which points at `majula/rl-env`) to keep the
-/// same underlying paths regardless of how the test binary is invoked.
-fn workspace_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("rl-env has a parent workspace directory")
-        .to_path_buf()
+/// the workspace root, so the path is resolved explicitly rather than left
+/// to the cwd.
+///
+/// ★★ THE FALLBACK IS BAKED IN AT COMPILE TIME, WHICH IS THE BUG.
+/// `env!("CARGO_MANIFEST_DIR")` is substituted by rustc, so a `librs_host`
+/// cdylib built on the desktop and `dlopen`'d on the Mac carries the DESKTOP's
+/// absolute path. `pack_all` then finds no `content/274`, and because every
+/// panic in an `extern "C"` fn aborts, the whole Bun process dies with no
+/// message — from inside a function whose failure has nothing to do with paths.
+/// That is not hypothetical: "build heavy things on the desktop" is this
+/// project's own documented workflow (CLAUDE.md), so the artifact and the
+/// machine that runs it routinely differ.
+///
+/// `MAJULA_ROOT` makes the decision at RUNTIME, so one artifact relocates. Unset,
+/// the resolved path is byte-identical to what `workspace_root()` returned
+/// before — `tests/majula_root.rs` pins both halves.
+pub fn content_root() -> std::path::PathBuf {
+    match std::env::var_os("MAJULA_ROOT") {
+        Some(p) => std::path::PathBuf::from(p),
+        None => Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("rl-env has a parent workspace directory")
+            .to_path_buf(),
+    }
 }
 
 /// Packs the rev-274 cache exactly once, leaks it to `'static`, and returns
@@ -40,7 +58,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// `CacheStore` for obj/inv/interface lookups, without paying for another
 /// script pack on every call).
 fn packed_cache() -> &'static CacheStore {
-    let root = workspace_root();
+    let root = content_root();
     let content_dir = root.join(rs_pack::CONTENT_DIR);
     let pack_dir = root.join(rs_pack::PACK_DIR);
     *CACHE.get_or_init(|| {
@@ -58,7 +76,7 @@ fn packed_cache() -> &'static CacheStore {
 /// plus a fresh ScriptProvider (each Engine gets its own ScriptProvider).
 pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
     let cache = packed_cache();
-    let root = workspace_root();
+    let root = content_root();
     let content_dir = root.join(rs_pack::CONTENT_DIR);
     let pack_dir = root.join(rs_pack::PACK_DIR);
     // ScriptProvider is cheap-ish to rebuild; pack again to get one.
@@ -268,11 +286,22 @@ impl EnvHarness {
     /// — the same fail-loud policy `load_scenario` uses, because a silently
     /// missing varp would read as a legitimate 0.
     pub fn player_varp(&self, pid: u16, name: &str) -> i32 {
-        let active = self
-            .engine
-            .get_player(pid)
-            .unwrap_or_else(|| panic!("no player at pid {pid}"));
-        crate::action::varp_int(active, name)
+        self.try_player_varp(pid, name)
+            .unwrap_or_else(|| panic!("no player at pid {pid}, or cache is missing the {name:?} varp"))
+    }
+
+    /// Non-panicking varp read: `None` for a departed player OR a name the
+    /// cache does not know.
+    ///
+    /// ★★ THIS IS THE ONE THE C ABI MUST USE. `player_varp` asserts, which is
+    /// the right policy inside Rust (a silently missing varp reads as a
+    /// legitimate 0) and fatal across a C ABI: every panic in an `extern "C"`
+    /// fn aborts the process, so an unknown name arriving from TypeScript
+    /// killed the whole fused host with no JS-visible error. `player_varp` is
+    /// now a thin `unwrap` over this, so the two cannot drift.
+    pub fn try_player_varp(&self, pid: u16, name: &str) -> Option<i32> {
+        let active = self.engine.get_player(pid)?;
+        crate::action::try_varp_int(active, name)
     }
 
     /// Latest per-phase tick timings published by the engine after the most

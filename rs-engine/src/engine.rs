@@ -2132,7 +2132,14 @@ impl Engine {
         let engine_ptr = self as *mut Engine;
         with_engine(self, || {
             let engine = unsafe { &mut *engine_ptr };
-            engine.accept_login(request, None, pid);
+            // ★★ `Some(coord)`, NOT the post-login relocation below, is what
+            // makes a headless spawn a real login AT that place. The
+            // `[login,_]` trigger branches on the coordinate (Tutorial Island
+            // revokes every sidebar tab and never reaches `~initalltabs`), so a
+            // player logged in on the island and teleported afterwards is not
+            // the same account as one logged in where it stands. See
+            // `accept_login`'s doc comment.
+            engine.accept_login(request, None, pid, Some(coord));
             // accept_login's post-login sequence leaves the client's
             // welcome/tutorial modal open (modal_state != MODAL_NONE, with
             // modal_main set to the player_kit interface), which
@@ -2151,11 +2158,17 @@ impl Engine {
                     error!("error closing post-login modal for spawned player {pid}: {e}");
                 }
             }
-            // Re-seat zone membership at the new coord. accept_login
-            // registered the player in the tutorial-coord zone via
-            // add_player; remove_player tears that registration down (using
-            // the still-tutorial coord) before we relocate and re-add at the
-            // target coord.
+            // Re-seat zone membership at `coord`.
+            //
+            // ★ STILL NEEDED even though `accept_login` now logs the player in
+            // AT `coord`: the login trigger itself can move them. Tutorial
+            // Island's `start_tutorial` does `p_telejump(0_48_48_22_34)` for a
+            // `%tutorial = 0` account, so a tutorial spawn lands somewhere the
+            // caller did not ask for unless it is put back here. For a mainland
+            // spawn nothing telejumps and this is a no-op — which is exactly
+            // why it can no longer be relied on to place the player: by the
+            // time it runs, `[login,_]` has already decided whether this
+            // account has sidebar tabs.
             if let Some(mut active) = engine.remove_player(pid) {
                 active.player.pathing.coord = coord;
                 engine.add_player(pid, active, pid as i64);
@@ -2540,11 +2553,39 @@ impl Engine {
     ///
     /// **Called by:** `try_complete_login`.
     /// **Calls:** `next_free_pid`, `add_player`, `run_script_by_trigger`.
+    /// `spawn` overrides where the player is standing WHEN THE LOGIN TRIGGER
+    /// RUNS. `None` keeps the previous behaviour (the profile's coordinate, or
+    /// `ActivePlayer::new`'s hardcoded Tutorial Island default for a new
+    /// account); the real login path passes `None`.
+    ///
+    /// ★★ IT IS A LOGIN LOCATION, NOT A TELEPORT, AND THAT DISTINCTION IS THE
+    /// WHOLE REASON THE PARAMETER EXISTS. `on_login()` below fires the
+    /// `[login,_]` trigger, and `content/274/scripts/login_logout/login.rs2:81`
+    /// branches on the player's coordinate:
+    ///
+    /// ```text
+    /// if (%tutorial < ^tutorial_complete & ~in_tutorial_island(coord) = true) {
+    ///     @start_tutorial;
+    /// }
+    /// ~initalltabs;
+    /// ```
+    ///
+    /// `@` is a label JUMP — control never returns — so once `start_tutorial`
+    /// is taken, `~initalltabs` is unreachable and every sidebar tab stays
+    /// nulled (`tutorial.rs2:31-43`). `spawn_player_tapped` used to relocate
+    /// the player only AFTER this function returned, which meant the guard
+    /// always saw Tutorial Island and every headless spawn — anywhere in the
+    /// world — ended up with no inventory tab at all. Downstream that was
+    /// silent: `client-host/src/state.ts` derives `inventoryComId` from the
+    /// granted tab and reports -1, so the observation carried an empty
+    /// backpack and nothing errored. Applied here, before `add_player` (which
+    /// also registers zone membership by coordinate) and before `on_login`.
     pub(crate) fn accept_login(
         &mut self,
         request: LoginRequest,
         profile: Option<PlayerProfile>,
         pid: u16,
+        spawn: Option<CoordGrid>,
     ) {
         let mut active = ActivePlayer::new(
             request.handle,
@@ -2556,6 +2597,11 @@ impl Engine {
 
         if let Some(profile) = &profile {
             apply_profile(profile, &mut active.player, cache());
+        }
+        // ★ AFTER `apply_profile`, which assigns `pathing.coord` from the
+        // profile — the caller's explicit spawn must win over a saved one.
+        if let Some(coord) = spawn {
+            active.player.pathing.coord = coord;
         }
         if active.player.stats.xp.iter().all(|&s| s == 0) {
             apply_new_player_defaults(&mut active.player);
@@ -2875,7 +2921,9 @@ impl Engine {
         }
         let pending = self.pending_logins.swap_remove(idx);
         let profile = pending.profile.unwrap();
-        self.accept_login(pending.request, profile, pid);
+        // ★ `None`: a real login keeps its saved (or default) coordinate. The
+        // spawn override is for headless spawns only — see `accept_login`.
+        self.accept_login(pending.request, profile, pid, None);
     }
 
     /// Finds the pid of an online player by their Base37-encoded username.
