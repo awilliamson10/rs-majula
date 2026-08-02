@@ -22,6 +22,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rl_env::tape::TUTORIAL_SPAWN;
 use rl_env::EnvHarness;
+// ★ The enum behind BOTH aggression selectors. `Npc::hunt_target` and
+// `Npc::interaction.target` are the same `Option<InteractionTarget>` type, and
+// the variant -- not the payload -- is what distinguishes "this npc is engaging
+// a player" from "this npc is walking to a log on the ground". See
+// [`INTERACTION_KIND_PLAYER`].
+use rs_entity::InteractionTarget;
 use rs_grid::CoordGrid;
 use rs_pack::cache::CacheStore;
 // ★ THE ENGINE'S OWN STAT ORDER, not a literal 3. `Stats<6>` is a bare
@@ -518,6 +524,74 @@ pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
     n
 }
 
+// -- the aggression selectors ----------------------------------------------------
+//
+// ★★ WHY FIELD 4 (`target_player`) IS NOT ENOUGH, measured rather than argued.
+// G1c's corpus held `target_player >= 0` in 0 of 1,713,343 npc rows — across
+// every process, every segment and every tick — while the SAME corpus carried
+// 343 player-damage events, 1,355 client-confirmed attack swings, 57 npc kills
+// and 53,134 rows with a live `hunt_mode`. The state exists; the field does not
+// receive it. `Npc::target_player` is declared at
+// `rs-engine/rs-entity/src/npc.rs:37`, initialised to `None` at `:96`, and
+// ASSIGNED NOWHERE IN THE WORKSPACE — grep it: the only read is field 4 below.
+//
+// Field 4 is kept anyway. A column known to be dead costs one i64 per row, and
+// its continued flatness beside fields 10-14 is the check that says the new
+// selectors are carrying real state rather than mirroring the old one.
+
+/// [`host_npc_field`] fields 10 and 12: no target at all (`Option::None`).
+///
+/// ★ -1, not [`HOST_FIELD_UNKNOWN`], for the same reason fields 3/4/5 use -1:
+/// "this npc is engaging nothing" is a real, common, in-range answer, whereas
+/// the sentinel means the QUESTION was malformed. Collapsing the two would put
+/// an error and a fact in the same bucket of a label file.
+pub const INTERACTION_KIND_NONE: i64 = -1;
+/// A ground object (`InteractionTarget::Obj`). Index = the obj TYPE id.
+pub const INTERACTION_KIND_OBJ: i64 = 0;
+/// A placed location (`InteractionTarget::Loc`). Index = the loc TYPE id.
+pub const INTERACTION_KIND_LOC: i64 = 1;
+/// Another npc (`InteractionTarget::Npc`). Index = the target's `nid`.
+pub const INTERACTION_KIND_NPC: i64 = 2;
+/// ★★ A PLAYER (`InteractionTarget::Player`). Index = the target's `pid`, so
+/// this is the pair that `target_player` was supposed to be and never was: an
+/// npc whose interaction kind is 3 and whose index is the host's own pid is an
+/// npc engaging the agent.
+pub const INTERACTION_KIND_PLAYER: i64 = 3;
+
+/// The variant of an interaction target, as one of the `INTERACTION_KIND_*`
+/// constants.
+///
+/// ★ Split from [`interaction_index`] rather than packed into one integer
+/// (`kind * 100_000 + index`, say) DELIBERATELY. The kind is a five-valued
+/// category and the index is a dense id in a different numbering scheme per
+/// kind; a packed column would have to be decoded by hand at analysis time, and
+/// an analyst who forgot would get a plausible, monotone, entirely meaningless
+/// number. Two columns cost one extra i64 per row and cannot be misread.
+const fn interaction_kind(t: &Option<InteractionTarget>) -> i64 {
+    match t {
+        None => INTERACTION_KIND_NONE,
+        Some(InteractionTarget::Obj { .. }) => INTERACTION_KIND_OBJ,
+        Some(InteractionTarget::Loc { .. }) => INTERACTION_KIND_LOC,
+        Some(InteractionTarget::Npc { .. }) => INTERACTION_KIND_NPC,
+        Some(InteractionTarget::Player { .. }) => INTERACTION_KIND_PLAYER,
+    }
+}
+
+/// The payload index of an interaction target, or -1 when there is none.
+///
+/// ★★ THE NUMBERING SCHEME DEPENDS ON THE KIND and the two must be read
+/// together: `Obj`/`Loc` report a CONFIG TYPE id, `Npc` reports an `nid` and
+/// `Player` a `pid`. Reading this column without its kind column would join
+/// npc 42 onto player 42 onto item 42.
+const fn interaction_index(t: &Option<InteractionTarget>) -> i64 {
+    match t {
+        None => -1,
+        Some(InteractionTarget::Obj { id, .. } | InteractionTarget::Loc { id, .. }) => *id as i64,
+        Some(InteractionTarget::Npc { nid }) => *nid as i64,
+        Some(InteractionTarget::Player { pid }) => *pid as i64,
+    }
+}
+
 /// One field of one enumerated npc. See [`host_npc_count`] for the slot list.
 ///
 /// `field` is:
@@ -528,14 +602,57 @@ pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
 /// | 1  | current hitpoints                                               |
 /// | 2  | max (base) hitpoints                                            |
 /// | 3  | `respawn_at` — TICKS REMAINING, or -1 when `None`                |
-/// | 4  | `target_player` — the pid this npc is fighting, or -1            |
+/// | 4  | `target_player` — ★ A DEAD FIELD, kept as a control. See below.  |
 /// | 5  | `hunt_mode` — the hunt config id, or -1                          |
 /// | 6  | tile x                                                          |
 /// | 7  | tile z                                                          |
 /// | 8  | npc TYPE id (`uid.id()`)                                        |
 /// | 9  | `active` — 0 for an npc that is dead and awaiting respawn        |
+/// | 10 | `hunt_target` KIND — an `INTERACTION_KIND_*`. ★ See the trap.    |
+/// | 11 | `hunt_target` INDEX — pid/nid/type id per the kind, or -1        |
+/// | 12 | `interaction.target` KIND — an `INTERACTION_KIND_*`              |
+/// | 13 | `interaction.target` INDEX — pid/nid/type id per the kind, or -1 |
+/// | 14 | `interaction.target_op` — an `NpcMode` discriminant, or -1       |
 ///
 /// Anything else returns [`HOST_FIELD_UNKNOWN`].
+///
+/// # ★★ FIELD 14 IS AN `NpcMode`, NOT A `ServerTriggerType`
+///
+/// `InteractionState::target_op` is a bare `u8` shared by players and npcs, and
+/// the two read it as DIFFERENT ENUMS. For a player it is a
+/// `ServerTriggerType`; for an npc, `npc_process_movement_interaction` decodes
+/// it with `NpcMode::try_from` (`rs-engine/src/phases/npc.rs:1104-1112`), and
+/// everything this accessor can see is an npc. The table is
+/// `rs-pack/src/types.rs:436` — `None`=0, `Wander`=1, `Patrol`=2,
+/// `PlayerEscape`=3, `PlayerFollow`=4, `PlayerFace`=5, `PlayerFaceClose`=6,
+/// `OpPlayer1..5`=7..11, `ApPlayer1..5`=12..16, then the Loc/Obj/Npc op and ap
+/// families up to 46 and the `Queue1..20` modes above that.
+///
+/// ★ IT IS OFTEN SET WITH NO TARGET. `npc_process_movement_interaction` has a
+/// failsafe that writes `target_op = default_mode` whenever both the op and the
+/// target are `None` (`phases/npc.rs:1107-1109`), so a wandering npc reads 1
+/// with kind -1. "Op says 7-16" AND "kind says 3" together are what mean the
+/// npc is running a player-directed mode against a real player.
+///
+/// # ★★ FIELD 10/11 (`hunt_target`) IS A WITHIN-TICK TEMPORARY — expect -1
+///
+/// Do not read a flat `hunt_target` column as "nothing hunted anything". The
+/// engine sets and CONSUMES it inside one cycle: player-type hunts write it in
+/// the WORLD phase (`process_npc_hunt_players`, `phases/world.rs:137-161`), and
+/// the npc phase that runs immediately after calls `npc_consume_hunt_target`,
+/// whose second statement is `active.npc.hunt_target.take()`
+/// (`phases/npc.rs:1020`) — the value is moved out and spent on
+/// `set_interaction`. `host_npc_field` can only ever run BETWEEN cycles, which
+/// is after the take.
+///
+/// It survives to the boundary only when the take is skipped: the npc went
+/// `delayed` or inactive between the two phases (`process_npc` returns before
+/// the consume, `phases/npc.rs:139`), or its `hunt_mode` was cleared, or the
+/// hunt id is absent from the cache. Those are real states worth a column, but
+/// they are the exception. **Fields 12/13 are where a hunt's outcome LANDS** —
+/// `npc_consume_hunt_target` hands the very same `InteractionTarget` to
+/// `Npc::set_interaction`, which stores it in `interaction.target` where it
+/// persists across ticks until the interaction ends.
 ///
 /// # ★ FIELDS 6, 7 AND 8 ARE NOT HIDDEN STATE — do not use them as probe targets
 ///
@@ -544,9 +661,17 @@ pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
 /// label row be matched to the packed npc config, and it is the independent path
 /// `tests/truth_accessors.rs` checks the hitpoints index against. A probe scored
 /// on them would report near-perfect accuracy for reading out a column it was
-/// handed. Fields 1-5 and 9 are the hidden ones. (There is no `level` field
+/// handed. Fields 1-5 and 9-14 are the hidden ones. (There is no `level` field
 /// because [`host_npc_count`] filters to the player's own level, so it would be a
 /// constant.)
+///
+/// ★ Fields 10-14 are hidden in the same sense as the rest: the client is sent an
+/// npc's FACE-ENTITY mask, which does encode a target as `pid + 32768` or a raw
+/// `nid` (`rs-entity/src/interaction.rs`'s `set_face_entity`) — but that is a
+/// rendering hint the entity is merely LOOKING at, it is only sent while the mask
+/// is flagged, and `ClientState` does not decode it today. If it ever does, these
+/// fields move out of the hidden set and this comment is the thing that has to
+/// change with them.
 ///
 /// # ★★ THE HITPOINTS INDEX IS THE ENGINE'S OWN, NOT A LITERAL
 ///
@@ -559,7 +684,7 @@ pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
 /// nothing and cannot drift.
 ///
 /// # ★ -1 IS A REAL VALUE HERE
-/// Fields 3, 4 and 5 report `None` as -1. That is why the sentinel is
+/// Fields 3, 4, 5 and 10-14 all report `None` as -1. That is why the sentinel is
 /// [`HOST_FIELD_UNKNOWN`] and not -1 — see its doc comment.
 ///
 /// # ★★ MUST NOT PANIC
@@ -591,6 +716,13 @@ pub extern "C" fn host_npc_field(h: *mut c_void, slot: u32, field: u32) -> i64 {
         7 => npc.pathing.coord.z() as i64,
         8 => npc.uid.id() as i64,
         9 => i64::from(npc.active),
+        10 => interaction_kind(&npc.hunt_target),
+        11 => interaction_index(&npc.hunt_target),
+        12 => interaction_kind(&npc.interaction.target),
+        13 => interaction_index(&npc.interaction.target),
+        // ★ `target_op` is `Option<u8>`, so the widening is lossless and the -1
+        // can never collide with a real mode (they are 0..=66).
+        14 => npc.interaction.target_op.map_or(-1, i64::from),
         _ => HOST_FIELD_UNKNOWN,
     }
 }
@@ -739,5 +871,116 @@ pub extern "C" fn host_teleport(h: *mut c_void, x: u16, level: u8, z: u16) -> u3
 pub extern "C" fn host_free(h: *mut c_void) {
     if !h.is_null() {
         unsafe { drop(Box::from_raw(h as *mut Host)) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! ★★ IN-CRATE, AND THAT IS THE POINT: these run under `cargo test --lib`
+    //! and NOT under `cargo test --test <name>`. A gate that only ran the
+    //! integration files would skip them entirely.
+    //!
+    //! ★★ WHY THEY EXIST BESIDE `tests/aggression_fields.rs`. That file boots a
+    //! real engine, and a real Lumbridge fight only ever produces two of the five
+    //! arms below: `None` and `Player` (measured — 9,415 rows -1 and 277 rows
+    //! player, across 400 ticks of an all-attack sampler). `Obj`, `Loc` and `Npc`
+    //! targets are perfectly ordinary engine states that no test this project can
+    //! afford to run would reach on demand, so the only way to pin their encoding
+    //! is to construct them. An encoder is a pure function; it does not need an
+    //! engine to be tested, and it does need testing — a transposed `Obj`/`Loc`
+    //! arm is invisible in every live run and wrong in every corpus.
+
+    use super::*;
+    use rs_pack::types::{LocAngle, LocLayer, LocShape};
+
+    fn obj() -> Option<InteractionTarget> {
+        Some(InteractionTarget::Obj {
+            coord: CoordGrid::new(3222, 0, 3218),
+            id: 1511,
+            count: 1,
+        })
+    }
+
+    fn loc() -> Option<InteractionTarget> {
+        Some(InteractionTarget::Loc {
+            coord: CoordGrid::new(3222, 0, 3218),
+            id: 1276,
+            width: 1,
+            length: 1,
+            shape: LocShape::CentrepieceStraight,
+            angle: LocAngle::North,
+            layer: LocLayer::Ground,
+        })
+    }
+
+    #[test]
+    fn every_variant_encodes_to_its_own_kind() {
+        assert_eq!(interaction_kind(&None), INTERACTION_KIND_NONE);
+        assert_eq!(interaction_kind(&obj()), INTERACTION_KIND_OBJ);
+        assert_eq!(interaction_kind(&loc()), INTERACTION_KIND_LOC);
+        assert_eq!(
+            interaction_kind(&Some(InteractionTarget::Npc { nid: 41 })),
+            INTERACTION_KIND_NPC
+        );
+        assert_eq!(
+            interaction_kind(&Some(InteractionTarget::Player { pid: 1 })),
+            INTERACTION_KIND_PLAYER
+        );
+    }
+
+    /// ★ THE KINDS MUST BE DISTINCT, and this is not a tautology about five
+    /// literals — it is the check that a later edit cannot give two variants the
+    /// same code. Two variants sharing a code would collapse "engaging a player"
+    /// into "engaging an npc" in every label row, silently.
+    #[test]
+    fn the_kinds_are_five_distinct_small_integers() {
+        let kinds = [
+            INTERACTION_KIND_NONE,
+            INTERACTION_KIND_OBJ,
+            INTERACTION_KIND_LOC,
+            INTERACTION_KIND_NPC,
+            INTERACTION_KIND_PLAYER,
+        ];
+        let mut sorted = kinds.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), kinds.len(), "two variants share a kind code");
+        // ★ And none of them can be confused with the sentinel or with a
+        // coordinate, which is what makes the kind column a cheap check that the
+        // selector is pointed at the right field at all.
+        assert!(kinds.iter().all(|&k| (-1..=3).contains(&k)));
+    }
+
+    /// ★★ THE NUMBERING SCHEME IS PER-KIND, and each arm reads a DIFFERENT struct
+    /// field. Distinct values everywhere, so an arm that read `count` instead of
+    /// `id`, or `nid` instead of `pid`, cannot pass.
+    #[test]
+    fn each_variant_reports_its_own_index() {
+        assert_eq!(interaction_index(&None), -1);
+        assert_eq!(interaction_index(&obj()), 1511);
+        assert_eq!(interaction_index(&loc()), 1276);
+        assert_eq!(interaction_index(&Some(InteractionTarget::Npc { nid: 41 })), 41);
+        assert_eq!(interaction_index(&Some(InteractionTarget::Player { pid: 1 })), 1);
+    }
+
+    /// ★ THE PAIR IS ONE `Option` SPLIT ACROSS TWO COLUMNS: absent together or
+    /// present together. A player-kind row beside an index of -1 would be
+    /// unjoinable; a -1 kind beside a real index would be a target with no
+    /// numbering scheme to read it in.
+    #[test]
+    fn the_kind_and_the_index_agree_about_absence() {
+        for t in [
+            None,
+            obj(),
+            loc(),
+            Some(InteractionTarget::Npc { nid: 0 }),
+            Some(InteractionTarget::Player { pid: 0 }),
+        ] {
+            assert_eq!(
+                interaction_kind(&t) == INTERACTION_KIND_NONE,
+                interaction_index(&t) == -1,
+                "kind and index disagree for {t:?}"
+            );
+        }
     }
 }
