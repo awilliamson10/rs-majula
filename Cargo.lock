@@ -2115,6 +2115,7 @@ version = "0.1.0"
 dependencies = [
  "rl-env",
  "rs-crypto",
+ "rs-entity",
  "rs-grid",
  "rs-pack",
  "rs-vm",

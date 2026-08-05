@@ -17,6 +17,14 @@ rs-grid   = { path = "../rs-engine/rs-grid" }
 # `ActivePlayer` itself is re-exported, so the trait is unreachable from here
 # without changing rs-engine's public surface.
 rs-vm     = { path = "../rs-engine/rs-vm" }
+# ★ For `InteractionTarget` ONLY -- the enum `host_npc_field`'s selectors 10-13
+# decode. `Npc::hunt_target` and `Npc::interaction.target` are both
+# `Option<InteractionTarget>`, and reading them means MATCHING ON THE VARIANT:
+# the variant is what says "this npc is engaging a PLAYER" rather than a ground
+# obj, and the payload index means a different numbering scheme in each arm.
+# Same path as `rl-env`'s own dependency, so cargo unifies the two into one
+# crate rather than compiling a second, incompatible copy of the enum.
+rs-entity = { path = "../rs-engine/rs-entity" }
 tokio     = { version = "1.52", features = ["sync", "rt"] }
 
 # tests/keepalive.rs only -- it builds a real ISAAC-encoded inbound packet
