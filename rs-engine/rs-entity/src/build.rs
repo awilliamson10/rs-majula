@@ -147,6 +147,29 @@ pub struct BuildArea {
     pub last_resize: u32,
     pub nearby_players: Vec<u16>,
     pub nearby_npcs: Vec<u16>,
+    /// Inclusive mapsquare bounds `(mx0, mz0, mx1, mz1)` that
+    /// [`rebuild_normal`](Self::rebuild_normal) filters its mapsquare set
+    /// against. `None` is the historical, unrestricted behaviour.
+    ///
+    /// ★★ DEFAULTS TO `None` DELIBERATELY. Every existing test in this tree
+    /// asserts against the unclamped ±6-zone build area; a clamp applied
+    /// unconditionally would fail them for the right reason at the wrong time.
+    /// It is set from outside the engine — see `rs_host::host_set_region`.
+    ///
+    /// ★ NOT CLEARED BY [`clear`](Self::clear). `clear` resets what the client
+    /// has been TOLD (loaded zones, tracked entities); this is a harness
+    /// configuration that outlives a logout, and zeroing it on reconnect would
+    /// silently un-clamp a run halfway through.
+    ///
+    /// ★★ ON REV 274 THIS AFFECTS NOTHING THE CLIENT SEES, and that is a
+    /// property of the revision rather than of this field. `mapsquares` reaches
+    /// the wire only through the `#[cfg(rev = "225")]` arm of
+    /// `ActivePlayer::rebuild_normal`; the `since_244` arm sends only
+    /// `zone_x`/`zone_z`. Its one other reader, `handlers/rebuild_get_maps.rs`,
+    /// answers a `REBUILD_GET_MAPS` the rev-274 client never sends — that
+    /// client pulls terrain out of on-demand archive 3 instead. Do not read a
+    /// clamped mapsquare count as "the client is rendering less".
+    pub region: Option<(u16, u16, u16, u16)>,
 }
 
 impl BuildArea {
@@ -175,6 +198,7 @@ impl BuildArea {
             last_resize: 0,
             nearby_players: Vec::with_capacity(BuildArea::PREFERRED_PLAYERS as usize),
             nearby_npcs: Vec::with_capacity(BuildArea::PREFERRED_NPCS as usize),
+            region: None,
         }
     }
 
@@ -248,6 +272,9 @@ impl BuildArea {
     /// * Clears and repopulates `self.mapsquares`.
     /// * Sets `self.origin`.
     /// * Clears `self.loaded_zones`.
+    ///
+    /// ★ When [`region`](Self::region) is set, mapsquares outside it are left
+    /// out of the set. See that field for what it does and does not change.
     pub fn rebuild_normal(&mut self, coord: &CoordGrid) {
         let zone_x = coord.zone_x();
         let zone_z = coord.zone_z();
@@ -262,6 +289,20 @@ impl BuildArea {
             let mx = CoordGrid::mapsquare(x << 3);
             for z in min_z..=max_z {
                 let mz = CoordGrid::mapsquare(z << 3);
+                // ★ FILTERED, NOT NARROWED. Shrinking the min/max sweep above
+                // would also change `origin` and `loaded_zones`, which the
+                // client's scene build depends on — the clamp must only remove
+                // mapsquares from the SET, leaving the area's own bookkeeping
+                // alone.
+                //
+                // ★ `mx`/`mz` are `u16`: `CoordGrid::mapsquare` is
+                // `const fn mapsquare(pos: u16) -> u16` (`rs-grid/src/coord.rs:379`),
+                // so the bounds compare directly with no cast.
+                if let Some((mx0, mz0, mx1, mz1)) = self.region {
+                    if mx < mx0 || mx > mx1 || mz < mz0 || mz > mz1 {
+                        continue;
+                    }
+                }
                 let key = (mx << 8) | mz;
                 if !self.mapsquares.contains(&key) {
                     self.mapsquares.push(key);

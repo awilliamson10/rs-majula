@@ -867,6 +867,125 @@ pub extern "C" fn host_teleport(h: *mut c_void, x: u16, level: u8, z: u16) -> u3
     }
 }
 
+// -- the build-area region clamp -------------------------------------------------
+//
+// ★★ READ THIS BEFORE USING ANY OF THE THREE FUNCTIONS BELOW.
+//
+// They clamp `BuildArea::mapsquares` — the set `BuildArea::rebuild_normal`
+// recomputes on every >4-zone move — to an inclusive rectangle of mapsquares.
+// That is exactly what it says and NOT what a caller reaching for it probably
+// wants, because on rev 274 that set never reaches the client:
+//
+//   * `ActivePlayer::rebuild_normal` writes `mapsquares` into the
+//     `RebuildNormal` packet only under `#[cfg(rev = "225")]`. The `since_244`
+//     arm — the one that compiles here, `.cargo/config.toml` pins `REV = "274"`
+//     — sends `RebuildNormal { zone_x, zone_z }` and nothing else
+//     (`rs-engine/src/active_player.rs:880-907`).
+//   * The only other reader in the workspace is
+//     `handlers/rebuild_get_maps.rs:113`, which gates the `DATA_LAND`/`DATA_LOC`
+//     reply to a client's `REBUILD_GET_MAPS`. The rev-274 client never sends
+//     that message: `vendor/Client-TS/src` contains no `REBUILD_GET_MAPS`,
+//     `DATA_LAND` or `DATA_LOC` at all. It loads terrain by asking on-demand
+//     archive 3 for the map files of the mapsquares its own 13x13-zone window
+//     covers (`Client.ts:6845-6870`), and this process serves that archive
+//     wholesale through `host_ondemand_ptr`.
+//
+// So on this revision the clamp is measurable through
+// [`host_mapsquare_count`] and invisible in the frame. It is kept because it is
+// the correct lever on revs <= 245.2 and because the count is the cheapest view
+// of the build area there is. Anything that needs the CLIENT to stop drawing a
+// region has to act on the on-demand map files, not here. The measurement is in
+// `.superpowers/sdd/2026-08-05-g2-pixels/task-2-report.md`.
+
+/// [`host_set_region`]: the region was stored.
+pub const HOST_REGION_OK: u32 = 0;
+/// [`host_set_region`]: there is no player on this handle any more.
+pub const HOST_REGION_NO_PLAYER: u32 = 1;
+/// [`host_set_region`]: `mx0 > mx1` or `mz0 > mz1`.
+///
+/// ★ An error rather than an empty region. A caller that transposed its
+/// arguments would otherwise get a build area with NO mapsquares in it, which
+/// is a perfectly quiet state the engine has no complaint about.
+pub const HOST_REGION_INVERTED: u32 = 2;
+/// [`host_set_region`]: a bound does not fit one byte.
+///
+/// ★ The mapsquare key is `(mx << 8) | mz` (`rs-entity/src/build.rs`), so a
+/// coordinate of 256 would be MASKED into 0 and clamp the world to the wrong
+/// corner of the map with nothing reporting it.
+pub const HOST_REGION_OUT_OF_RANGE: u32 = 3;
+
+/// The largest mapsquare coordinate the `(mx << 8) | mz` key can hold.
+const MAPSQUARE_MAX: u16 = 0xFF;
+
+/// Restricts the build area's mapsquare set to an inclusive rectangle.
+///
+/// ★ TAKES EFFECT ON THE NEXT REBUILD, not immediately: `rebuild_normal` is
+/// what recomputes the set, and `ActivePlayer::rebuild_normal(false)` early-
+/// returns unless the player has moved more than 4 zones from the build area
+/// origin. A caller that wants the clamp applied now must teleport far and back
+/// — see `rs-host/tests/region_clamp.rs`.
+///
+/// ★ See the module note above for what this does NOT do on rev 274.
+///
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process. The bounds are checked
+/// before anything is stored, and a departed player is a status rather than an
+/// unwrap.
+///
+/// # Returns
+/// [`HOST_REGION_OK`], [`HOST_REGION_NO_PLAYER`], [`HOST_REGION_INVERTED`] or
+/// [`HOST_REGION_OUT_OF_RANGE`]. On any error the previous region is left
+/// exactly as it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_set_region(h: *mut c_void, mx0: u16, mz0: u16, mx1: u16, mz1: u16) -> u32 {
+    // ★ BEFORE the handle is touched, so a bad argument cannot half-apply.
+    if mx0 > MAPSQUARE_MAX || mz0 > MAPSQUARE_MAX || mx1 > MAPSQUARE_MAX || mz1 > MAPSQUARE_MAX {
+        return HOST_REGION_OUT_OF_RANGE;
+    }
+    if mx0 > mx1 || mz0 > mz1 {
+        return HOST_REGION_INVERTED;
+    }
+    let host = host_ref(h);
+    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+        return HOST_REGION_NO_PLAYER;
+    };
+    p.player.build_area.region = Some((mx0, mz0, mx1, mz1));
+    HOST_REGION_OK
+}
+
+/// Restores the unclamped ±6-zone sweep. A no-op when no region was set.
+///
+/// ★ Same timing as [`host_set_region`]: the set is not recomputed until the
+/// next rebuild.
+///
+/// # ★★ MUST NOT PANIC
+/// A departed player is silently nothing to clear.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_clear_region(h: *mut c_void) {
+    let host = host_ref(h);
+    if let Some(p) = host.env.engine.get_player_mut(host.pid) {
+        p.player.build_area.region = None;
+    }
+}
+
+/// How many mapsquares the player's build area currently holds.
+///
+/// ★ A DIAGNOSTIC, and the only external view of `BuildArea::mapsquares` there
+/// is. Returns 0 when the player is gone — which is also a legal count for a
+/// region that excludes everything in view, so a caller distinguishing the two
+/// needs `host_player_x` beside it.
+///
+/// # ★★ MUST NOT PANIC
+/// A field read behind a checked lookup; nothing here can fail.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_mapsquare_count(h: *mut c_void) -> u32 {
+    let host = host_ref(h);
+    match host.env.engine.get_player(host.pid) {
+        Some(p) => p.player.build_area.mapsquares.len() as u32,
+        None => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn host_free(h: *mut c_void) {
     if !h.is_null() {
