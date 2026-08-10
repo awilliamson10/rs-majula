@@ -1,4 +1,4 @@
-use crate::engine::{Engine, cache, engine};
+use crate::engine::{Engine, engine};
 use rs_entity::interaction::InteractionTarget;
 use rs_entity::{MoveStrategy, PathingEntity};
 use rs_grid::CoordGrid;
@@ -60,9 +60,9 @@ impl Engine {
             } => Some(ScriptSubject::Loc(LocRef {
                 coord: *coord,
                 id: *id,
-                shape: *shape as u8,
-                angle: *angle as u8,
-                layer: *layer as u8,
+                shape: *shape,
+                angle: *angle,
+                layer: *layer,
             })),
         }
     }
@@ -244,8 +244,8 @@ impl Engine {
                 if coord.y() != y {
                     return false;
                 }
-                let forceapproach = cache()
-                    .locs
+                let forceapproach = engine()
+                    .locs()
                     .get_by_id(*id)
                     .map(|lt| lt.forceapproach as u8)
                     .unwrap_or(0);
@@ -563,8 +563,8 @@ impl Engine {
                 if naive {
                     pathing.queue_waypoint(*coord);
                 } else {
-                    let forceapproach = cache()
-                        .locs
+                    let forceapproach = engine()
+                        .locs()
                         .get_by_id(*id)
                         .map(|lt| lt.forceapproach as u8)
                         .unwrap_or(0);

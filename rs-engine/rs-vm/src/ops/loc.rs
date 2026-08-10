@@ -1,13 +1,14 @@
-use crate::engine::{ScriptEngine, cache, engine, engine_mut};
+use crate::engine::{ScriptEngine, engine, engine_mut};
 use crate::iterators;
 use crate::iterators::LocIteratorState;
 use crate::register::OpsRegistry;
 use crate::state::LocRef;
 use crate::util::{pop_coord, pop_param, pop_seq, set_active_loc};
 use crate::{ScriptError, active_loc, handlers, none};
+use num_enum::TryFromPrimitive;
 use rs_pack::ParamValue;
 use rs_pack::cache::script::*;
-use rs_pack::types::LocShape;
+use rs_pack::types::{LocAngle, LocShape};
 
 /// Registers location (scenery) opcodes for adding, removing, changing,
 /// finding, animating, and querying world locations.
@@ -36,14 +37,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let id = s.pop_int_as::<u16>()?;
             let coord = pop_coord(s)?;
 
-            let layer = LocShape::try_from(shape)
-                .map_err(|_| ScriptError::Runtime(format!("invalid loc shape: {}", shape)))?
-                .layer() as u8;
+            let shape = LocShape::try_from_primitive(shape)
+                .map_err(|_| ScriptError::Runtime(format!("Invalid loc shape: {}", shape)))?;
+            let layer = shape.layer();
+            let angle = LocAngle::try_from_primitive(angle)
+                .map_err(|_| ScriptError::Runtime(format!("Invalid loc angle: {}", angle)))?;
 
             engine_mut::<E>().add_or_change_loc(coord, id, shape, angle, duration as u64, true)?;
-
-            let secondary = s.int_operand() != 0;
-            set_active_loc(s, LocRef { coord, id, shape, angle, layer }, secondary);
+            set_active_loc(s, LocRef { coord, id, shape, angle, layer }, s.int_operand() != 0);
         });
 
         // 3001
@@ -54,14 +55,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 3002
         // https://x.com/JagexAsh/status/1773801749175812307
         active_loc!(m, LOC_ANIM => |s, loc| {
-            let seq = pop_seq(s)?;
+            let seq = pop_seq::<E>(s)?;
             engine_mut::<E>().anim_loc(loc.coord, loc.id, seq.id);
         });
 
         // 3003
         active_loc!(m, LOC_CATEGORY => |s, loc| {
-            let category = cache()
-                .locs
+            let category = engine::<E>()
+                .locs()
                 .get_by_id(loc.id)
                 .ok_or(ScriptError::LocNotFound(loc.id as i32))?
                 .category
@@ -113,19 +114,18 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 let loc_ref = iter.matches[iter.cursor];
                 iter.cursor += 1;
 
-                let secondary = s.int_operand() != 0;
-                set_active_loc(s, loc_ref, secondary);
+                set_active_loc(s, loc_ref, s.int_operand() != 0);
                 true
             } else {
                 false
             };
-            s.push_int(if found { 1 } else { 0 });
+            s.push_int(found as i32);
         });
 
         // 3010
         active_loc!(m, LOC_NAME => |s, loc| {
-            let loc = cache()
-                .locs
+            let loc = engine::<E>()
+                .locs()
                 .get_by_id(loc.id)
                 .ok_or(ScriptError::LocNotFound(loc.id as i32))?;
             s.push_string(loc.name.as_deref().unwrap_or(loc.debugname().unwrap_or("null")));
@@ -133,9 +133,9 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 3011
         active_loc!(m, LOC_PARAM => |s, loc| {
-            let param = pop_param(s)?;
-            let value = cache()
-                .locs
+            let param = pop_param::<E>(s)?;
+            let value = engine::<E>()
+                .locs()
                 .get_by_id(loc.id)
                 .ok_or(ScriptError::LocNotFound(loc.id as i32))?
                 .params

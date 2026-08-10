@@ -27,7 +27,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.10"
+version = "0.1.12"
 edition = "2024"
 rust-version = "1.95"
 authors = ["RustCityRS"]
@@ -38,7 +38,7 @@ repository = "https://github.com/RustCityRS/rs-majula"
 # Async runtime
 tokio = { version = "1.52", features = ["full"] }
 tokio-postgres = "0.7"
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 futures-util = "0.3"
 
 # Serialization
@@ -66,6 +66,10 @@ rustc-hash = "2"
 
 # Fast integer-to-string formatting
 itoa = "1"
+
+# Memory allocator
+mimalloc = "0.1"
+libmimalloc-sys = { version = "0.1", features = ["extended"] }
 
 # MISC
 rs-io = "0.3"

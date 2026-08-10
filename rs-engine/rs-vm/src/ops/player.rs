@@ -1,4 +1,4 @@
-use crate::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, cache, engine, engine_mut};
+use crate::engine::{ScriptEngine, ScriptNpc, ScriptPlayer, engine, engine_mut};
 use crate::iterators::{self, PlayerIteratorState};
 use crate::register::OpsRegistry;
 use crate::state::{ExecutionState, QueuePriority, ScriptArgument, ScriptState, TimerPriority};
@@ -80,7 +80,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2004
         active_player_mut!(m, BUILDAPPEARANCE => |s, player| {
-            player.buildappearance(pop_inv(s)?.id);
+            player.buildappearance(pop_inv::<E>(s)?.id);
         });
 
         // 2005
@@ -251,8 +251,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
         // 2028
         active_player_mut!(m, HINT_NPC => |s, player| {
-            let secondary = s.int_operand() != 0;
-            let nid = if secondary { s.active_npc2 } else { s.active_npc }
+            let nid = if s.int_operand() != 0 { s.active_npc2 } else { s.active_npc }
                 .ok_or_else(|| ScriptError::Runtime("no active_npc".into()))?
                 .nid();
             player.hint_npc(nid);
@@ -261,8 +260,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2029
         active_player_mut!(m, HINT_PL => |s, player| {
             // `active_player2` is the player opposite the operand-selected active player.
-            let secondary = s.int_operand() != 0;
-            let slot = if secondary { s.active_player } else { s.active_player2 }
+            let slot = if s.int_operand() != 0 { s.active_player } else { s.active_player2 }
                 .ok_or_else(|| ScriptError::Runtime("no active_player2".into()))?
                 .pid();
             player.hint_player(slot);
@@ -344,8 +342,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             if seq == -1 {
                 return Ok(());
             }
-            let seq = cache()
-                .seqs
+            let seq = engine::<E>()
+                .seqs()
                 .get_by_id(seq as u16)
                 .ok_or(ScriptError::SeqNotFound(seq))?;
             player.if_setanim(com, seq.id);
@@ -547,7 +545,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             #[cfg(rev = "225")]
             {
                 s.pop_int();
-                let jingle = pop_jingle(s)?;
+                let jingle = pop_jingle::<E>(s)?;
                 if player.lowmem() {
                     return Ok(());
                 }
@@ -558,14 +556,14 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 #[cfg(before_254)]
                 let delay = s.pop_int();
                 #[cfg(before_254)]
-                let id = jingle_midi_id(&s.pop_string());
+                let id = jingle_midi_id::<E>(&s.pop_string());
                 #[cfg(since_254)]
                 let id = Some(s.pop_int_as::<u16>()?);
                 if !player.lowmem()
                     && let Some(id) = id
                 {
                     #[cfg(since_254)]
-                    let delay = midi_tick_length(id as i32)?;
+                    let delay = midi_tick_length::<E>(id as i32)?;
                     #[allow(clippy::unnecessary_cast)]
                     player.midi_jingle(id, delay as u16);
                 }
@@ -576,7 +574,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, MIDI_SONG => |s, player| {
             #[cfg(rev = "225")]
             {
-                let song = pop_song(s)?;
+                let song = pop_song::<E>(s)?;
                 if !player.lowmem() {
                     player.midi_song(&song.name, song.crc, song.data.len() as i32);
                 }
@@ -584,7 +582,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             #[cfg(since_244)]
             {
                 #[cfg(before_254)]
-                let id = song_midi_id(&s.pop_string());
+                let id = song_midi_id::<E>(&s.pop_string());
                 #[cfg(since_254)]
                 let id = Some(s.pop_int_as::<u16>()?);
 
@@ -733,8 +731,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let loc = s.active_loc
                 .ok_or_else(|| ScriptError::Runtime("no active_loc".into()))?;
 
-            let loc_type = cache()
-                .locs
+            let loc_type = engine::<E>()
+                .locs()
                 .get_by_id(loc.id)
                 .ok_or(ScriptError::LocNotFound(loc.id as i32))?;
 
@@ -777,8 +775,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 return Err(ScriptError::Runtime(format!("Invalid opnpc: {}", op + 1)));
             }
 
-            let secondary = s.int_operand() != 0;
-            let npc_uid = if secondary { s.active_npc2 } else { s.active_npc }
+            let npc_uid = if s.int_operand() != 0 { s.active_npc2 } else { s.active_npc }
                 .ok_or_else(|| ScriptError::Runtime("no active_npc".into()))?;
 
             let npc = engine::<E>()
@@ -787,8 +784,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
 
             let id = npc.uid().id();
 
-            let npc_type = cache()
-                .npcs
+            let npc_type = engine::<E>()
+                .npcs()
                 .get_by_id(id)
                 .ok_or(ScriptError::NpcNotFound(id as i32))?;
 
@@ -811,8 +808,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
                 return Err(ScriptError::Runtime("opnpct: spell is null".into()));
             }
 
-            let secondary = s.int_operand() != 0;
-            let nid = if secondary { s.active_npc2 } else { s.active_npc }
+            let nid = if s.int_operand() != 0 { s.active_npc2 } else { s.active_npc }
                 .ok_or_else(|| ScriptError::Runtime("no active_npc".into()))?
                 .nid();
 
@@ -833,8 +829,8 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let obj = s.active_obj
                 .ok_or_else(|| ScriptError::Runtime("no active_obj".into()))?;
 
-            let obj_type = cache()
-                .objs
+            let obj_type = engine::<E>()
+                .objs()
                 .get_by_id(obj.id)
                 .ok_or(ScriptError::ObjNotFound(obj.id as i32))?;
 
@@ -943,7 +939,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let delay = s.pop_int_as::<u16>()?;
             let dst_height = s.pop_int_as::<u8>()?;
             let src_height = s.pop_int_as::<u8>()?;
-            let spotanim = pop_spotanim(s)?;
+            let spotanim = pop_spotanim::<E>(s)?;
             let uid = s.pop_int();
             let src = pop_coord(s)?;
             let dst = player.coord();
@@ -1022,7 +1018,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // 2100
         active_player_mut!(m, SETIDKIT => |s, player| {
             let colour = s.pop_int_as::<u8>()?;
-            let idk = pop_idk(s)?;
+            let idk = pop_idk::<E>(s)?;
             let body_type = idk.body_type as u8;
             let idk_id = idk.id;
             player.setidkit(body_type, idk_id, colour);
@@ -1066,7 +1062,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         active_player_mut!(m, SPOTANIM_PL => |s, player| {
             let delay = s.pop_int_as::<u16>()?;
             let height = s.pop_int_as::<u16>()?;
-            let spotanim = pop_spotanim(s)?;
+            let spotanim = pop_spotanim::<E>(s)?;
             player.spotanim(spotanim.id, height, delay);
         });
 
@@ -1126,10 +1122,10 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
             let high = s.pop_int();
             let low = s.pop_int();
             let stat = s.pop_int() as usize;
-            let level = player.stat(stat) as i32;
+            let level = (player.stat(stat) as i32).min(99);
             let value = (low * (99 - level)) / 98 + (high * (level - 1)) / 98 + 1;
             let chance = (engine_mut::<E>().random().next_double() * 256.0) as i32;
-            s.push_int(if value > chance { 1 } else { 0 });
+            s.push_int((value > chance) as i32);
         });
 
         // 2114
@@ -1280,8 +1276,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         // TODO: this is duplicated with `HINT_PL`
         active_player_mut!(m, HINT_PLAYER => |s, player| {
             // `active_player2` is the player opposite the operand-selected active player.
-            let secondary = s.int_operand() != 0;
-            let slot = if secondary { s.active_player } else { s.active_player2 }
+            let slot = if s.int_operand() != 0 { s.active_player } else { s.active_player2 }
                 .ok_or_else(|| ScriptError::Runtime("no active_player2".into()))?
                 .pid();
             player.hint_player(slot);
@@ -1417,7 +1412,7 @@ pub fn build<E: ScriptEngine + 'static>() -> OpsRegistry {
         #[cfg(since_254)]
         active_player_mut!(m, P_TRANSMOGRIFY => |s, player| {
             let id = s.pop_int();
-            if id < -1 || id >= cache().npcs.count() as i32 {
+            if id < -1 || id >= engine::<E>().npcs().count() as i32 {
                 return Err(ScriptError::NpcNotFound(id));
             }
             player.transmogrify(if id == -1 { None } else { Some(id as u16) });

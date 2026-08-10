@@ -2,8 +2,35 @@ use crate::PlayerUid;
 use crate::state::{LocRef, NpcRef, ObjRef, QueuePriority, ScriptArgument, TimerPriority};
 use rs_grid::CoordGrid;
 use rs_inv::Inventory;
+use rs_pack::cache::VarValue;
+use rs_pack::cache::category::CategoryTypeProvider;
+use rs_pack::cache::dbrow::DbRowTypeProvider;
+use rs_pack::cache::dbtable::{DbTableIndex, DbTableTypeProvider};
+use rs_pack::cache::r#enum::EnumTypeProvider;
+use rs_pack::cache::flo::FloTypeProvider;
+use rs_pack::cache::font::FontTypeProvider;
+use rs_pack::cache::hunt::HuntTypeProvider;
+use rs_pack::cache::idk::IdkTypeProvider;
+use rs_pack::cache::r#if::IfTypeProvider;
+use rs_pack::cache::inv::InvTypeProvider;
+use rs_pack::cache::loc::LocTypeProvider;
+use rs_pack::cache::mesanim::MesAnimTypeProvider;
+#[cfg(rev = "225")]
+use rs_pack::cache::midi::MidiType;
+use rs_pack::cache::npc::NpcTypeProvider;
+use rs_pack::cache::obj::ObjTypeProvider;
+use rs_pack::cache::param::ParamTypeProvider;
 use rs_pack::cache::script::Script;
-use rs_pack::cache::{CacheStore, VarValue};
+use rs_pack::cache::seq::SeqTypeProvider;
+use rs_pack::cache::spotanim::SpotAnimTypeProvider;
+use rs_pack::cache::r#struct::StructTypeProvider;
+#[cfg(since_254)]
+use rs_pack::cache::varbit::VarbitTypeProvider;
+use rs_pack::cache::varn::VarnTypeProvider;
+use rs_pack::cache::varp::VarPlayerTypeProvider;
+use rs_pack::cache::vars::VarsTypeProvider;
+use rs_pack::cache::wordenc::WordEncProvider;
+use rs_pack::types::{LocAngle, LocLayer, LocShape};
 use rs_util::random::JavaRandom;
 use std::cell::Cell;
 use std::sync::Arc;
@@ -29,11 +56,40 @@ pub trait ScriptEngine {
     /// The experience multiplier as defined in the environment args on the engine.
     fn multi_experience(&self) -> u8;
 
-    /// Returns a reference to the global cache store.
-    ///
-    /// # Returns
-    /// A shared reference to the [`CacheStore`] containing all loaded game definitions.
-    fn cache(&self) -> &CacheStore;
+    fn objs(&self) -> &ObjTypeProvider;
+    fn invs(&self) -> &InvTypeProvider;
+    fn varps(&self) -> &VarPlayerTypeProvider;
+    #[cfg(since_254)]
+    fn varbits(&self) -> &VarbitTypeProvider;
+    fn dbrows(&self) -> &DbRowTypeProvider;
+    fn dbtables(&self) -> &DbTableTypeProvider;
+    fn dbindex(&self) -> &DbTableIndex;
+    fn enums(&self) -> &EnumTypeProvider;
+    fn flos(&self) -> &FloTypeProvider;
+    fn hunts(&self) -> &HuntTypeProvider;
+    fn idks(&self) -> &IdkTypeProvider;
+    fn locs(&self) -> &LocTypeProvider;
+    fn mesanims(&self) -> &MesAnimTypeProvider;
+    fn npcs(&self) -> &NpcTypeProvider;
+    fn params(&self) -> &ParamTypeProvider;
+    fn seqs(&self) -> &SeqTypeProvider;
+    fn spotanims(&self) -> &SpotAnimTypeProvider;
+    fn structs(&self) -> &StructTypeProvider;
+    fn varns(&self) -> &VarnTypeProvider;
+    fn varss(&self) -> &VarsTypeProvider;
+    fn fonts(&self) -> &FontTypeProvider;
+    fn categories(&self) -> &CategoryTypeProvider;
+    fn interfaces(&self) -> &IfTypeProvider;
+    fn wordenc(&self) -> &WordEncProvider;
+
+    #[cfg(since_254)]
+    fn midi_tick_length(&self, id: i32) -> Option<u16>;
+    #[cfg(rev = "225")]
+    fn jingle_by_name(&self, name: &str) -> Option<&MidiType>;
+    #[cfg(rev = "225")]
+    fn song_by_name(&self, name: &str) -> Option<&MidiType>;
+    #[cfg(all(since_244, before_254))]
+    fn midi_id(&self, name: &str) -> Option<u16>;
 
     /// Looks up a compiled script by its numeric identifier.
     ///
@@ -282,8 +338,8 @@ pub trait ScriptEngine {
         &mut self,
         coord: CoordGrid,
         id: u16,
-        shape: u8,
-        angle: u8,
+        shape: LocShape,
+        angle: LocAngle,
         duration: u64,
         create_if_missing: bool,
     ) -> crate::Result<()>;
@@ -306,8 +362,8 @@ pub trait ScriptEngine {
     fn merge_loc(
         &mut self,
         coord: CoordGrid,
-        shape: u8,
-        angle: u8,
+        shape: LocShape,
+        angle: LocAngle,
         id: u16,
         start: u16,
         end: u16,
@@ -324,7 +380,7 @@ pub trait ScriptEngine {
     /// * `coord` - The packed coordinate.
     /// * `layer` - The collision layer of the location to remove.
     /// * `duration` - The tick at which the removal should revert.
-    fn remove_loc(&mut self, coord: CoordGrid, layer: u8, duration: u64);
+    fn remove_loc(&mut self, coord: CoordGrid, layer: LocLayer, duration: u64);
 
     /// Plays a sequence animation on a location.
     ///
@@ -390,9 +446,10 @@ pub trait ScriptEngine {
     /// * `range` - Audible radius in tiles (`0..=15`), packed into the high nibble
     ///   of the wire info byte.
     /// * `loops` - Number of times the sound repeats (`0..=7`), packed into the
+    /// * `delay` - How long to wait for the sound area to happen.
     ///   low bits of the wire info byte.
     #[cfg(since_289)]
-    fn sound_area(&mut self, y: u8, x: u16, z: u16, sound: u16, range: u8, loops: u8);
+    fn sound_area(&mut self, y: u8, x: u16, z: u16, sound: u16, range: u8, loops: u8, delay: u8);
 
     /// Checks whether adding a location at the given coordinate is unsafe.
     ///
@@ -456,6 +513,20 @@ pub trait ScriptEngine {
     /// `true` if there is `CollisionFlag::Roof` on it.
     /// `false` if there is not `CollisionFlag::Roof` on it.
     fn map_indoors(&self, coord: CoordGrid) -> crate::Result<bool>;
+
+    /// Indicates if this coord has a `ZoneFlag::Free` collision flag on it.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::is_zone_flagged()`
+    fn map_f2p(&self, coord: CoordGrid) -> crate::Result<bool>;
+
+    /// Indicates if this coord has a `ZoneFlag::Multi` collision flag on it.
+    ///
+    /// # Call Stack
+    ///
+    /// **Calls:** reads `rsmod::is_zone_flagged()`
+    fn map_multiway(&self, coord: CoordGrid) -> crate::Result<bool>;
 
     /// Reads a shared variable (vars) by its definition ID.
     ///
@@ -1474,9 +1545,9 @@ pub trait ScriptPlayer {
         id: u16,
         width: u8,
         length: u8,
-        shape: u8,
-        angle: u8,
-        layer: u8,
+        shape: LocShape,
+        angle: LocAngle,
+        layer: LocLayer,
         op: u8,
     );
 
@@ -1530,8 +1601,8 @@ pub trait ScriptPlayer {
         coord: CoordGrid,
         width: u8,
         length: u8,
-        shape: u8,
-        angle: u8,
+        shape: LocShape,
+        angle: LocAngle,
         forceapproach: u8,
     ) -> bool;
 
@@ -1644,9 +1715,9 @@ pub trait ScriptNpc {
         id: u16,
         width: u8,
         length: u8,
-        shape: u8,
-        angle: u8,
-        layer: u8,
+        shape: LocShape,
+        angle: LocAngle,
+        layer: LocLayer,
         op: u8,
     );
 
@@ -1812,7 +1883,6 @@ pub trait ScriptNpc {
 
 thread_local! {
     static ENGINE_PTR: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
-    static CACHE_PTR: Cell<*const CacheStore> = const { Cell::new(std::ptr::null()) };
 }
 
 /// Stores raw engine and cache pointers into thread-local storage.
@@ -1822,25 +1892,22 @@ thread_local! {
 /// * `cache` - A const pointer to the [`CacheStore`].
 ///
 /// # Side Effects
-/// Overwrites the `ENGINE_PTR` and `CACHE_PTR` thread-locals for the
-/// current thread.
+/// Overwrites the `ENGINE_PTR` thread-local for the current thread.
 ///
 /// # Call Stack
 /// **Called by:** [`with_engine`], `Restore::drop` (the RAII guard inside
 /// `with_engine`).
-/// **Calls:** `ENGINE_PTR.set`, `CACHE_PTR.set`.
-fn set_ptrs(engine: *mut (), cache: *const CacheStore) {
+/// **Calls:** `ENGINE_PTR.set`.
+fn set_ptrs(engine: *mut ()) {
     ENGINE_PTR.set(engine);
-    CACHE_PTR.set(cache);
 }
 
 /// Executes a closure with the given engine installed in thread-local storage.
 ///
 /// This is the primary entry point for running script VM code. It stores
-/// `engine` (and its associated [`CacheStore`]) in thread-local cells so that
-/// any function in the call tree can access them via [`cache()`],
-/// [`engine()`](engine), or [`engine_mut()`](engine_mut) without passing the
-/// engine explicitly.
+/// `engine` in a thread-local cell so that any function in the call tree can
+/// access it via [`engine()`](engine) or [`engine_mut()`](engine_mut) without
+/// passing the engine explicitly.
 ///
 /// Previous thread-local values are saved before the closure runs and
 /// automatically restored when the closure returns (or unwinds), making
@@ -1854,50 +1921,25 @@ fn set_ptrs(engine: *mut (), cache: *const CacheStore) {
 /// The value returned by `f`.
 ///
 /// # Side Effects
-/// Temporarily replaces the `ENGINE_PTR` and `CACHE_PTR` thread-locals.
-/// The previous values are restored via a drop guard when `f` finishes.
+/// Temporarily replaces the `ENGINE_PTR` thread-local. The previous value is
+/// restored via a drop guard when `f` finishes.
 ///
 /// # Call Stack
 /// **Called by:** Game engine tick loop, script execution entry points.
 /// **Calls:** [`set_ptrs`], the user-provided closure `f`, and
 /// `Restore::drop` (which calls [`set_ptrs`] to restore previous values).
 pub fn with_engine<E: ScriptEngine, R>(engine: &mut E, f: impl FnOnce() -> R) -> R {
-    let cache = engine.cache() as *const CacheStore;
     let ptr = engine as *mut E as *mut ();
     let prev_engine = ENGINE_PTR.get();
-    let prev_cache = CACHE_PTR.get();
-    set_ptrs(ptr, cache);
-    struct Restore(*mut (), *const CacheStore);
+    set_ptrs(ptr);
+    struct Restore(*mut ());
     impl Drop for Restore {
         fn drop(&mut self) {
-            set_ptrs(self.0, self.1);
+            set_ptrs(self.0);
         }
     }
-    let _guard = Restore(prev_engine, prev_cache);
+    let _guard = Restore(prev_engine);
     f()
-}
-
-/// Returns a static reference to the [`CacheStore`] installed in thread-local
-/// storage by [`with_engine`].
-///
-/// # Returns
-/// A `&'static CacheStore` reference. The lifetime is tied to the enclosing
-/// [`with_engine`] scope in practice, but is expressed as `'static` because
-/// the pointer is stored in a thread-local cell.
-///
-/// # Panics
-/// Debug-asserts that the pointer is non-null. If called outside a
-/// [`with_engine`] scope, the assertion fires in debug builds; in release
-/// builds the behavior is undefined.
-///
-/// # Call Stack
-/// **Called by:** Opcode handlers across all op modules (core, player, npc,
-/// loc, obj, inv, db, server, string), utility helpers.
-/// **Calls:** `CACHE_PTR.get`, dereferences the raw pointer.
-pub fn cache() -> &'static CacheStore {
-    let ptr = CACHE_PTR.get();
-    debug_assert!(!ptr.is_null(), "cache() called outside with_engine scope");
-    unsafe { &*ptr }
 }
 
 /// Returns a typed immutable reference to the engine stored in thread-local

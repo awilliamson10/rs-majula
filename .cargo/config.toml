@@ -14,10 +14,7 @@ REV = "274"
 target-dir = "target"
 rustflags = ["-C", "target-cpu=native"]
 
-# The upstream config appended a Windows-only linker flag
-# (`link-arg=/STACK:8388608`) unconditionally, which breaks linking on
-# macOS/clang. Re-add it only for Windows targets.
-[target.'cfg(windows)']
+[target.'cfg(all(windows, target_env = "msvc"))']
 rustflags = ["-C", "target-cpu=native", "-C", "link-arg=/STACK:8388608"]
 
 [profile.release]
