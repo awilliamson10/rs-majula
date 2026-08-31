@@ -1133,6 +1133,60 @@ pub extern "C" fn host_free(h: *mut c_void) {
     }
 }
 
+// -- the wheel label channel (Task 4) ---------------------------------------
+//
+// ★ NONE OF THESE FOUR TOUCH `host`. `rs_engine::wheels` is a process-global
+// label store (see that module's doc comment -- the same reasoning
+// `rs-pathfinder`'s COLLISION_FLAGS already relies on), so the host pointer
+// below is accepted only for API symmetry with every other accessor in this
+// file and is never dereferenced. That is also why a NULL `h` is safe here
+// specifically, unlike almost every other fn in this file.
+
+/// # ★★ MUST NOT PANIC. -1 is the error sentinel on every accessor here.
+///
+/// # ★ THIS IS THE LABEL CHANNEL, NOT AN OBSERVATION
+/// The hint is what the engine would have DRAWN on screen and deliberately did
+/// not. It reaches the teacher through `truth.ts` and must never appear in
+/// `ClientState` -- an agent reading it would be reading a wheel we removed.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_hint_kind(_h: *mut c_void) -> i32 {
+    match rs_engine::wheels::hint() {
+        rs_engine::wheels::HintLabel::None => 0,
+        rs_engine::wheels::HintLabel::Npc(_) => 1,
+        rs_engine::wheels::HintLabel::Tile { .. } => 2,
+        rs_engine::wheels::HintLabel::Player(_) => 3,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn host_hint_a(_h: *mut c_void) -> i32 {
+    match rs_engine::wheels::hint() {
+        rs_engine::wheels::HintLabel::None => -1,
+        rs_engine::wheels::HintLabel::Npc(n) => n as i32,
+        rs_engine::wheels::HintLabel::Tile { x, .. } => x as i32,
+        rs_engine::wheels::HintLabel::Player(p) => p as i32,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn host_hint_b(_h: *mut c_void) -> i32 {
+    match rs_engine::wheels::hint() {
+        rs_engine::wheels::HintLabel::Tile { z, .. } => z as i32,
+        _ => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn host_flash_tab(_h: *mut c_void) -> i32 {
+    rs_engine::wheels::flash_tab().map(|t| t as i32).unwrap_or(-1)
+}
+
+/// ★★ THE SWITCH. Off by default; a VLA run turns it on before the first tick.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_wheels_suppress(_h: *mut c_void, on: u32) {
+    rs_engine::wheels::set_suppressed(on != 0);
+}
+
 #[cfg(test)]
 mod tests {
     //! ★★ IN-CRATE, AND THAT IS THE POINT: these run under `cargo test --lib`
