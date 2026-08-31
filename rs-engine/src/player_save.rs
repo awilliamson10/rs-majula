@@ -184,6 +184,34 @@ pub fn extract_profile(player: &Player, cache: &CacheStore) -> PlayerProfile {
 /// level but invisible to the wire-sync mechanism that only reacts to
 /// specific, already-proven mutation paths.
 ///
+/// # ★★ THIS IS STILL ONLY HALF THE INVENTORY STORY
+///
+/// The paragraph above is true when the profile being restored has NOTHING
+/// to say about this inventory (empty or absent), because `apply_profile`
+/// then never touches it again and `clear()`'s dirty marks survive to the
+/// next tick untouched. But when the profile DOES carry items for this
+/// `inv_type`, `apply_profile` builds a brand-new `Inventory` and
+/// `player.invs.insert`s it wholesale -- discarding this function's cleared
+/// object, dirty marks and all, and replacing it with one whose only dirty
+/// slots are the ones `apply_profile`'s own `Inventory::set` calls touched.
+/// A slot the LIVE inventory had occupied that the restored profile simply
+/// does not mention (a smaller checkpoint restored over a fuller live
+/// session -- exactly Phase 1's headline case) is therefore never marked
+/// dirty by EITHER function, and `ActivePlayer::update_invs`'s partial path
+/// (`collect_dirty()`) has nothing to tell it that slot changed: the client
+/// keeps rendering the stale item. Fixing this at the `Player`/
+/// `PlayerProfile` layer is not possible -- dirty-slot tracking is a
+/// per-inventory concept, and the object holding it is precisely what
+/// `apply_profile` replaces. The actual fix is one layer up, in
+/// `host_load_profile` (`rs-host/src/lib.rs`): clearing
+/// `player.inv_first_seen` forces `update_invs` to send a FULL payload for
+/// every already-bound component on the next tick regardless of dirty
+/// bookkeeping, which is immune to this object-replacement gap because it
+/// does not depend on any single `Inventory`'s dirty state surviving
+/// anything. See that call site's own doc comment for the full mechanism --
+/// this one clears engine state; the client resync is a separate,
+/// deliberately separate concern.
+///
 /// # ★★ MUST NOT PANIC
 ///
 /// Both loops are infallible field writes gated by a scope lookup that

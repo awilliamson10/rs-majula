@@ -621,10 +621,34 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     // a step of a tick. Caught by this round's failing test BEFORE this
     // block existed: calling `sync_varps` unwrapped aborted the process --
     // see `task-2c4-report.md`.
+    //
+    // ★★ THE THIRD ROUND OF THE SAME BUG CLASS: `inv_first_seen.clear()`.
+    // `clear_perm_state`'s `Inventory::clear()` only survives to the next
+    // tick when `apply_profile` leaves that inventory alone (the profile has
+    // nothing to say about it). When the profile DOES carry items for an
+    // inventory, `apply_profile` builds a brand-new `Inventory` and
+    // `insert`s it wholesale, discarding `clear()`'s dirty marks along with
+    // it -- so a slot the LIVE inventory held that the restored profile
+    // simply never mentions (a smaller checkpoint over a fuller live
+    // session -- Phase 1's headline case) is dirty in NEITHER the cleared
+    // object nor the replacement one, and `update_invs`'s partial path
+    // (`collect_dirty()`) never learns it changed. See
+    // `clear_perm_state`'s own doc comment for the full mechanism -- fixing
+    // it at that layer is not possible, because the `Inventory` object
+    // holding the dirty bookkeeping is precisely what gets replaced.
+    // `on_reconnect` (`active_player.rs:2243`) already does this for the
+    // identical reason ("every transmitted inventory is marked unseen so
+    // the next inventory flush sends full contents"); clearing it here
+    // forces `update_invs` to send a FULL payload for every already-bound
+    // component on the next tick, which is immune to the object-replacement
+    // gap because it does not depend on any one `Inventory`'s dirty state
+    // surviving anything. Infallible (`FxHashSet::clear` cannot fail), so it
+    // adds no new panic surface.
     with_engine(unsafe { &mut *engine_ptr }, || {
         if let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) {
             p.reset_client_varcache();
             p.sync_varps();
+            p.player.inv_first_seen.clear();
         }
     });
 
