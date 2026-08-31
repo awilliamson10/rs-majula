@@ -1229,12 +1229,14 @@ pub extern "C" fn host_free(h: *mut c_void) {
 
 // -- the wheel label channel (Task 4) ---------------------------------------
 //
-// ★ NONE OF THESE FOUR TOUCH `host`. `rs_engine::wheels` is a process-global
+// ★ NONE OF THESE TOUCH `host`. `rs_engine::wheels` is a process-global
 // label store (see that module's doc comment -- the same reasoning
-// `rs-pathfinder`'s COLLISION_FLAGS already relies on), so the host pointer
-// below is accepted only for API symmetry with every other accessor in this
-// file and is never dereferenced. That is also why a NULL `h` is safe here
-// specifically, unlike almost every other fn in this file.
+// `rs-pathfinder`'s COLLISION_FLAGS already relies on). The four readers
+// below still accept an unused `h: *mut c_void` for API symmetry with every
+// other accessor in this file (never dereferenced, so a NULL `h` is safe
+// here specifically, unlike almost every other fn in this file) -- but
+// `host_wheels_suppress` DROPS it entirely. See that function's own doc
+// comment for why a handle parameter there would be worse than useless.
 
 /// # ★★ MUST NOT PANIC. -1 is the error sentinel on every accessor here.
 ///
@@ -1276,8 +1278,25 @@ pub extern "C" fn host_flash_tab(_h: *mut c_void) -> i32 {
 }
 
 /// ★★ THE SWITCH. Off by default; a VLA run turns it on before the first tick.
+///
+/// # ★★ NO HANDLE PARAMETER, AND THAT IS NOT AN OMISSION TO "FIX" LATER
+/// Every other accessor in this file takes `h: *mut c_void` for symmetry, but
+/// this one CANNOT: `host_new`/`host_new_at` synchronously run
+/// `Engine::accept_login`, whose `[login,_]` trigger fires Tutorial Island's
+/// first `open_tutorial()` -- and so the first `TutOpen` -- before either
+/// function returns a handle at all, let alone before the caller reaches its
+/// first `host_step`. A switch gated on a handle can therefore only ever be
+/// flipped AFTER the one wheel it most needs to catch has already fired
+/// unsuppressed. `rs_engine::wheels::SUPPRESS` is a process-global
+/// `AtomicBool` (see that module's doc comment) with no connection to any
+/// particular `Host`, so a handle parameter here would be pure fiction --
+/// accepted, printed in the signature, and never actually gating anything.
+/// Dropping it is what makes "call this before `host_new`" possible instead
+/// of merely advisable. If a future refactor makes suppression per-host
+/// rather than process-global, a handle would then be load-bearing and
+/// belongs back on this signature at that point -- but not before.
 #[unsafe(no_mangle)]
-pub extern "C" fn host_wheels_suppress(_h: *mut c_void, on: u32) {
+pub extern "C" fn host_wheels_suppress(on: u32) {
     rs_engine::wheels::set_suppressed(on != 0);
 }
 

@@ -49,12 +49,18 @@ fn the_flash_tab_reports_minus_one_when_there_is_none() {
     wheels::record_flash_tab(None);
 }
 
+/// ★ NO HANDLE ARGUMENT, DELIBERATELY -- see `host_wheels_suppress`'s own doc
+/// comment in `rs-host/src/lib.rs`. `host_new`/`host_new_at` run the login
+/// trigger (and so the island's first wheel) synchronously, before either
+/// returns a handle at all, so a switch gated on one could never be flipped
+/// in time to catch it. This test calls it with no host booted at all, which
+/// is the whole point of the signature: it must be reachable before a `Host`
+/// exists.
 #[test]
-fn the_suppression_switch_is_reachable_over_the_abi() {
+fn the_suppression_switch_is_reachable_over_the_abi_before_any_host_exists() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let h = std::ptr::null_mut();
-    rs_host::host_wheels_suppress(h, 1);
+    rs_host::host_wheels_suppress(1);
     assert!(wheels::suppressed());
-    rs_host::host_wheels_suppress(h, 0);
+    rs_host::host_wheels_suppress(0);
     assert!(!wheels::suppressed());
 }
