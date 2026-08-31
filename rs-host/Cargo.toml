@@ -44,3 +44,8 @@ rs-crypto = { workspace = true }
 # Same pattern as `rs-crypto` above: a test-only need for wire-level bytes,
 # not a runtime dependency of the cdylib.
 rs-io     = { workspace = true }
+# tests/gen_changed_profile.rs only -- it builds an inventory directly
+# (`Inventory::with_stack_mode`/`.set`) to seed the Task 2b fixture profile.
+# `rs-engine` (a real dependency above) re-exports `Player`, not `Inventory`
+# itself, so this is a direct workspace dep for the one test that needs it.
+rs-inv    = { workspace = true }

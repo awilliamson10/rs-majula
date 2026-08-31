@@ -444,6 +444,78 @@ pub extern "C" fn host_save_profile(h: *mut c_void, out: *mut u8, cap: usize) ->
     blob.len() as i64
 }
 
+/// # ★★ THE SPLIT-WIRE-MESSAGE FIX (Task 2b)
+///
+/// Task 2 measured this: restoring a profile onto a LIVE session crashed the
+/// client on the very next tick. The mechanism, traced end to end:
+///
+///   * a real teleport goes `ActivePlayer::tele` -> `Pathing::teleport`
+///     (`rs-engine/rs-entity/src/pathing.rs:207`), which sets `self.tele =
+///     true`. THAT flag is what `PlayerInfoEncoder::teleport`
+///     (`rs-engine/src/info.rs:488-509`) reads to decide whether to write the
+///     21-bit absolute-reposition block into this tick's info packet — the
+///     wire message telling the CLIENT where ITS OWN local player now sits
+///     relative to the build-area origin.
+///   * `apply_profile` (above this fn calls it) writes `player.pathing.coord`
+///     as a bare struct field. It never touches `tele`, so that movement
+///     block is never emitted.
+///   * Meanwhile `ActivePlayer::rebuild_normal(false)` runs every tick purely
+///     off `|zone - origin| > 4` and does NOT care how the coordinate got
+///     there, so it fires and sends `RebuildNormal` regardless.
+///
+/// The result is exactly the failure class [`host_teleport`]'s own doc
+/// comment warns about, but WORSE: there the caller at least gets a status
+/// back and the world merely goes stale. Here the client is told "the region
+/// changed" with no "here is where you are in it" to go with it, and
+/// `Client.ts`'s next `roofCheck` (via `cameraLocalTileX/Z`, derived from the
+/// STALE `localPlayer.x/z`) indexes outside the newly built map and throws.
+///
+/// The fix reuses [`host_teleport`]'s own path rather than hand-setting
+/// `tele`: after `apply_profile` has written the restored coordinate onto
+/// `pathing.coord`, that SAME coordinate is re-driven through
+/// `ScriptPlayer::teleport` (`p.teleport`, the trait method
+/// `rs-vm/src/ops/player.rs:923`'s `p_teleport` opcode also dispatches
+/// through) — the one path already proven, by `host_teleport` and its tests,
+/// to set `tele` and re-focus the entity correctly. Teleporting a coordinate
+/// to itself is intentional and harmless: `Pathing::teleport` recomputes
+/// `last_step_coord`/facing and sets `tele = true` unconditionally on
+/// success: it does not skip the work because the destination matches the
+/// current position.
+///
+/// `clear_waypoints()` runs first for the same reason [`host_teleport`] runs
+/// it first: a restored player that was mid-walk before the session moved
+/// away would otherwise resume those stale waypoints from the new coordinate.
+///
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process — no unwinding across
+/// a C frame means no JS-visible error, just a dead host. Nothing added here
+/// can panic: `p.player.pathing.coord` was just written by `apply_profile`
+/// from a `CoordGrid` that already went through its masking constructor, so
+/// re-teleporting to it cannot introduce a value `CoordGrid` has not already
+/// accepted, and `Pathing::teleport`'s only fallible branch
+/// (`is_zone_allocated`) returns `None` rather than panicking.
+///
+/// # ★ THE ONE FAILURE MODE THIS CANNOT PAPER OVER
+/// If the restored coordinate's zone is not allocated in the collision map,
+/// `Pathing::teleport` returns `None` and leaves `tele` false — the exact
+/// same silent gap this fix exists to close, just for a coordinate the
+/// caller's own save data pointed at. There is no earlier, side-effect-free
+/// point to check this from `host_load_profile` (the zone-allocation test is
+/// `Pathing::teleport`'s alone, not exposed separately), so this is detected
+/// AFTER `apply_profile` has already run rather than avoided beforehand. In
+/// that case every OTHER field from the profile (stats, varps, inventories,
+/// appearance) is left fully applied — restoring those is unconditional and
+/// infallible field-by-field assignment, see `apply_profile` — and only the
+/// coordinate/`tele` half is left in the pre-fix broken state. Rather than
+/// claim success on a half-synced client, this returns `0`: a caller that
+/// only checks the sentinel gets an honest "did not fully restore" instead of
+/// a client that resyncs and one that silently does not looking identical.
+/// A save coordinate landing in an unallocated zone should not happen for any
+/// engine-authored profile — every position a player can stand at IS an
+/// allocated zone — so this is expected to be unreachable in practice; it is
+/// handled rather than assumed away because an `extern "C"` boundary is
+/// exactly the place "should not happen" stops being good enough.
+///
 /// # ★★ MUST NOT PANIC. Returns 1 on success, 0 on any failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
@@ -459,6 +531,19 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
         return 0;
     };
     rs_engine::player_save::apply_profile(&profile, &mut p.player, host.cache);
+
+    // ★★ See the doc comment above: reuse `host_teleport`'s own path so the
+    // client gets the movement block a bare coordinate write never sends.
+    let target = p.player.pathing.coord;
+    p.player.pathing.clear_waypoints();
+    p.teleport(target);
+    if !p.player.pathing.tele {
+        // The restored coordinate's zone is not allocated. Every other field
+        // is fully applied; only position/tele is left unsynced. See "THE ONE
+        // FAILURE MODE THIS CANNOT PAPER OVER" above.
+        return 0;
+    }
+
     1
 }
 // -- the label channel -----------------------------------------------------------
