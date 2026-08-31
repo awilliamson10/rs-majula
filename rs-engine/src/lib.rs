@@ -10,7 +10,7 @@ mod game_map;
 mod handlers;
 mod info;
 mod phases;
-mod player_save;
+pub mod player_save;
 
 pub use active_player::ActivePlayer;
 pub use clients::client_db::{DbRequest, DbResponse, db_client_task};

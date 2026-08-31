@@ -414,6 +414,53 @@ pub extern "C" fn host_player_z(h: *mut c_void) -> i32 {
     }
 }
 
+// -- profile save/restore ----------------------------------------------------
+//
+// ★ THE EPISODE RESET. Phase 1 restores a tutorial step as an episode start.
+// ONE ENGINE PER PROCESS makes a reboot cost a whole process (~40s), so this
+// is the difference between an eval sweep in minutes and one in hours.
+
+/// # ★★ MUST NOT PANIC
+/// Every panic in an `extern "C"` fn aborts the process. Every failure path
+/// here returns a sentinel instead: `-1` for "could not", a NEGATIVE REQUIRED
+/// SIZE for "your buffer is too small", and a positive count for success.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_save_profile(h: *mut c_void, out: *mut u8, cap: usize) -> i64 {
+    let host = host_ref(h);
+    let Some(p) = host.env.engine.get_player(host.pid) else {
+        return -1;
+    };
+    let profile = rs_engine::player_save::extract_profile(&p.player, host.cache);
+    let blob = rs_engine::player_save::save_binary(&profile, host.cache);
+    if out.is_null() {
+        return -1;
+    }
+    if blob.len() > cap {
+        // ★ NEGATIVE SIZE, not -1: the caller must be able to tell "too small,
+        // allocate N" from "it failed", and a second call is cheap.
+        return -(blob.len() as i64);
+    }
+    unsafe { std::ptr::copy_nonoverlapping(blob.as_ptr(), out, blob.len()) };
+    blob.len() as i64
+}
+
+/// # ★★ MUST NOT PANIC. Returns 1 on success, 0 on any failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
+    let host = host_ref(h);
+    if ptr.is_null() || len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(profile) = rs_engine::player_save::load_binary(bytes) else {
+        return 0;
+    };
+    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+        return 0;
+    };
+    rs_engine::player_save::apply_profile(&profile, &mut p.player, host.cache);
+    1
+}
 // -- the label channel -----------------------------------------------------------
 
 /// Returned by [`host_npc_field`] for a slot that does not exist or a field id
