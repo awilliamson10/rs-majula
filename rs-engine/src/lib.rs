@@ -11,6 +11,7 @@ mod handlers;
 mod info;
 mod phases;
 pub mod player_save;
+pub mod wheels;
 
 pub use active_player::ActivePlayer;
 pub use clients::client_db::{DbRequest, DbResponse, db_client_task};
