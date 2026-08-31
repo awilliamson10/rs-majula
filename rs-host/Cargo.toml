@@ -38,3 +38,9 @@ tokio     = { version = "1.52", features = ["sync", "rt"] }
 # runtime dependency of the cdylib.
 [dev-dependencies]
 rs-crypto = { workspace = true }
+# tests/profile.rs only -- it hand-crafts a magic-valid, CRC-valid but
+# structurally-truncated profile blob (the Critical-finding regression) and
+# needs `rs_io::crc::getcrc` to sign it, the same way `save_binary` does.
+# Same pattern as `rs-crypto` above: a test-only need for wire-level bytes,
+# not a runtime dependency of the cdylib.
+rs-io     = { workspace = true }

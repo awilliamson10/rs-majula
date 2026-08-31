@@ -328,6 +328,37 @@ pub fn save_binary(profile: &PlayerProfile, cache: &CacheStore) -> Vec<u8> {
 /// `Ok(profile)` on success, or an `Err` with a static error message if
 /// the data is too short, has an invalid magic, unsupported version, or
 /// incorrect checksum.
+/// # ★★ THE BOUNDS CHECK `rs_io::Packet`'S OWN GETTERS DON'T HAVE.
+///
+/// `Packet::g1` through `g8s` (vendored `rs-io-0.3.1`, `src/packet.rs`) each do
+/// a raw `unsafe { *self.data.as_ptr().add(self.pos) }` /
+/// `read_unaligned` with NO check against `self.data.len()`. Reading past a
+/// short buffer through them is undefined behaviour -- a segfault or worse,
+/// not a catchable panic -- and `load_binary`'s only two gates before the
+/// first `g1`/`g2` call (a magic number and a CRC32 computed over whatever
+/// bytes are actually present) are both trivially satisfiable by a blob
+/// whose length disagrees with what its own `varp_count`, `inv_count`, or an
+/// inventory's `size` field claims: an attacker who controls every byte can
+/// always pick a CRC that matches.
+///
+/// This matters here specifically because `host_load_profile` (Phase 1's C
+/// ABI, `rs-host/src/lib.rs`) is the FIRST call site where `load_binary`
+/// receives bytes from outside an engine-authored `data/players/*.sav` file.
+/// `need(n)` before a read (or a run of reads) turns "read past the end" into
+/// an `Err` the caller already handles, instead of a dead process.
+///
+/// Not `sav.remaining()` (which exists on `Packet`): that casts `len - pos`
+/// to `i32` and this crate targets buffers that only need to stay under
+/// `usize`, so this stays in `usize` and uses `checked_add` to also catch the
+/// (should-be-impossible, but let's not assume) case of `pos` having already
+/// overrun `len`.
+fn need(sav: &Packet, n: usize) -> Result<(), &'static str> {
+    match sav.pos.checked_add(n) {
+        Some(end) if end <= sav.data.len() => Ok(()),
+        _ => Err("Save data truncated"),
+    }
+}
+
 pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
     if data.len() < 4 {
         return Err("Save data too short");
@@ -357,6 +388,10 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
         return Err("Incorrect save checksum");
     }
 
+    // ★★ Everything from here on reads through `Packet`'s unchecked getters,
+    // so every read (or contiguous run of fixed-size reads) is preceded by a
+    // `need` call. See `need`'s doc comment.
+    need(&sav, 2 + 2 + 1 + 7 + 5 + 1 + 2)?; // x, z, y, body[7], colors[5], gender, runenergy
     let x = sav.g2();
     let z = sav.g2();
     let y = sav.g1();
@@ -373,12 +408,14 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
     let gender = sav.g1();
 
     let runenergy = sav.g2();
+    need(&sav, if version >= 2 { 4 } else { 2 })?;
     let playtime = if version >= 2 {
         sav.g4s()
     } else {
         sav.g2() as i32
     };
 
+    need(&sav, STAT_COUNT * 5)?; // per stat: a g4s xp (4) + a g1 level (1)
     let mut stats = [0i32; 21];
     let mut levels = [1u8; 21];
     for i in 0..STAT_COUNT {
@@ -386,7 +423,14 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
         levels[i] = sav.g1();
     }
 
+    need(&sav, 2)?;
     let varp_count = sav.g2() as usize;
+    // ★ THE RUNAWAY LOOP, #1: `varp_count` is a caller-controlled u16 that
+    // directly drives this loop's length -- two bytes can claim up to 65535
+    // iterations of a 4-byte read. Checking the WHOLE claimed span up front,
+    // rather than per-iteration, is what turns "reads 256KB past an 8-byte
+    // buffer" into one `Err` before the loop starts.
+    need(&sav, varp_count * 4)?;
     let mut varps = Vec::new();
     for i in 0..varp_count {
         let value = sav.g4s();
@@ -395,25 +439,35 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
         }
     }
 
+    need(&sav, 1)?;
     let inv_count = sav.g1() as usize;
     let mut invs = Vec::new();
     for _ in 0..inv_count {
+        need(&sav, 2)?;
         let type_id = sav.g2();
-        let size = if version >= 5 {
-            sav.g2() as usize
-        } else {
+        if version < 5 {
             return Err("Save version too old for inv capacity");
-        };
+        }
+        need(&sav, 2)?;
+        let size = sav.g2() as usize;
 
+        // ★ THE RUNAWAY LOOP, #2: `size` is exactly as caller-controlled as
+        // `varp_count`, but unlike it, each slot's own width (2, 3, or 7
+        // bytes) depends on bytes not yet read -- so unlike the varp loop
+        // above, this cannot be checked as one span up front. Each read is
+        // gated individually instead.
         let mut items = Vec::new();
         for slot in 0..size {
+            need(&sav, 2)?;
             let id_raw = sav.g2();
             if id_raw == 0 {
                 continue;
             }
             let id = id_raw - 1;
+            need(&sav, 1)?;
             let count_byte = sav.g1();
             let count = if count_byte == 255 {
+                need(&sav, 4)?;
                 sav.g4s() as u32
             } else {
                 count_byte as u32
@@ -432,26 +486,42 @@ pub fn load_binary(data: &[u8]) -> Result<PlayerProfile, &'static str> {
     let mut afk_zones = [0u32; 2];
     let mut last_afk_zone: u16 = 0;
     if version >= 3 {
+        need(&sav, 1)?;
         let afk_count = sav.g1() as usize;
+        // ★ A THIRD caller-controlled count (`afk_count`, a u8): bounded to
+        // 255 iterations rather than 65535, but the same class of bug.
+        need(&sav, afk_count * 4)?;
         for z in afk_zones.iter_mut().take(afk_count.min(2)) {
             *z = sav.g4s() as u32;
         }
         for _ in 2..afk_count {
             sav.g4s();
         }
+        need(&sav, 2)?;
         last_afk_zone = sav.g2();
     }
 
     let (public_chat, private_chat, trade_chat) = if version >= 4 {
+        need(&sav, 1)?;
         let packed = sav.g1();
         ((packed >> 4) & 0b11, (packed >> 2) & 0b11, packed & 0b11)
     } else {
         (0, 0, 0)
     };
 
-    let last_date = if version >= 6 { sav.g8s() } else { 0 };
+    let last_date = if version >= 6 {
+        need(&sav, 8)?;
+        sav.g8s()
+    } else {
+        0
+    };
     // Saves older than v7 predate staff-level persistence; default to Normal (0).
-    let staff_mod_level = if version >= 7 { sav.g1() } else { 0 };
+    let staff_mod_level = if version >= 7 {
+        need(&sav, 1)?;
+        sav.g1()
+    } else {
+        0
+    };
 
     Ok(PlayerProfile {
         x,
@@ -579,6 +649,104 @@ mod tests {
                 assert_eq!(player.stats.xp[i], 0);
                 assert_eq!(player.stats.levels[i], 1);
             }
+        }
+    }
+
+    /// Writes a well-formed save prefix through `magic` .. the stats/levels
+    /// loop (everything up to, but not including, `varp_count`), using
+    /// `SAV_VERSION` and all-zero/level-1 values. Shared by the two
+    /// truncation regression tests below so each one only has to hand-craft
+    /// the ONE section it means to break.
+    fn write_valid_prefix(sav: &mut Packet) {
+        sav.p2(SAV_MAGIC);
+        sav.p2(SAV_VERSION);
+        sav.p2(0); // x
+        sav.p2(0); // z
+        sav.p1(0); // y
+        for _ in 0..7 {
+            sav.p1(0); // body
+        }
+        for _ in 0..5 {
+            sav.p1(0); // colors
+        }
+        sav.p1(0); // gender
+        sav.p2(0); // runenergy
+        sav.p4(0); // playtime (version >= 2)
+        for _ in 0..STAT_COUNT {
+            sav.p4(0); // xp
+            sav.p1(1); // level
+        }
+    }
+
+    /// Appends the CRC32 trailer `load_binary` checks, computed over exactly
+    /// the bytes written so far -- the same recipe `save_binary` uses. This is
+    /// what makes a crafted-and-truncated blob pass the CRC gate: the two
+    /// tests below are not "a save file with a byte chopped off" (which would
+    /// fail CRC before reaching any vulnerable read, proving nothing) but a
+    /// deliberately shorter blob whose CRC is honestly computed over its own,
+    /// shorter content.
+    fn sign_crc(sav: &mut Packet) {
+        let checksum = crc::getcrc(&sav.data, 0, sav.pos);
+        sav.p4(checksum);
+        sav.data.truncate(sav.pos);
+    }
+
+    /// ★★ Regression for the Critical finding on Task 1's `host_load_profile`
+    /// round: `Packet::g1`..`g4s` (vendored `rs-io`) do raw, unchecked pointer
+    /// reads with no bounds check against `data.len()`. Before `need` existed,
+    /// `varp_count` -- a caller-controlled u16 read straight off the wire --
+    /// drove a loop of `varp_count` unchecked 4-byte reads with nothing
+    /// stopping it from walking off the end of a short buffer: undefined
+    /// behaviour, not a catchable error. This blob claims `varp_count = 100`
+    /// (400 bytes) but supplies only 8 real bytes of varp data before the CRC
+    /// trailer, and its CRC is honestly computed over that shorter body -- so
+    /// it clears both of `load_binary`'s existing gates (magic, CRC) and would
+    /// have reached the unchecked reads. It must come back `Err`, not crash.
+    #[test]
+    fn load_binary_rejects_a_blob_truncated_inside_the_varp_section() {
+        let mut sav = Packet::new(256);
+        write_valid_prefix(&mut sav);
+        sav.p2(100); // varp_count claims 100 entries (400 bytes)...
+        for _ in 0..2 {
+            sav.p4(0); // ...but only 8 bytes of them actually follow.
+        }
+        sign_crc(&mut sav);
+
+        match load_binary(&sav.data) {
+            Err(_) => {}
+            Ok(_) => panic!(
+                "a blob claiming 100 varp entries with only 2 present should not parse \
+                 successfully -- either it read garbage or (worse) it read past the buffer"
+            ),
+        }
+    }
+
+    /// ★★ Same finding, the other runaway loop: an inventory's `size` field is
+    /// exactly as caller-controlled as `varp_count`, and drives the per-slot
+    /// item loop. This blob claims one inventory of `size = 50` slots but
+    /// supplies only 2 slots' worth of item bytes before the CRC trailer.
+    #[test]
+    fn load_binary_rejects_a_blob_truncated_inside_an_inventory() {
+        let mut sav = Packet::new(256);
+        write_valid_prefix(&mut sav);
+        sav.p2(0); // varp_count: none, so the varp section is legitimately empty
+        sav.p1(1); // inv_count: one inventory
+        sav.p2(0); // inv_type
+        sav.p2(50); // size claims 50 slots (each at least 2 bytes)...
+        for _ in 0..2 {
+            sav.p2(1); // id_raw = 1 (non-zero, so a count byte follows each)
+            sav.p1(1); // count_byte
+        }
+        // ...but only 2 slots' worth of item bytes actually follow.
+        sign_crc(&mut sav);
+
+        match load_binary(&sav.data) {
+            Err(_) => {}
+            Ok(_) => panic!(
+                "a blob claiming a 50-slot inventory with only 2 slots' bytes present \
+                 should not parse successfully -- either it read garbage or (worse) it \
+                 read past the buffer"
+            ),
         }
     }
 }
