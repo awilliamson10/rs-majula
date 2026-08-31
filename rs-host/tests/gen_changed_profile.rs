@@ -1,6 +1,7 @@
-//! Generates the "changed" profile fixture Task 2b's client-resync probe
-//! (`host/src/profile-once.ts`) loads to measure the two channels Task 2's
-//! crash pre-empted entirely: `%tutorial` and the inventory.
+//! Generates the "changed" profile fixture the client-resync probe
+//! (`host/src/profile-once.ts`) loads to measure the channels a naive restore
+//! can silently fail to reach: `%tutorial`, the inventory, and (Task 2c's
+//! varp-resync fix) a TRANSMITTABLE perm varp, `option_nodef`.
 //!
 //! ★★ ONE ENGINE PER PROCESS, THEREFORE ONE `#[test]` FN IN THIS BINARY.
 //! `host_new`/`EnvHarness::boot_seeded` aborts on a second call in a process
@@ -51,6 +52,28 @@ const LUMBRIDGE: (u16, u8, u16) = (3222, 0, 3218);
 /// comparison against it is never accidentally vacuous.
 const CHANGED_TUTORIAL: i32 = 7770;
 
+/// `option_nodef`'s cache id in `content/274`'s packed `varp.dat` — measured,
+/// not assumed, via `cache.varps.get_by_debugname("option_nodef").id` when
+/// this fixture was authored. ★ PINNED HERE SO A DRIFT FAILS LOUDLY: the
+/// TS-side probe (`host/src/profile-once.ts`) has no debugname table to
+/// resolve this id from at runtime (`VarpType.ts`'s client-side decoder
+/// discards the debugname string, `code === 10 => dat.gjstr()` with the
+/// result unused) and reads `client.var[172]` as a bare literal instead. The
+/// assertion below is what makes a future cache repack that reorders
+/// `player_controls.varp` fail HERE, in the crate that can still resolve the
+/// name, rather than as a silently-wrong index three processes away.
+const OPTION_NODEF_ID: u16 = 172;
+
+/// `option_nodef` (`content/274/scripts/interface_controls/configs/
+/// player_controls.varp`: `scope=perm`, `transmit=yes`) is one of the
+/// `scope=perm` + `transmit=yes` varps a reviewer confirmed real content
+/// exercises. A fresh player never sets it, so it starts at 0 — this is a
+/// value a restore's varp resync must carry to the client, distinct from
+/// `%tutorial` (which has no `transmit` at all, hence no client-side channel)
+/// and the inventory (a different resync mechanism entirely, fixed
+/// separately — see `Inventory::clear()`'s doc comment in `player_save.rs`).
+const CHANGED_OPTION_NODEF: i32 = 1;
+
 /// Where the probe expects to find the generated fixture: `host/test/
 /// fixtures/changed-profile.bin`, i.e. two directories up from this crate
 /// (`majula/rs-host` -> `majula` -> `rs-vla`) and into `host/test/fixtures`.
@@ -61,7 +84,7 @@ fn fixture_path() -> std::path::PathBuf {
 }
 
 #[test]
-fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_and_an_item() {
+fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_an_item_and_a_transmit_varp() {
     let (x, level, z) = LUMBRIDGE;
     let mut env = rl_env::EnvHarness::boot_seeded(4242);
     let (pid, _rx) = env.engine.spawn_player_tapped("agent", CoordGrid::new(x, level, z));
@@ -75,6 +98,17 @@ fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_and_an_item() {
         .expect("content/274 always declares %tutorial");
     let tutorial_id = tutorial.id;
     let tutorial_var_type = tutorial.var_type;
+
+    let nodef = cache
+        .varps
+        .get_by_debugname("option_nodef")
+        .expect("content/274 always declares option_nodef");
+    assert_eq!(
+        nodef.id, OPTION_NODEF_ID,
+        "option_nodef's cache id moved -- update OPTION_NODEF_ID here AND the \
+         matching literal in host/src/profile-once.ts, or the TS probe silently \
+         reads the wrong varp"
+    );
 
     let inv_id = cache
         .invs
@@ -92,6 +126,9 @@ fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_and_an_item() {
     p.player
         .vars
         .set(tutorial_id, VarValue::from_int(tutorial_var_type, CHANGED_TUTORIAL));
+    p.player
+        .vars
+        .set(nodef.id, VarValue::from_int(nodef.var_type, CHANGED_OPTION_NODEF));
 
     let inv = p
         .player
@@ -110,6 +147,15 @@ fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_and_an_item() {
         Some(CHANGED_TUTORIAL),
         "extract_profile did not capture the tutorial varp we just set"
     );
+    assert_eq!(
+        profile
+            .varps
+            .iter()
+            .find(|(id, _)| *id == nodef.id)
+            .map(|(_, v)| *v),
+        Some(CHANGED_OPTION_NODEF),
+        "extract_profile did not capture the option_nodef varp we just set"
+    );
     let inv_profile = profile
         .invs
         .iter()
@@ -127,6 +173,10 @@ fn generates_a_changed_profile_fixture_with_a_nonzero_tutorial_and_an_item() {
     assert_eq!(
         reloaded.varps.iter().find(|(id, _)| *id == tutorial_id).map(|(_, v)| *v),
         Some(CHANGED_TUTORIAL)
+    );
+    assert_eq!(
+        reloaded.varps.iter().find(|(id, _)| *id == nodef.id).map(|(_, v)| *v),
+        Some(CHANGED_OPTION_NODEF)
     );
     assert_eq!(
         reloaded.invs.iter().find(|i| i.inv_type == inv_id).map(|i| i.items.clone()),

@@ -38,7 +38,12 @@ use rs_pack::types::NpcStat;
 // the trait the content VM dispatches through: `p_teleport` (opcode 2088,
 // `rs-vm/src/ops/player.rs:923`) is literally `player.teleport(pop_coord(s)?)`
 // on this trait. See [`host_teleport`] for why that matters.
-use rs_vm::engine::ScriptPlayer;
+//
+// ★ `with_engine` INSTALLS THE THREAD-LOCAL `ActivePlayer::sync_varps` NEEDS.
+// See [`host_load_profile`]'s doc comment on the varp resync for why calling
+// `sync_varps` from an FFI entry point (outside any tick's own `with_engine`
+// scope) panics without it.
+use rs_vm::engine::{ScriptPlayer, with_engine};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Guards against a second `host_new` in this process. `rs-pathfinder` holds
@@ -527,7 +532,21 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     let Ok(profile) = rs_engine::player_save::load_binary(bytes) else {
         return 0;
     };
-    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+
+    // ★★ A RAW POINTER, NOT A LIVE BORROW HELD ACROSS `with_engine`. The varp
+    // resync below needs `with_engine` to install the `engine()`/`cache()`
+    // thread-locals `ActivePlayer::sync_varps` reads -- see that block's doc
+    // comment -- and `with_engine` itself needs `&mut Engine`, which cannot
+    // coexist with an already-live `&mut ActivePlayer` borrowed from the same
+    // `Engine`. `engine_ptr` is what lets this function fetch the player
+    // fresh on each side of that call instead, mirroring the identical
+    // `engine_ptr = self as *mut Engine` trick `Engine::spawn_player_tapped`
+    // uses for the same reason (`engine.rs:2171`'s own comment: "mirroring
+    // the raw-pointer pattern `cycle()` itself uses to sidestep the
+    // double-mutable-borrow of `self` inside the closure").
+    let engine_ptr: *mut rs_engine::Engine = &mut host.env.engine;
+
+    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) else {
         return 0;
     };
     // ★★ Task 2c: clear before applying, or this is a MERGE, not a RESTORE.
@@ -540,8 +559,83 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     rs_engine::player_save::clear_perm_state(&mut p.player, host.cache);
     rs_engine::player_save::apply_profile(&profile, &mut p.player, host.cache);
 
+    // ★★ THE VARP RESYNC, ROUND 2 OF TASK 2c'S FIX. Both `clear_perm_state`
+    // and `apply_profile` write varps through the raw `VarSet::set` -- they
+    // change the ENGINE's value and send NOTHING over the wire, because
+    // there is no equivalent to `Inventory::clear()`'s dirty-marking for a
+    // bare `VarSet` write (`ActivePlayer::set_varp` is what would normally
+    // pair a varp write with `varp_transmit`, and neither restore function
+    // goes through it). So every `scope=perm` + `transmit=yes` varp --
+    // `option_nodef`, `option_run`'s siblings in `game_options.varp`,
+    // `emote_access`, `sa_energy`, and more content this reaches unchanged
+    // -- was correctly replaced in the engine and left silently stale on
+    // the client: the exact same class of bug `Inventory::clear()` (above)
+    // exists to fix for inventories, just via a different channel.
+    //
+    // ★★ THE INVARIANT THIS RESTORE IS SUPPOSED TO UPHOLD: a restore reduces
+    // the player to what a fresh LOGIN would produce, and `on_login`
+    // (`active_player.rs:2178`) always calls `reset_client_varcache()` then
+    // `sync_varps()` as its own varp resync. `on_reconnect` pairs them the
+    // same way. Calling both here, in the same order, is matching that
+    // established pairing rather than assuming `sync_varps()` alone is
+    // enough forever: `reset_client_varcache()` tells the client to
+    // reconcile its displayed `var[]` against its own last-known-server
+    // `varServ[]` before the fresh values land, which only has any effect if
+    // those two had already diverged on the client for some OTHER reason.
+    // Traced against the vendored client (`Client.ts`'s `VARP_SMALL`/
+    // `VARP_LARGE`/`VARP_SYNC` handlers), a live session that has only ever
+    // received ordinary engine-driven varp writes keeps them equal, so this
+    // call is redundant for TODAY's bug specifically -- but ANYONE adding a
+    // new channel to the profile in future should ask "does login notify the
+    // client about this, and do we?", and matching the two places that
+    // already answer "yes" is cheaper than re-deriving the answer from a
+    // wire trace next time. `sync_varps()` itself is what actually gets
+    // `option_nodef` (and every other transmittable perm varp) to the
+    // client: it iterates every cache varp with `transmit = true` and sends
+    // the player's current value unconditionally, so the FINAL value this
+    // restore leaves the player holding is what the client is told,
+    // regardless of what `clear_perm_state` zeroed it to in between.
+    //
+    // ★★ MUST NOT PANIC. Neither call can fail: both are inherent
+    // `ActivePlayer` methods that only ever call `self.write(..)`, which
+    // either queues a small fixed-size packet (silently dropped only past a
+    // 5000-byte single-message cap neither ever approaches) or pushes onto
+    // the outbox -- an `UnboundedReceiver`'s paired sender, which cannot
+    // block or fail while `Host` holds the receiver. There is nothing here
+    // that can leave a "half-resynced" restore behind, so if a future change
+    // to either method introduces a fallible step, `host_load_profile` must
+    // still return its `0` sentinel rather than let a panic escape this
+    // `extern "C"` boundary.
+    //
+    // ★★ `with_engine` IS NOT OPTIONAL HERE. `sync_varps` reads
+    // `engine().varps()` (`active_player.rs:1315`), and `engine()` panics
+    // ("engine_typed() called outside with_engine scope",
+    // `rs-vm/src/engine.rs:2015`) unless the `ENGINE_PTR` thread-local this
+    // installs is set for the duration of the call. Every OTHER caller of
+    // `sync_varps` (`on_login`, `on_reconnect`) runs from inside a tick's own
+    // `with_engine` scope or a caller that installs one itself
+    // (`Engine::accept_login`'s doc comment: "accept_login runs RuneScript
+    // ..., touches the thread-local engine()/cache() globals. Called outside
+    // cycle(), those aren't installed, so install them here"); `host_load_profile`
+    // is exactly such an outside-cycle caller, being an FFI entry point, not
+    // a step of a tick. Caught by this round's failing test BEFORE this
+    // block existed: calling `sync_varps` unwrapped aborted the process --
+    // see `task-2c4-report.md`.
+    with_engine(unsafe { &mut *engine_ptr }, || {
+        if let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) {
+            p.reset_client_varcache();
+            p.sync_varps();
+        }
+    });
+
     // ★★ See the doc comment above: reuse `host_teleport`'s own path so the
     // client gets the movement block a bare coordinate write never sends.
+    // Re-fetched via `engine_ptr` rather than reusing the `p` bound above --
+    // see `engine_ptr`'s own doc comment on why no `&mut ActivePlayer` stays
+    // live across the `with_engine` call.
+    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) else {
+        return 0;
+    };
     let target = p.player.pathing.coord;
     p.player.pathing.clear_waypoints();
     p.teleport(target);
