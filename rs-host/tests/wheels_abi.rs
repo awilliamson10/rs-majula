@@ -2,9 +2,21 @@
 //! the host pointer is ignored and these tests are pure. That is also why a
 //! NULL host must be safe: nothing dereferences it.
 use rs_engine::wheels::{self, HintLabel};
+use std::sync::Mutex;
+
+/// ★★ SERIALIZED, DELIBERATELY, matching `rs-engine/tests/wheels.rs`'s own
+/// `TEST_LOCK` (commit `03bc30b3`) rather than solving the identical problem a
+/// second way. These three tests reach the SAME process-global label store
+/// `rs-engine/tests/wheels.rs` does, just through the C ABI wrappers instead
+/// of `rs_engine::wheels` directly, and Rust's default test harness runs a
+/// file's tests concurrently across threads. Held for the FIRST line of every
+/// test. `unwrap_or_else(|e| e.into_inner())` so a panicking test cannot
+/// poison the lock for the rest of the file.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn each_hint_kind_reports_its_own_payload() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let h = std::ptr::null_mut();
 
     wheels::record_hint(HintLabel::Npc(42));
@@ -24,15 +36,22 @@ fn each_hint_kind_reports_its_own_payload() {
 
 #[test]
 fn the_flash_tab_reports_minus_one_when_there_is_none() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let h = std::ptr::null_mut();
     wheels::record_flash_tab(None);
     assert_eq!(rs_host::host_flash_tab(h), -1);
     wheels::record_flash_tab(Some(3));
     assert_eq!(rs_host::host_flash_tab(h), 3);
+    // ★ Restored before releasing the lock, matching `the_toggle_round_trips`'s
+    // own discipline in `rs-engine/tests/wheels.rs` -- serialized order does
+    // not matter here, only leaving the global at a value the NEXT lock-holder
+    // is not surprised by.
+    wheels::record_flash_tab(None);
 }
 
 #[test]
 fn the_suppression_switch_is_reachable_over_the_abi() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let h = std::ptr::null_mut();
     rs_host::host_wheels_suppress(h, 1);
     assert!(wheels::suppressed());
