@@ -530,6 +530,14 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     let Some(p) = host.env.engine.get_player_mut(host.pid) else {
         return 0;
     };
+    // ★★ Task 2c: clear before applying, or this is a MERGE, not a RESTORE.
+    // `extract_profile`/`load_binary` never represent "this varp is 0" or
+    // "this inventory is empty" as an entry -- see `clear_perm_state`'s doc
+    // comment -- so without this call, restoring a profile that was itself
+    // saved in a default state (Phase 1's whole use case: an early Tutorial
+    // Island checkpoint as an episode start) leaves every varp and
+    // inventory the LIVE session had dirtied untouched.
+    rs_engine::player_save::clear_perm_state(&mut p.player, host.cache);
     rs_engine::player_save::apply_profile(&profile, &mut p.player, host.cache);
 
     // ★★ See the doc comment above: reuse `host_teleport`'s own path so the

@@ -133,6 +133,90 @@ pub fn extract_profile(player: &Player, cache: &CacheStore) -> PlayerProfile {
     }
 }
 
+/// Resets a live [`Player`]'s perm-scope varps and inventories to the "fresh
+/// login" baseline, so a subsequent [`apply_profile`] REPLACES that state
+/// instead of merging onto it.
+///
+/// # ★★ WHY THIS EXISTS: THE SPARSE ENCODING TRAP
+///
+/// [`extract_profile`] only records a varp when it is non-zero (`if value !=
+/// 0`, above) and only records an inventory when it has at least one item
+/// (`if !items.is_empty()`, above); [`load_binary`] mirrors both gates on the
+/// wire-format side. That is the right call for save-file size, but it means
+/// a [`PlayerProfile`] can never represent "this varp is 0" or "this
+/// inventory is empty" as an entry -- those states are represented by
+/// ABSENCE. [`apply_profile`]'s restore loops only iterate what the profile
+/// CONTAINS, so restoring a profile that was saved in a default state (the
+/// common case for an episode-start checkpoint) leaves every varp and
+/// inventory the profile didn't need to mention exactly as dirty as the live
+/// session left them. Calling this immediately before [`apply_profile`]
+/// forces a clean slate first, so there is nothing left for that merge to
+/// merge onto.
+///
+/// # Scope
+///
+/// Walks the exact same two collections [`extract_profile`] walks, gated by
+/// the exact same scope check (`VarPlayerScope::Perm` / `InvScope::Perm`),
+/// deliberately re-derived from the cache here rather than from the profile
+/// being restored: what must be cleared is whatever the LIVE player
+/// currently holds, not whatever the incoming profile happens to mention. If
+/// this filter and `extract_profile`'s ever drift apart, whatever the live
+/// player holds that the save format can't represent stops being cleared
+/// correctly -- so a change to one should be checked against the other.
+///
+/// # ★★ WHY `Inventory::clear()`, NOT `player.invs.remove(id)`
+///
+/// Removing the map entry entirely looked equivalent at the engine layer --
+/// no items, same as a fresh player that never touched the inventory -- and
+/// IS equivalent for what [`extract_profile`] would read back. But it is not
+/// equivalent for what the CLIENT sees: `ActivePlayer::update_invs`
+/// (`active_player.rs`) syncs an inventory by looking it up with
+/// `self.player.invs.get(inv_id)` and skipping entirely (`let Some(inv) =
+/// inv else { continue }`) when that lookup misses -- so a removed entry
+/// has no dirty-tracking object left to notice the change and the client's
+/// last-known slot contents (still holding the pre-clear item) are never
+/// overwritten. `Inventory::clear()` mutates the SAME object in place --
+/// filling every slot with `None` and marking every slot dirty
+/// (`rs-inv/src/lib.rs`) -- so the very next `update_invs` tick finds a
+/// present, dirty inventory and sends the reset to the client. This is the
+/// same class of trap `host_load_profile`'s own doc comment records for the
+/// position channel (Task 2b): a data structure that is correct at the Rust
+/// level but invisible to the wire-sync mechanism that only reacts to
+/// specific, already-proven mutation paths.
+///
+/// # ★★ MUST NOT PANIC
+///
+/// Both loops are infallible field writes gated by a scope lookup that
+/// already defaults safely when the cache doesn't recognise an id
+/// (`Option::map`/`unwrap_or`, the same defaulting `extract_profile` itself
+/// relies on); `VarSet::set` cannot fail on an unknown id, and
+/// `Inventory::clear()` only ever writes within the inventory's own,
+/// already-allocated `slots` vec. There is no fallible step here to fail
+/// partway through: by the time this returns, either nothing has been
+/// cleared (it never started) or everything has (it ran to completion) -- a
+/// "half-cleared" restore is not a state this function can produce.
+pub fn clear_perm_state(player: &mut Player, cache: &CacheStore) {
+    for i in 0..player.vars.len() {
+        let id = i as u16;
+        if let Some(varp_type) = cache.varps.get_by_id(id)
+            && varp_type.scope == VarPlayerScope::Perm
+        {
+            player.vars.set(id, VarValue::from_int(varp_type.var_type, 0));
+        }
+    }
+
+    for (&type_id, inventory) in player.invs.iter_mut() {
+        let scope = cache
+            .invs
+            .get_by_id(type_id)
+            .map(|t| t.scope)
+            .unwrap_or(InvScope::Temp);
+        if scope == InvScope::Perm {
+            inventory.clear();
+        }
+    }
+}
+
 /// Applies a loaded [`PlayerProfile`] onto a live [`Player`] entity,
 /// restoring all persistent state.
 ///
@@ -148,6 +232,16 @@ pub fn extract_profile(player: &Player, cache: &CacheStore) -> PlayerProfile {
 /// * Overwrites player coordinates, stats, levels, appearance, varps,
 ///   inventories, and chat settings.
 /// * Recalculates `base_levels` from stats and updates `combat_level`.
+///
+/// # ★ THIS DOES NOT CLEAR ANYTHING FIRST
+/// It has another caller -- login (`Engine::accept_login`) -- applying a
+/// profile onto a brand-new `ActivePlayer` whose varps/invs are already at
+/// their zero/empty default, so clearing here would be redundant for that
+/// caller and wrong to make a hidden assumption about for this one.
+/// `host_load_profile` (`rs-host/src/lib.rs`) is the caller that restores
+/// onto a possibly-dirty LIVE session, and it calls [`clear_perm_state`]
+/// itself, immediately before this function, for exactly that reason -- see
+/// that function's doc comment.
 ///
 /// # Call Stack
 /// **Calls:** [`get_level_by_exp`]
