@@ -419,6 +419,99 @@ pub extern "C" fn host_player_z(h: *mut c_void) -> i32 {
     }
 }
 
+/// Finds the nearest loc of type `id` within `radius` tiles of the player, on
+/// the player's own level.
+///
+/// Returns `((x as i64) << 16) | z`, or `-1` when there is no such loc in
+/// range (or no player).
+///
+/// # ★ THE LABEL CHANNEL, NOT AN OBSERVATION
+/// Same rule as [`host_npc_count`] and [`host_varp`]: this is engine truth,
+/// for the privileged TEACHER. The agent's observation is the client's own
+/// decoded scene; routing this into it would hand the model an answer it is
+/// supposed to read off the screen.
+///
+/// # ★★ WHY A LOC ACCESSOR EXISTS AT ALL
+/// Tutorial Island's "use the shrimp on the fire" step sets NO hint of any
+/// kind — `survival_guide.rs2`'s last `hint_npc` before it targets the FISHING
+/// SPOT, and nothing clears it — so a teacher reading only the hint channel
+/// has no faithful way to find the fire it just lit. The fire is a real loc
+/// (`tut_firemaking.rs2`: `loc_add($fire_coord, fire, 1, centrepiece_straight,
+/// 150)`), so asking the engine where its locs are is the honest answer, and
+/// it generalises: doors, trees, ranges and gates are all locs, and every one
+/// of them is a target a later skill will need.
+///
+/// # ★ ONE CALL, NOT TWO
+/// The coordinate is packed rather than split across `host_loc_find_x` /
+/// `_z` accessors like [`host_player_x`]/[`host_player_z`]. Those two read a
+/// single stored coordinate and cannot disagree; two independent SEARCHES
+/// could — the second would have to redo the scan and might tie-break
+/// differently after any change between the calls.
+///
+/// # ★ VISIBILITY IS THE ENGINE'S OWN TEST
+/// `Loc::visible()` is what decides whether a loc is sent to nearby players,
+/// so it is exactly "is this really there right now": a despawned static loc
+/// is skipped, a dynamically added one (the fire) is not.
+///
+/// # ★★ MUST NOT PANIC
+/// A panic in an `extern "C"` fn aborts the process with no JS-visible error.
+/// Every failure path returns `-1`; the arithmetic is done in `i32` so a
+/// player standing near the map edge cannot underflow a `u16`.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_loc_find(h: *mut c_void, id: u32, radius: u32) -> i64 {
+    if id > u16::MAX as u32 {
+        return -1;
+    }
+    let id = id as u16;
+    // ★ Capped: the scan is O(zones in the box), and a caller passing a
+    // nonsense radius should get a bounded scan rather than a frozen tick.
+    let r = radius.min(64) as i32;
+
+    let host = host_ref(h);
+    let Some(p) = host.env.engine.get_player(host.pid) else {
+        return -1;
+    };
+    let coord = p.player.pathing.coord;
+    let (px, py, pz) = (coord.x() as i32, coord.y(), coord.z() as i32);
+
+    let x0 = (px - r).max(0);
+    let x1 = px + r;
+    let z0 = (pz - r).max(0);
+    let z1 = pz + r;
+
+    let mut best: Option<(i32, u16, u16)> = None;
+    // Zones are 8x8 tiles; walk the zone grid covering the box.
+    let mut zx = x0 & !7;
+    while zx <= x1 {
+        let mut zz = z0 & !7;
+        while zz <= z1 {
+            if let Some(zone) = host.env.engine.zones.zone(zx as u16, py, zz as u16) {
+                for loc in zone.locs.iter() {
+                    if loc.id() != id || !loc.visible() {
+                        continue;
+                    }
+                    let c = loc.world_coord(zone.coord);
+                    let dx = c.x() as i32 - px;
+                    let dz = c.z() as i32 - pz;
+                    // Chebyshev, matching how every other range in this system
+                    // is measured.
+                    let d = dx.abs().max(dz.abs());
+                    if d <= r && best.is_none_or(|(bd, _, _)| d < bd) {
+                        best = Some((d, c.x(), c.z()));
+                    }
+                }
+            }
+            zz += 8;
+        }
+        zx += 8;
+    }
+
+    match best {
+        Some((_, x, z)) => ((x as i64) << 16) | z as i64,
+        None => -1,
+    }
+}
+
 // -- profile save/restore ----------------------------------------------------
 //
 // ★ THE EPISODE RESET. Phase 1 restores a tutorial step as an episode start.
