@@ -1324,6 +1324,26 @@ pub extern "C" fn host_wheels_suppress(on: u32) {
     rs_engine::wheels::set_suppressed(on != 0);
 }
 
+/// Reads the suppression flag back. 1 when suppressed, 0 when not.
+///
+/// # ★★ ONE SOURCE OF TRUTH FOR "ARE THE WHEELS OFF"
+/// `Client.hideTutFlash` has to agree with this flag, because `tut_flash` now
+/// always sends its packet and the DISPLAY is what suppression removes (see
+/// `active_player.rs`'s `tut_flash`). Making the host read the flag rather
+/// than accepting a second boolean from its caller is deliberate: a caller
+/// that passed `suppressWheels(true)` and forgot the client half would get a
+/// blinking tab in every frame of a corpus while every number looked healthy
+/// -- the exact failure mode this module's own ordering bug already cost once.
+/// There is nothing to keep in sync if there is only one switch.
+///
+/// # ★★ MUST NOT PANIC
+/// A panic in an `extern "C"` fn aborts the process with no JS-visible error.
+/// An atomic load cannot panic.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_wheels_suppressed() -> u32 {
+    u32::from(rs_engine::wheels::suppressed())
+}
+
 #[cfg(test)]
 mod tests {
     //! ★★ IN-CRATE, AND THAT IS THE POINT: these run under `cargo test --lib`

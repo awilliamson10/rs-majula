@@ -1422,11 +1422,33 @@ impl ActivePlayer {
     ///
     /// # Arguments
     /// * `tab` - The tab index to flash.
+    /// ★★ THE ONE WHEEL THAT IS STILL SENT WHILE SUPPRESSED, AND IT HAS TO BE.
+    /// `TutFlash` does two jobs. It draws the blink — a hint, and the reason
+    /// this module exists — and it ARMS the client's acknowledgement: the
+    /// client sends `TUT_CLICKSIDE` only while `tutFlashIcon` names the tab
+    /// just opened (`Client.ts:4008`), and that packet is the ONLY thing that
+    /// fires the `[tutorial,_]` trigger, which is what advances `%tutorial`
+    /// past every tab step (20, 50, and eight more later on the island).
+    ///
+    /// Dropping the packet dropped both jobs. Measured: with suppression on,
+    /// the teacher opened the flashed tab correctly — `activeIcon` read back
+    /// as 3, the action reported ok — and `%tutorial` sat at 20 for 300 ticks
+    /// until the stall detector killed the run. With the wheels visible, the
+    /// same teacher walked from step 20 to step 80. Nothing about the teacher
+    /// differed; suppression had removed the step's own progression path.
+    ///
+    /// So the display is suppressed one layer later instead, in the client's
+    /// draw code (`Client.hideTutFlash`, set by the host from
+    /// `host_wheels_suppressed`). The frames a policy learns from carry no
+    /// blinking tab, and every protocol semantic — including "only the tab the
+    /// engine actually flashed advances the step" — stays exactly as a real
+    /// player's session. The label is recorded either way.
+    ///
+    /// ★ The other two wheels have no mechanism attached: `TutOpen`'s panel and
+    /// the hint arrows are pure display, and those stay suppressed HERE, where
+    /// the packet never reaches the socket at all.
     pub fn tut_flash(&mut self, tab: u8) {
         crate::wheels::record_flash_tab(Some(tab));
-        if crate::wheels::suppressed() {
-            return;
-        }
         self.write(rs_protocol::network::game::server::tut_flash::TutFlash { tab });
     }
 
