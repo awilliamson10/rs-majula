@@ -75,16 +75,44 @@ fn packed_cache() -> &'static CacheStore {
 /// Packs the rev-274 cache exactly once, leaks it to `'static`, and returns it
 /// plus a fresh ScriptProvider (each Engine gets its own ScriptProvider).
 pub fn shared_cache() -> (&'static CacheStore, ScriptProvider) {
-    let cache = packed_cache();
     let root = content_root();
     let content_dir = root.join(rs_pack::CONTENT_DIR);
     let pack_dir = root.join(rs_pack::PACK_DIR);
-    // ScriptProvider is cheap-ish to rebuild; pack again to get one.
-    let (_store2, scripts) = rs_pack::pack_all(
-        &content_dir,
-        &pack_dir,
-        false, true,
-    ).expect("pack_all scripts");
+
+    // ★★ THE FIRST CALL PACKS ONCE AND KEEPS BOTH HALVES. This used to call
+    // `packed_cache()` (one full `pack_all`) and then pack the entire ~588 MB
+    // of content A SECOND TIME just to obtain a `ScriptProvider`, discarding
+    // that pack's `CacheStore` — "cheap-ish to rebuild" was wrong twice over:
+    //
+    //   - COST. The discarded second `CacheStore` is where the engine's
+    //     resident memory was going: the live byte blobs of a packed cache
+    //     total 8 MB, yet `shared_cache()` left 325 MB resident, ~117 MB of it
+    //     freed-but-retained allocator arenas. It also doubled boot time.
+    //
+    //   - ★★ CORRECTNESS. `content/274/pack/script.pack` is REGENERATED
+    //     NONDETERMINISTICALLY by packing — two packs of identical content
+    //     assign script ids differently (verified: pack, restore, repack,
+    //     diff — all 10,937 lines reorder). So the engine was running a
+    //     `ScriptProvider` from pack #2 against a `CacheStore` from pack #1,
+    //     two artifacts that do not agree about which id is which script.
+    //
+    // One pack, one id assignment, both halves from it.
+    if CACHE.get().is_none() {
+        let (store, scripts) = rs_pack::pack_all(&content_dir, &pack_dir, false, true)
+            .expect("pack_all rev-274");
+        let leaked: &'static CacheStore = Box::leak(store);
+        // If another caller won the race the cell keeps theirs; ours is leaked
+        // either way and these scripts still match SOME complete pack.
+        let _ = CACHE.set(leaked);
+        return (*CACHE.get().expect("cell populated above"), scripts);
+    }
+
+    // Already packed, and someone wants an ADDITIONAL `ScriptProvider` (each
+    // Engine gets its own). One engine per process makes this unreachable in
+    // the fused loop; it stays correct for callers that do boot twice.
+    let cache = packed_cache();
+    let (_store2, scripts) = rs_pack::pack_all(&content_dir, &pack_dir, false, true)
+        .expect("pack_all scripts");
     (cache, scripts)
 }
 

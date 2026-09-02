@@ -46,6 +46,50 @@ use rs_pack::types::NpcStat;
 use rs_vm::engine::{ScriptPlayer, with_engine};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+/// Hands the allocator's free arenas back to the OS.
+///
+/// ★★ WORTH 117 MB PER ENGINE, MEASURED. `pack_all` reads ~588 MB of content
+/// to build a cache whose live byte blobs total 8 MB, and glibc's malloc keeps
+/// the freed arenas rather than returning them: RSS after `shared_cache()` is
+/// 325 MB, of which 117 MB is empty. `boot_seeded` adds another ~98 MB of
+/// transient garbage on top. One `malloc_trim` after boot takes a booted
+/// engine from 426 MB to 309 MB.
+///
+/// ★ That matters because every env is its own PROCESS (`rs-pathfinder`'s
+/// `COLLISION_FLAGS` is process-global), so the retention is paid once per
+/// env, not once per box. At the 64 concurrent envs an RL rollout wants, this
+/// is ~7.5 GB of nothing.
+///
+/// ★ Frees NOTHING live — it only releases arenas the allocator already
+/// considers free, so it cannot invalidate a cache pointer Bun is holding.
+/// It walks the arenas, so call it after boot and after an episode reset,
+/// never per tick. glibc-only; a no-op elsewhere, which is why it reports
+/// whether it actually ran.
+fn trim_allocator() -> u32 {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        unsafe { malloc_trim(0) };
+        1
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    {
+        0
+    }
+}
+
+/// [`trim_allocator`] at the C boundary, for a caller that has just finished a
+/// burst of engine allocation (an episode reset, a profile load) and wants the
+/// pages back. `host_new` already trims once before it returns.
+///
+/// Returns 1 if a trim actually ran, 0 on a platform without `malloc_trim`.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_trim() -> u32 {
+    trim_allocator()
+}
+
 /// Guards against a second `host_new` in this process. `rs-pathfinder` holds
 /// process-global `COLLISION_FLAGS`; a second `Engine` would silently
 /// corrupt both instead of failing loud, so this asserts instead.
@@ -172,6 +216,11 @@ pub extern "C" fn host_new_at(seed: u64, x: u16, level: u8, z: u16) -> *mut c_vo
     // cell via `shared_cache()` -- this just borrows that same instance, not
     // a fresh pack. See `Host::cache`'s doc comment.
     let cache = rl_env::cache();
+
+    // ★ AFTER the pack and the world boot, before the handle escapes: this is
+    // the one moment when all of that transient garbage is dead and nothing
+    // has been handed out yet. See `trim_allocator` for the 117 MB.
+    trim_allocator();
 
     Box::into_raw(Box::new(Host {
         env,
