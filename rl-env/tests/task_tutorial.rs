@@ -1,9 +1,25 @@
 //! Task 8: the first real task file.
 
 use rl_env::ontology;
-use rl_env::task::{Cmp, Condition, Task};
+use rl_env::tape::TUTORIAL_SPAWN;
+use rl_env::task::{At, Cmp, Condition, Task};
 
 const TUTORIAL_STATES: [i32; 14] = [0, 1, 4, 10, 20, 30, 40, 50, 60, 70, 80, 90, 120, 130];
+
+/// ★★ Fix round 1: the start coordinate was the mainland Lumbridge spawn
+/// (`3222, 0, 3218`), not Tutorial Island -- a mainland login never takes the
+/// engine's `start_tutorial` branch, so `%tutorial` would have stayed 0 and
+/// every milestone below would have been permanently unreachable. Comparing
+/// against the `TUTORIAL_SPAWN` constant, not a retyped literal, is what
+/// makes this a guarded invariant rather than the same mistake written twice.
+#[test]
+fn its_start_is_tutorial_islands_spawn_not_the_mainland() {
+    let t = Task::load("tasks/tutorial_survival.ron").expect("load");
+    assert!(
+        matches!(t.start.at, At::Coord(x, l, z) if (x, l, z) == TUTORIAL_SPAWN),
+        "start was {:?}, expected TUTORIAL_SPAWN {TUTORIAL_SPAWN:?}", t.start.at,
+    );
+}
 
 #[test]
 fn the_tutorial_task_loads_and_resolves() {

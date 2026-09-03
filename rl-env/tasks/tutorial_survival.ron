@@ -11,9 +11,18 @@
 // and an `Eq` milestone that the observation never lands exactly on would be
 // silently unreachable.
 //
-// ★ The spawn matches `rl_env::tape::TUTORIAL_SPAWN` and the coordinate
-// `teacher/src/run-tutorial.ts` uses. Do not "improve" it -- `make tape`'s
-// feed_bytes=2208 canary is recorded against this spawn.
+// ★★ THE SPAWN MUST BE ON TUTORIAL ISLAND, NOT MAINLAND LUMBRIDGE.
+// `rl_env::tape::TUTORIAL_SPAWN = (3094, 0, 3107)` -- inside the island's
+// bounds (x 3053..=3156, z 3056..=3136, `tutorial/scripts/util.rs2`). A
+// mainland login (e.g. the Lumbridge coordinate `(3222, 0, 3218)` used
+// elsewhere in this repo as a mainland reference spawn) does not take the
+// engine's `start_tutorial` login branch, so `%tutorial` stays 0 forever and
+// every milestone below is permanently unreachable -- the file would parse,
+// resolve, and score zero forever. `task_tutorial.rs`'s
+// `its_start_is_tutorial_islands_spawn_not_the_mainland` test asserts this
+// coordinate equals the `TUTORIAL_SPAWN` constant so this cannot regress
+// silently. Do not "improve" the coordinate -- `make tape`'s feed_bytes=2208
+// canary is recorded against this spawn.
 //
 // Values: content/274/scripts/tutorial/configs/tutorial.constant
 // Instructions: content/274/scripts/tutorial/scripts/tut_chatbox_steps.rs2
@@ -21,7 +30,7 @@ Task(
     name: "tutorial_survival",
     budget_ticks: 400,
     start: Start(
-        at: Coord(3222, 0, 3218),
+        at: Coord(3094, 0, 3107),
         seed: 4242,
         jitter: 0,
         loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
