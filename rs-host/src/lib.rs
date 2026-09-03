@@ -411,18 +411,22 @@ pub extern "C" fn host_out_len(h: *mut c_void) -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_add_agent(h: *mut c_void, x: u16, level: u8, z: u16) -> u32 {
     let host = host_ref(h);
+    // ★★ A RECYCLED PID MUST NOT INHERIT ITS PREDECESSOR'S WHEELS -- but that
+    // forgetting has to happen BEFORE the login trigger below runs, not
+    // after `spawn_player_tapped` returns. It used to live here, and Task 6
+    // (a second live agent on Tutorial Island) caught it: `spawn_player_tapped`
+    // itself runs `accept_login`, which for a Tutorial Island coordinate fires
+    // `start_tutorial` and records THIS agent's own first hint before this
+    // function ever sees its pid -- a `forget(pid)` called here would erase
+    // that fresh hint along with any stale one from a previous occupant,
+    // which is indistinguishable from the label store still being
+    // process-global. See `Engine::spawn_player_tapped`, which now calls
+    // `wheels::forget` itself, the instant `next_pid()` hands back the pid
+    // and before any RuneScript runs against it.
     let (pid, rx) = host
         .env
         .engine
         .spawn_player_tapped("agent", CoordGrid::new(x, level, z));
-
-    // ★★ A RECYCLED PID MUST NOT INHERIT ITS PREDECESSOR'S WHEELS. The label
-    // store (`rs_engine::wheels`) is keyed by pid and outlives any single
-    // player; `next_pid()` reuses the slot of a player that logged out. Without
-    // this, a fresh agent can be born holding the previous occupant's hint
-    // arrow or flashing tab -- and the teacher would read that as truth about
-    // an agent that has never been told anything. See Task 3.
-    rs_engine::wheels::forget(pid);
 
     if host.agents.contains_key(&pid) {
         return 0;

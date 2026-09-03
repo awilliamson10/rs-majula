@@ -2151,6 +2151,24 @@ impl Engine {
         use rs_crypto::isaac::IsaacPair;
 
         let pid = self.player_list.next_pid().expect("free pid slot");
+        // ★★ HERE, BEFORE `accept_login` RUNS THE LOGIN TRIGGER -- NOT
+        // AFTER THIS FUNCTION RETURNS. `next_pid()` can hand back a slot a
+        // previous player logged out of, and that player's hint/tut_com/
+        // flash_tab may still be sitting in `rs_engine::wheels`'s pid-keyed
+        // store; a fresh agent must not inherit them (Task 3's whole reason
+        // for keying by pid rather than staying process-global). But
+        // `accept_login`, called below via `with_engine`, immediately runs
+        // Tutorial Island's `[login,_]` trigger -- which, for a coordinate
+        // `in_tutorial_island` accepts, calls `start_tutorial` and records
+        // THIS agent's own first hint before `spawn_player_tapped` returns.
+        // A `forget(pid)` placed after the call (as `host_add_agent` used to
+        // do it) would erase that fresh hint along with any stale one,
+        // which is indistinguishable from the label store still being
+        // process-global -- exactly the bug Task 3 fixed. Watching a second
+        // agent on Tutorial Island (Task 6) is what caught this: `hint(bPid)`
+        // read back `none` for the whole run despite `start_tutorial`
+        // demonstrably having fired.
+        crate::wheels::forget(pid);
         let io = create_io(IsaacPair::new(&[0; 4], &[0; 4]));
         let bytes_rx = io.bytes_rx;
         let request = LoginRequest {
