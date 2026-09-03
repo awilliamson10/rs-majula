@@ -16,5 +16,5 @@ Curated(
         120: "go through the gate and follow the path",
         130: "opened the gate to the chef",
     },
-    note: Some("0 is the default value of a fresh account and appears in no states entry because no script assigns it -- the RuneScape Guide conversation has not happened yet; tutorial.rs2:49 only compares against it, never writes it. Values 2 and 3 exist as unnamed literals (tutorial.rs2:144, set_tutorial_progress) and are DEAD in rev 274: the only assignment of 2 is commented out in runescape_guide.rs2, annotated as an October-2006 change. Do not add 0, 2, or 3 as milestones."),
+    note: Some("0 is the default value of a fresh account and appears in no states entry because no script assigns it -- the RuneScape Guide conversation has not happened yet; tutorial.rs2:49 only compares against it, never writes it. No script ever assigns %tutorial = 2 (confirmed by ontology_xref.rs::tutorial_states): the October-2006 comment block at runescape_guide.rs2:27-31 only comments out a case 2 : read of %tutorial (line 5) and an assignment of a DIFFERENT varp, %tutorial_progress = 2 (line 29) -- not an assignment of %tutorial itself. 3 IS a live bare-literal write (tutorial.rs2:145), but practically unreachable: it fires only inside a branch gated by %tutorial = 2, which nothing ever sets. Do not add 0, 2, or 3 as milestones."),
 )
