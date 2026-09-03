@@ -45,7 +45,15 @@ pub struct VarpRef {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Xref {
+    /// Constants whose value is an integer -- the ones a milestone can compare
+    /// against.
     pub constants: BTreeMap<String, Constant>,
+    /// ★★ CONSTANTS THAT ARE DEFINED BUT ARE NOT INTEGERS, e.g.
+    /// `^catherby_crate_coord = 0_43_51_12_34` (`quest_arthur.constant`).
+    /// Tracked separately so "defined, but not a number" is distinguishable
+    /// from "not defined anywhere" -- without this the report calls three
+    /// perfectly good coordinate constants undefined.
+    pub non_integer_constants: BTreeSet<String>,
     pub varp_refs: Vec<VarpRef>,
 }
 
@@ -107,8 +115,48 @@ fn parse_constant(line: &str) -> Option<(String, i32)> {
 /// ★ A continuation line of a multi-line condition opens with `|` or `&`
 /// (`tut_mining.rs2:113`: `| %tutorial = 290`), so it does not open with the
 /// var and is correctly read as a comparison.
+/// Everything on the line that is actually code: string literals blanked, then
+/// the `//` comment removed.
+///
+/// ★★ BOTH ARE NECESSARY AND THE ORDER MATTERS. Strings first, because a URL in
+/// a string (`mes("http://...")`) contains `//` and would truncate the line at
+/// the wrong place. Then comments, because `runescape_guide.rs2` carries
+/// `//%tutorial_progress = 2;` -- commented out for an October-2006 change rev
+/// 274 predates -- and counting it injects a var that does not exist.
+///
+/// ★★ THE STRING CASE IS NOT HYPOTHETICAL. Four `%name` references in the tree
+/// live only inside string literals: `%shopbuy` and `%shophaggle` in an
+/// `error(...)` (`shop.rs2:190`), `%npc_trawler_start` in a `mes(...)`
+/// (`cheat_trawler.rs2:15`), and a bare `%20` in a player-facing `~mesbox`
+/// (`flamtaer_temple.rs2:313`). Each one is prose, and each becomes a phantom
+/// unresolved variable.
+///
+/// ★ Blanks rather than deletes, so byte offsets and therefore the `opens`
+/// check stay aligned with the original line.
+fn code_of(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_string = false;
+    for c in line.chars() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                out.push(' ');
+            }
+            _ if in_string => out.push(' '),
+            _ => out.push(c),
+        }
+    }
+    match out.find("//") {
+        Some(i) => out.truncate(i),
+        None => {}
+    }
+    out
+}
+
 fn parse_refs(line: &str, file: &str, lineno: u32) -> Vec<VarpRef> {
     let mut out = Vec::new();
+    let line = code_of(line);
+    let line = line.as_str();
     for stmt in line.split(['{', '}', ';']) {
         let trimmed = stmt.trim();
         let mut i = 0usize;
@@ -126,13 +174,28 @@ fn parse_refs(line: &str, file: &str, lineno: u32) -> Vec<VarpRef> {
             let opens = trimmed
                 .strip_prefix('%')
                 .is_some_and(|t| t.starts_with(&var));
-            let write = if opens {
+            // ★★ A CONTINUATION LINE CAN OPEN WITH THE VAR. When the operator
+            // sits at the END of the previous line, the next line reads
+            // `%scorpcatcher = ^scorpcatcher_complete) {`
+            // (`scorpcatcher_journal.rs2:27`) -- it opens with the var and is
+            // still a comparison. The tell is the unbalanced closing paren: a
+            // real assignment never has more `)` than `(`.
+            let unbalanced = stmt.matches(')').count() > stmt.matches('(').count();
+            let write = if opens && !unbalanced {
                 stmt[end..].trim_start().strip_prefix('=').map(|rhs| {
                     let rhs = rhs.trim();
                     match rhs.strip_prefix('^') {
                         Some(c) => VarpWrite {
                             literal: None,
-                            constant: c.trim().split_whitespace().next().map(str::to_string),
+                            // ★ Trim to the identifier: a constant read out of a
+                            // condition can carry a trailing `)` or `,`.
+                            constant: Some(
+                                c.trim()
+                                    .chars()
+                                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                    .collect::<String>(),
+                            )
+                            .filter(|s| !s.is_empty()),
                         },
                         None => VarpWrite {
                             literal: rhs.split_whitespace().next().and_then(|t| t.parse().ok()),
@@ -160,13 +223,22 @@ pub fn scan(root: &Path) -> Xref {
         let Ok(text) = std::fs::read_to_string(path) else { continue };
         let file = path.to_string_lossy().to_string();
         for (n, line) in text.lines().enumerate() {
-            if let Some((name, value)) = parse_constant(line) {
-                x.constants.entry(name.clone()).or_insert(Constant {
-                    name,
-                    value,
-                    file: file.clone(),
-                    line: n as u32 + 1,
-                });
+            let Some(rest) = line.trim().strip_prefix('^') else { continue };
+            let Some((name, value)) = rest.split_once('=') else { continue };
+            let (name, value) = (name.trim().to_string(), value.trim());
+            match value.parse::<i32>() {
+                Ok(value) => {
+                    x.constants.entry(name.clone()).or_insert(Constant {
+                        name,
+                        value,
+                        file: file.clone(),
+                        line: n as u32 + 1,
+                    });
+                }
+                // Defined, but not a number -- a coord, a name, an expression.
+                Err(_) => {
+                    x.non_integer_constants.insert(name);
+                }
             }
         }
     }

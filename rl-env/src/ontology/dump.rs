@@ -60,6 +60,15 @@ pub fn dump_cache() -> Vec<Entity> {
         out.push(Entity { kind: EntityKind::Varbit, id, name: name.to_string(), fields: f });
     }
 
+    // ★ Same sigil, different kind. Without these the join reports every
+    // shop, quest-progress and scratch variable as unresolved.
+    for (name, &id) in c.varns.debugnames.iter() {
+        out.push(Entity { kind: EntityKind::Varn, id, name: name.to_string(), fields: BTreeMap::new() });
+    }
+    for (name, &id) in c.varss.debugnames.iter() {
+        out.push(Entity { kind: EntityKind::Vars, id, name: name.to_string(), fields: BTreeMap::new() });
+    }
+
     for (name, &id) in c.objs.debugnames.iter() {
         let Some(t) = c.objs.get_by_id(id) else { continue };
         let mut f = BTreeMap::new();
