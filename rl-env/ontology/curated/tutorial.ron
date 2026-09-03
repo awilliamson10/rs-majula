@@ -1,0 +1,20 @@
+Curated(
+    varp: "tutorial",
+    tracks: "Tutorial Island progress. 0 is a fresh account; 130 ends the survival curriculum; ^tutorial_complete = 1000 ends the whole island.",
+    states: {
+        1:   "open the player controls",
+        4:   "click the door to leave the room",
+        10:  "follow the path, talk to the survival expert",
+        20:  "open your inventory",
+        30:  "cut down the tree",
+        40:  "use the tinderbox on the logs",
+        50:  "open your skills",
+        60:  "talk to the survival expert",
+        70:  "catch shrimp at the fishing spot",
+        80:  "use the shrimp on the fire",
+        90:  "catch and cook another shrimp",
+        120: "go through the gate and follow the path",
+        130: "opened the gate to the chef",
+    },
+    note: Some("0 is the default value of a fresh account and appears in no states entry because no script assigns it -- the RuneScape Guide conversation has not happened yet; tutorial.rs2:49 only compares against it, never writes it. Values 2 and 3 exist as unnamed literals (tutorial.rs2:144, set_tutorial_progress) and are DEAD in rev 274: the only assignment of 2 is commented out in runescape_guide.rs2, annotated as an October-2006 change. Do not add 0, 2, or 3 as milestones."),
+)

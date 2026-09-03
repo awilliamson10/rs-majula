@@ -144,3 +144,33 @@ pub fn report(o: &Ontology) -> Report {
     r.unresolved_constants.dedup();
     r
 }
+
+/// One hand-written entry in the curated meaning layer.
+///
+/// ★ SMALL BY DESIGN. Spec §4.3: the mechanical layer is complete and
+/// generated; this layer covers only the entities a task actually names, and
+/// widening it toward "audit everything" is a scope change, not a detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Curated {
+    pub varp: String,
+    pub tracks: String,
+    pub states: BTreeMap<i32, String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+pub fn load_curated(dir: &Path) -> Vec<Curated> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+    files.sort();
+    for path in files {
+        if path.extension().and_then(|s| s.to_str()) != Some("ron") { continue }
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let c: Curated = ron::from_str(&text)
+            .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        out.push(c);
+    }
+    out
+}

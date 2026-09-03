@@ -1,0 +1,10 @@
+Curated(
+    varp: "cookquest",
+    tracks: "Cook's Assistant progress.",
+    states: {
+        0: "not started",
+        1: "accepted; the cook wants flour, an egg and milk",
+        2: "complete (^cook_complete)",
+    },
+    note: Some("quest_cook has NO .constant file: state 1 is a bare literal at quest_cook.rs2:32. ^cook_complete = 2 is defined in a different subtree, general/configs/quest.constant:12. Required objs, from quest_cook.rs2:47: pot_flour, egg, bucket_milk."),
+)
