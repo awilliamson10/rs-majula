@@ -508,10 +508,25 @@ pub extern "C" fn host_send(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
         return 1;
     }
     let host = host_ref(h);
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
     // ★ THE FIRST AGENT'S inbox, unchanged. See `Host::first_pid`.
     let first = host.first_pid;
-    let Some(agent) = host.agents.get(&first) else {
+    push_inbound(host, first, ptr, len)
+}
+
+/// The half of [`host_send`] that is not "which agent": copy the bytes and
+/// push them at one agent's inbox.
+///
+/// ★ SHARED SO THE TWO SENDERS CANNOT DRIFT. The interesting part here is
+/// not the copy, it is the bounded channel and what a `try_send` failure
+/// means (see [`host_send`]'s doc comment: a silent, permanent ISAAC
+/// desync). A second transcription of that would be a second place to get it
+/// subtly wrong, in code whose failures are invisible downstream.
+///
+/// Callers must have already rejected `len == 0` and a null `ptr`; both
+/// exports do that before they have a `&Host` at all.
+fn push_inbound(host: &Host, pid: u16, ptr: *const u8, len: usize) -> u32 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+    let Some(agent) = host.agents.get(&pid) else {
         return 1;
     };
     // The engine's own `ActivePlayer::decode` drains this inbox during the
@@ -520,6 +535,42 @@ pub extern "C" fn host_send(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
         Ok(()) => 0,
         Err(_) => 1,
     }
+}
+
+/// [`host_send`] for ANY agent: pushes `len` bytes into the inbox of the
+/// agent with this `pid`. Same return contract, same fatal-drop semantics.
+///
+/// # ★★ WITHOUT THIS, EVERY AGENT BUT THE FIRST LOGS OUT AT ~TICK 100
+///
+/// [`host_step`]'s doc comment spells out the deadline: `!bot && !arena_mode`
+/// force-logs-out any player whose `last_response` is `TIMEOUT_NO_RESPONSE =
+/// 100` ticks stale, and `last_response` only moves when
+/// `ActivePlayer::decode` sees inbound bytes. [`host_add_agent`] gave every
+/// agent a reachable inbox ([`Agent::tx_in`]) precisely so this could exist --
+/// but until it did, there was no way to put a byte in any inbox but the
+/// first agent's, so a second agent could not answer and was force-logged-out
+/// around tick 100.
+///
+/// **The symptom is not an error.** The removed player's outbox sender is
+/// dropped, so [`host_agent_out_len`] simply returns 0 from then on, forever;
+/// the client on the other end sees a feed that goes quiet and renders a
+/// stale frame. A run shorter than ~100 ticks never notices. See
+/// `rs-host/tests/agent_keepalive.rs`, which keeps one extra agent alive
+/// through 150 ticks and lets a second one die in the same process as its
+/// control.
+///
+/// An unknown `pid` returns 1 (dropped) rather than silently sending to
+/// someone else -- crossing two agents' inbound streams would desync both
+/// ISAAC pairs with nothing to report it.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_agent_send(h: *mut c_void, pid: u16, ptr: *const u8, len: usize) -> u32 {
+    if len == 0 {
+        return 0;
+    }
+    if ptr.is_null() {
+        return 1;
+    }
+    push_inbound(host_ref(h), pid, ptr, len)
 }
 
 fn cache_slice<'a>(host: &'a Host, name: &str) -> &'a [u8] {
