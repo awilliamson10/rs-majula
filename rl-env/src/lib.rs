@@ -5,6 +5,7 @@ pub mod observe;
 pub mod reward;
 pub mod scenario;
 pub mod tape;
+pub mod task;
 
 use once_cell::sync::OnceCell;
 use std::path::Path;
