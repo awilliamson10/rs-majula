@@ -17,6 +17,7 @@
 //! that `rs-pathfinder` keeps process-global. Drive one handle from one
 //! thread; the fused loop's consumer (Bun) is single-threaded by construction.
 
+use std::collections::BTreeMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -95,15 +96,51 @@ pub extern "C" fn host_trim() -> u32 {
 /// corrupt both instead of failing loud, so this asserts instead.
 static BOOTED: AtomicBool = AtomicBool::new(false);
 
-pub struct Host {
-    env: EnvHarness,
-    pid: u16,
-    /// Outbound: the player's `handle.outbox` was replaced with our sender.
+/// One logged-in player and the two ends of its own wire.
+///
+/// # ★★ THE OUT BUFFER IS PER-AGENT, AND THAT IS THE WHOLE POINT
+///
+/// `Host` used to hold ONE `rx`/`out` pair because it held one player. It now
+/// holds a map of these, and the tempting simplification -- one shared `out`
+/// that every receiver drains into -- is the specific bug this layout exists
+/// to prevent. Two agents' feeds interleaved into one buffer would not fail
+/// loudly: each frame is well-formed on its own, so whichever client read the
+/// mixed stream second would decode the OTHER agent's PlayerInfo as its own,
+/// keep running, and render valid-looking wrong pixels. Nothing downstream --
+/// not the ISAAC layer, not the client, not the observation -- has any way to
+/// notice. Keep one buffer per pid.
+struct Agent {
+    /// Outbound: this player's `handle.outbox` was replaced with our sender.
     rx: UnboundedReceiver<Vec<u8>>,
-    /// Inbound: the player's `handle.inbox` is a Receiver, so we must own the
+    /// Inbound: this player's `handle.inbox` is a Receiver, so we must own the
     /// paired Sender to push client packets in.
+    ///
+    /// ★ HELD FOR EVERY AGENT, not just the one `host_send` currently targets.
+    /// `create_io`'s own `packet_tx` is dropped inside `spawn_player_tapped`,
+    /// so an agent whose inbox we did not replace could never be sent anything
+    /// -- and `host_step`'s doc comment's 100-tick `NoTimeout` deadline would
+    /// force-log it out with no way to answer.
     tx_in: tokio::sync::mpsc::Sender<Vec<u8>>,
     out: Vec<u8>,
+}
+
+pub struct Host {
+    env: EnvHarness,
+    /// The agent `host_new_at` booted. ★ Every pid-less export in this file --
+    /// `host_out_ptr`, `host_send`, `host_player_x`, the varp and profile
+    /// accessors, all of it -- means THIS agent, so that everything downstream
+    /// of the crate sees exactly the single-agent host it saw before a second
+    /// agent was possible. A second agent is reached only through the explicit
+    /// `host_agent_*` pid-taking exports.
+    first_pid: u16,
+    /// Every logged-in agent, keyed by pid.
+    ///
+    /// ★ A `BTreeMap`, not a `HashMap`: `host_step` iterates this every tick,
+    /// and a hash map's iteration order varies per process. The drains are
+    /// independent (each into its own buffer) so order cannot corrupt
+    /// anything today -- but "the tick did the same thing in the same order"
+    /// is worth more here than a hash lookup, at a handful of agents.
+    agents: BTreeMap<u16, Agent>,
     /// The process's single, `'static` cache instance -- see [`rl_env::cache`]'s
     /// doc comment. Deliberately NOT a `Box<CacheStore>` this `Host` owns:
     /// an owned copy would (a) dangle every cache pointer Bun holds the
@@ -222,12 +259,13 @@ pub extern "C" fn host_new_at(seed: u64, x: u16, level: u8, z: u16) -> *mut c_vo
     // has been handed out yet. See `trim_allocator` for the 117 MB.
     trim_allocator();
 
+    let mut agents = BTreeMap::new();
+    agents.insert(pid, Agent { rx, tx_in, out: Vec::new() });
+
     Box::into_raw(Box::new(Host {
         env,
-        pid,
-        rx,
-        tx_in,
-        out: Vec::new(),
+        first_pid: pid,
+        agents,
         cache,
         empty: Vec::new(),
         npc_slots: Vec::new(),
@@ -284,11 +322,34 @@ fn host_ref<'a>(h: *mut c_void) -> &'a mut Host {
 pub extern "C" fn host_step(h: *mut c_void) -> u32 {
     let host = host_ref(h);
     host.env.engine.cycle();
-    host.out.clear();
-    while let Ok(buf) = host.rx.try_recv() {
-        host.out.extend_from_slice(&buf);
+    // ★★ EVERY agent's receiver, each into ITS OWN buffer. An unread receiver
+    // is not merely stale: it is an unbounded channel that grows for the rest
+    // of the run, and the bytes it holds are the only copy of that agent's
+    // frames. See [`Agent`] for why the buffers must not be merged.
+    for agent in host.agents.values_mut() {
+        agent.out.clear();
+        while let Ok(buf) = agent.rx.try_recv() {
+            agent.out.extend_from_slice(&buf);
+        }
     }
-    host.out.len() as u32
+    // ★ The FIRST agent's length, which is what this return has always meant:
+    // `host/src/ffi.ts`'s `step()` sizes its `toArrayBuffer` view of
+    // `host_out_ptr` from it. A second agent's length comes from
+    // `host_agent_out_len`, never from here.
+    first_out(host).map(|o| o.len()).unwrap_or(0) as u32
+}
+
+/// The first agent's out buffer.
+///
+/// ★ `None` IS UNREACHABLE TODAY and deliberately not an `expect`. Nothing
+/// removes from `agents` -- not even the 100-tick force-logout in
+/// `host_step`'s doc comment, which drops the PLAYER while this map entry and
+/// its (now permanently silent) receiver stay. The option exists so that the
+/// pid-less exports degrade to an empty read rather than panicking across the
+/// C boundary if a later task does learn to remove an agent.
+#[inline]
+fn first_out(host: &Host) -> Option<&Vec<u8>> {
+    host.agents.get(&host.first_pid).map(|a| &a.out)
 }
 
 /// Zero-copy view of the last [`host_step`] call's outbound bytes.
@@ -304,14 +365,112 @@ pub extern "C" fn host_step(h: *mut c_void) -> u32 {
 /// freed or reused memory. Copy the bytes out before stepping again.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_out_ptr(h: *mut c_void) -> *const u8 {
-    host_ref(h).out.as_ptr()
+    let host = host_ref(h);
+    // ★ THE FIRST AGENT'S, unchanged. See `Host::first_pid`.
+    match first_out(host) {
+        Some(out) => out.as_ptr(),
+        None => host.empty.as_ptr(),
+    }
 }
 
 /// Length in bytes of the buffer [`host_out_ptr`] points at. Same validity
 /// window as `host_out_ptr` -- read together, before the next `host_step`.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_out_len(h: *mut c_void) -> usize {
-    host_ref(h).out.len()
+    first_out(host_ref(h)).map(|o| o.len()).unwrap_or(0)
+}
+
+// -- a second agent in the same engine (Task 4) ------------------------------
+
+/// Logs a SECOND agent into this same engine and returns its pid.
+///
+/// # ★ NOT a second engine, and not a relaxation of ONE ENGINE PER PROCESS
+///
+/// [`BOOTED`] and `rs-pathfinder`'s process-global `COLLISION_FLAGS` are
+/// untouched: there is still exactly one `Engine` here. What is new is that
+/// the engine holds more than one logged-in player that WE drive, which the
+/// engine itself has always supported -- `spawn_player_tapped` is the same
+/// call [`host_new_at`] makes for the first one, with the same
+/// login-at-a-coordinate semantics (read that doc comment: the coordinate
+/// decides whether this account gets sidebar tabs, and it is applied by
+/// `accept_login`, not by a teleport afterwards).
+///
+/// The new agent gets its OWN receiver and its OWN out buffer, read back with
+/// [`host_agent_out_ptr`]/[`host_agent_out_len`]. It does not appear in
+/// [`host_out_ptr`], [`host_send`], or any other pid-less export -- those all
+/// mean the first agent, forever. See [`Agent`] and [`Host::first_pid`].
+///
+/// ★ Its login burst is buffered at THIS call, not at the next tick, so the
+/// first [`host_step`] after this one flushes `accept_login`'s whole client
+/// bootstrap (`RebuildNormal`, varps, stats) ahead of that tick's own output --
+/// exactly as tick 0 does for the first agent.
+///
+/// Returns 0 if the handle is somehow already tracking the pid the engine
+/// handed back, which would mean a pid collision inside one live engine and is
+/// not something the caller can recover from.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_add_agent(h: *mut c_void, x: u16, level: u8, z: u16) -> u32 {
+    let host = host_ref(h);
+    let (pid, rx) = host
+        .env
+        .engine
+        .spawn_player_tapped("agent", CoordGrid::new(x, level, z));
+
+    // ★★ A RECYCLED PID MUST NOT INHERIT ITS PREDECESSOR'S WHEELS. The label
+    // store (`rs_engine::wheels`) is keyed by pid and outlives any single
+    // player; `next_pid()` reuses the slot of a player that logged out. Without
+    // this, a fresh agent can be born holding the previous occupant's hint
+    // arrow or flashing tab -- and the teacher would read that as truth about
+    // an agent that has never been told anything. See Task 3.
+    rs_engine::wheels::forget(pid);
+
+    if host.agents.contains_key(&pid) {
+        return 0;
+    }
+
+    // Replace the inbox so we hold the sending end -- the same swap
+    // `host_new_at` does, and for the same reason: `create_io`'s own
+    // `packet_tx` is dropped inside `spawn_player_tapped`, so without this the
+    // agent has no reachable inbox at all. See [`Agent::tx_in`].
+    let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Vec<u8>>(128);
+    {
+        let p = host.env.engine.get_player_mut(pid).expect("spawned player");
+        p.handle.inbox = rx_in;
+    }
+
+    host.agents.insert(pid, Agent { rx, tx_in, out: Vec::new() });
+    pid as u32
+}
+
+/// Zero-copy view of one agent's share of the last [`host_step`].
+///
+/// ★ ONE BUFFER PER AGENT -- read this pointer WITH [`host_agent_out_len`] for
+/// the same `pid`, never crossed with another agent's length.
+///
+/// # Validity
+/// Same window as [`host_out_ptr`]: valid only until the next [`host_step`] or
+/// [`host_free`] on this handle. `host_step` clears and re-fills every agent's
+/// buffer, which reallocates whenever a tick outgrows the current capacity, so
+/// a `toArrayBuffer` view held across a step reads freed or reused memory.
+/// Copy the bytes out before stepping again.
+///
+/// An unknown `pid` yields a readable, zero-length buffer rather than null, so
+/// the `(ptr, len)` pair is always safe to hand to `toArrayBuffer`.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_agent_out_ptr(h: *mut c_void, pid: u16) -> *const u8 {
+    let host = host_ref(h);
+    match host.agents.get(&pid) {
+        Some(a) => a.out.as_ptr(),
+        None => host.empty.as_ptr(),
+    }
+}
+
+/// Length in bytes of the buffer [`host_agent_out_ptr`] points at for `pid`.
+/// `0` for an unknown pid. Same validity window -- read the two together,
+/// before the next [`host_step`].
+#[unsafe(no_mangle)]
+pub extern "C" fn host_agent_out_len(h: *mut c_void, pid: u16) -> usize {
+    host_ref(h).agents.get(&pid).map(|a| a.out.len()).unwrap_or(0)
 }
 
 /// Pushes inbound client bytes into the player's inbox; the engine's own
@@ -350,9 +509,14 @@ pub extern "C" fn host_send(h: *mut c_void, ptr: *const u8, len: usize) -> u32 {
     }
     let host = host_ref(h);
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+    // ★ THE FIRST AGENT'S inbox, unchanged. See `Host::first_pid`.
+    let first = host.first_pid;
+    let Some(agent) = host.agents.get(&first) else {
+        return 1;
+    };
     // The engine's own `ActivePlayer::decode` drains this inbox during the
     // input phase and dispatches through the real client-message handlers.
-    match host.tx_in.try_send(bytes) {
+    match agent.tx_in.try_send(bytes) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -443,7 +607,7 @@ pub extern "C" fn host_varp(h: *mut c_void, name: *const c_char) -> i32 {
         return HOST_VARP_UNKNOWN;
     };
     host.env
-        .try_player_varp(host.pid, n)
+        .try_player_varp(host.first_pid, n)
         .unwrap_or(HOST_VARP_UNKNOWN)
 }
 
@@ -453,7 +617,7 @@ pub extern "C" fn host_varp(h: *mut c_void, name: *const c_char) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_player_x(h: *mut c_void) -> i32 {
     let host = host_ref(h);
-    match host.env.engine.get_player(host.pid) {
+    match host.env.engine.get_player(host.first_pid) {
         Some(p) => p.player.pathing.coord.x() as i32,
         None => -1,
     }
@@ -462,7 +626,7 @@ pub extern "C" fn host_player_x(h: *mut c_void) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_player_z(h: *mut c_void) -> i32 {
     let host = host_ref(h);
-    match host.env.engine.get_player(host.pid) {
+    match host.env.engine.get_player(host.first_pid) {
         Some(p) => p.player.pathing.coord.z() as i32,
         None => -1,
     }
@@ -517,7 +681,7 @@ pub extern "C" fn host_loc_find(h: *mut c_void, id: u32, radius: u32) -> i64 {
     let r = radius.min(64) as i32;
 
     let host = host_ref(h);
-    let Some(p) = host.env.engine.get_player(host.pid) else {
+    let Some(p) = host.env.engine.get_player(host.first_pid) else {
         return -1;
     };
     let coord = p.player.pathing.coord;
@@ -574,7 +738,7 @@ pub extern "C" fn host_loc_find(h: *mut c_void, id: u32, radius: u32) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_save_profile(h: *mut c_void, out: *mut u8, cap: usize) -> i64 {
     let host = host_ref(h);
-    let Some(p) = host.env.engine.get_player(host.pid) else {
+    let Some(p) = host.env.engine.get_player(host.first_pid) else {
         return -1;
     };
     let profile = rs_engine::player_save::extract_profile(&p.player, host.cache);
@@ -688,7 +852,7 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     // double-mutable-borrow of `self` inside the closure").
     let engine_ptr: *mut rs_engine::Engine = &mut host.env.engine;
 
-    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) else {
+    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.first_pid) else {
         return 0;
     };
     // ★★ Task 2c: clear before applying, or this is a MERGE, not a RESTORE.
@@ -787,7 +951,7 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     // surviving anything. Infallible (`FxHashSet::clear` cannot fail), so it
     // adds no new panic surface.
     with_engine(unsafe { &mut *engine_ptr }, || {
-        if let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) {
+        if let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.first_pid) {
             p.reset_client_varcache();
             p.sync_varps();
             p.player.inv_first_seen.clear();
@@ -799,7 +963,7 @@ pub extern "C" fn host_load_profile(h: *mut c_void, ptr: *const u8, len: usize) 
     // Re-fetched via `engine_ptr` rather than reusing the `p` bound above --
     // see `engine_ptr`'s own doc comment on why no `&mut ActivePlayer` stays
     // live across the `with_engine` call.
-    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.pid) else {
+    let Some(p) = (unsafe { &mut *engine_ptr }).get_player_mut(host.first_pid) else {
         return 0;
     };
     let target = p.player.pathing.coord;
@@ -887,7 +1051,7 @@ pub extern "C" fn host_npc_count(h: *mut c_void) -> u32 {
     let mut slots = std::mem::take(&mut host.npc_slots);
     slots.clear();
 
-    let Some(p) = host.env.engine.get_player(host.pid) else {
+    let Some(p) = host.env.engine.get_player(host.first_pid) else {
         host.npc_slots = slots;
         return 0;
     };
@@ -1249,7 +1413,7 @@ pub extern "C" fn host_teleport(h: *mut c_void, x: u16, level: u8, z: u16) -> u3
     let target = CoordGrid::new(x, level, z);
 
     let host = host_ref(h);
-    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+    let Some(p) = host.env.engine.get_player_mut(host.first_pid) else {
         return HOST_TELEPORT_NO_PLAYER;
     };
 
@@ -1346,7 +1510,7 @@ pub extern "C" fn host_set_region(h: *mut c_void, mx0: u16, mz0: u16, mx1: u16, 
         return HOST_REGION_INVERTED;
     }
     let host = host_ref(h);
-    let Some(p) = host.env.engine.get_player_mut(host.pid) else {
+    let Some(p) = host.env.engine.get_player_mut(host.first_pid) else {
         return HOST_REGION_NO_PLAYER;
     };
     p.player.build_area.region = Some((mx0, mz0, mx1, mz1));
@@ -1363,7 +1527,7 @@ pub extern "C" fn host_set_region(h: *mut c_void, mx0: u16, mz0: u16, mx1: u16, 
 #[unsafe(no_mangle)]
 pub extern "C" fn host_clear_region(h: *mut c_void) {
     let host = host_ref(h);
-    if let Some(p) = host.env.engine.get_player_mut(host.pid) {
+    if let Some(p) = host.env.engine.get_player_mut(host.first_pid) {
         p.player.build_area.region = None;
     }
 }
@@ -1380,7 +1544,7 @@ pub extern "C" fn host_clear_region(h: *mut c_void) {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_mapsquare_count(h: *mut c_void) -> u32 {
     let host = host_ref(h);
-    match host.env.engine.get_player(host.pid) {
+    match host.env.engine.get_player(host.first_pid) {
         Some(p) => p.player.build_area.mapsquares.len() as u32,
         None => 0,
     }
@@ -1389,7 +1553,15 @@ pub extern "C" fn host_mapsquare_count(h: *mut c_void) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn host_free(h: *mut c_void) {
     if !h.is_null() {
-        unsafe { drop(Box::from_raw(h as *mut Host)) }
+        let host = unsafe { Box::from_raw(h as *mut Host) };
+        // ★ The wheel store outlives this `Host` -- it is a thread-local keyed
+        // by pid, not a field here -- so every agent's labels have to be
+        // dropped explicitly or they would be inherited by whatever recycles
+        // the pid. See `rs_engine::wheels::forget` and `host_add_agent`.
+        for pid in host.agents.keys() {
+            rs_engine::wheels::forget(*pid);
+        }
+        drop(host);
     }
 }
 
@@ -1413,7 +1585,7 @@ pub extern "C" fn host_free(h: *mut c_void) {
 /// makes "the host's player" ambiguous -- so it is explicit from here on.
 #[unsafe(no_mangle)]
 pub extern "C" fn host_pid(h: *mut c_void) -> u32 {
-    host_ref(h).pid as u32
+    host_ref(h).first_pid as u32
 }
 
 /// # ★★ MUST NOT PANIC. -1 is the error sentinel on every accessor here.
