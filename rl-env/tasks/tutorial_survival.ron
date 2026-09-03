@@ -1,0 +1,46 @@
+// Tutorial Island, survival curriculum. The first task file.
+//
+// ★★ THE GOAL IS 130, NOT ^tutorial_complete (1000). 1000 is the whole
+// island -- cooking, mining, combat. What the teacher demonstrates, and what
+// `teacher/src/tutorial-steps.ts` tabulates, is 0 -> 120 followed immediately
+// by `tutorial_opened_gate_to_chef = 130` (tutorial.constant). Goaling at
+// 1000 would be a task nothing in this repo can demonstrate.
+//
+// ★ Milestones are `Ge`, not `Eq`. A tick can carry `%tutorial` past a value
+// (the engine sets it inside a script, and the env observes once per tick),
+// and an `Eq` milestone that the observation never lands exactly on would be
+// silently unreachable.
+//
+// ★ The spawn matches `rl_env::tape::TUTORIAL_SPAWN` and the coordinate
+// `teacher/src/run-tutorial.ts` uses. Do not "improve" it -- `make tape`'s
+// feed_bytes=2208 canary is recorded against this spawn.
+//
+// Values: content/274/scripts/tutorial/configs/tutorial.constant
+// Instructions: content/274/scripts/tutorial/scripts/tut_chatbox_steps.rs2
+Task(
+    name: "tutorial_survival",
+    budget_ticks: 400,
+    start: Start(
+        at: Coord(3222, 0, 3218),
+        seed: 4242,
+        jitter: 0,
+        loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
+    ),
+    progress: [
+        Milestone(name: "designed_character",   when: Varp("tutorial", Ge, 1)),
+        Milestone(name: "interact_with_scenery",when: Varp("tutorial", Ge, 4)),
+        Milestone(name: "interacted_with_door", when: Varp("tutorial", Ge, 10)),
+        Milestone(name: "open_inventory",       when: Varp("tutorial", Ge, 20)),
+        Milestone(name: "cut_tree",             when: Varp("tutorial", Ge, 30)),
+        Milestone(name: "build_fire",           when: Varp("tutorial", Ge, 40)),
+        Milestone(name: "open_skill_menu",      when: Varp("tutorial", Ge, 50)),
+        Milestone(name: "opened_skill_menu",    when: Varp("tutorial", Ge, 60)),
+        Milestone(name: "fish_shrimps",         when: Varp("tutorial", Ge, 70)),
+        Milestone(name: "cook_shrimps",         when: Varp("tutorial", Ge, 80)),
+        Milestone(name: "burnt_shrimps",        when: Varp("tutorial", Ge, 90)),
+        Milestone(name: "survival_complete",    when: Varp("tutorial", Ge, 120)),
+        Milestone(name: "opened_gate_to_chef",  when: Varp("tutorial", Ge, 130)),
+    ],
+    goal: Varp("tutorial", Ge, 130),
+    fail: Some(Timeout),
+)
