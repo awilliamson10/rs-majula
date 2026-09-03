@@ -1984,6 +1984,7 @@ dependencies = [
  "rs-util",
  "rs-vm",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
