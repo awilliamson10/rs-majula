@@ -600,7 +600,7 @@ impl ActivePlayer {
         // ★★ RECORD, THEN MAYBE SEND. The label channel is fed whether or not
         // the wheel is drawn, so a teacher run and a suppressed policy run see
         // identical labels.
-        crate::wheels::record_hint(crate::wheels::HintLabel::Npc(nid));
+        crate::wheels::record_hint(self.player.uid.pid(), crate::wheels::HintLabel::Npc(nid));
         if crate::wheels::suppressed() {
             return;
         }
@@ -621,7 +621,7 @@ impl ActivePlayer {
     /// * `z` - The absolute tile Z coordinate.
     /// * `height` - The vertical offset of the arrow above the tile.
     pub fn hint_tile(&mut self, offset: u8, x: u16, z: u16, height: u8) {
-        crate::wheels::record_hint(crate::wheels::HintLabel::Tile { x, z });
+        crate::wheels::record_hint(self.player.uid.pid(), crate::wheels::HintLabel::Tile { x, z });
         if crate::wheels::suppressed() {
             return;
         }
@@ -638,7 +638,7 @@ impl ActivePlayer {
     /// # Arguments
     /// * `slot` - The player index (pid) to highlight.
     pub fn hint_player(&mut self, slot: u16) {
-        crate::wheels::record_hint(crate::wheels::HintLabel::Player(slot));
+        crate::wheels::record_hint(self.player.uid.pid(), crate::wheels::HintLabel::Player(slot));
         if crate::wheels::suppressed() {
             return;
         }
@@ -653,7 +653,7 @@ impl ActivePlayer {
     /// Clears any active hint arrow on the client. The wire type `-1` (`0xFF`) tells the
     /// client to remove the arrow.
     pub fn stop_hint(&mut self) {
-        crate::wheels::record_hint(crate::wheels::HintLabel::None);
+        crate::wheels::record_hint(self.player.uid.pid(), crate::wheels::HintLabel::None);
         if crate::wheels::suppressed() {
             return;
         }
@@ -1408,7 +1408,7 @@ impl ActivePlayer {
     /// # Arguments
     /// * `com` - The interface component ID to open.
     pub fn open_tutorial(&mut self, com: u16) {
-        crate::wheels::record_tut_com(Some(com));
+        crate::wheels::record_tut_com(self.player.uid.pid(), Some(com));
         if !crate::wheels::suppressed() {
             self.write(rs_protocol::network::game::server::tut_open::TutOpen { com });
         }
@@ -1448,7 +1448,7 @@ impl ActivePlayer {
     /// the hint arrows are pure display, and those stay suppressed HERE, where
     /// the packet never reaches the socket at all.
     pub fn tut_flash(&mut self, tab: u8) {
-        crate::wheels::record_flash_tab(Some(tab));
+        crate::wheels::record_flash_tab(self.player.uid.pid(), Some(tab));
         self.write(rs_protocol::network::game::server::tut_flash::TutFlash { tab });
     }
 
@@ -1474,7 +1474,7 @@ impl ActivePlayer {
                 return Err(e);
             }
             self.player.modal_tutorial = None;
-            crate::wheels::record_tut_com(None);
+            crate::wheels::record_tut_com(self.player.uid.pid(), None);
             // -1 (u16::MAX on the wire) tells the client to close the tutorial.
             if !crate::wheels::suppressed() {
                 self.write(rs_protocol::network::game::server::tut_open::TutOpen { com: u16::MAX });

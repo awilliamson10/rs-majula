@@ -14,6 +14,9 @@ fn a_suppressed_island_still_records_labels_and_advances() {
     rs_engine::wheels::set_suppressed(true);
     let h = rs_host::host_new(4242);
     assert!(!h.is_null());
+    // ★ Task 3 keyed the label store by pid -- `host_pid` is the only door
+    // onto this host's own pid from outside `rs-host`.
+    let pid = rs_host::host_pid(h) as u16;
 
     let name = std::ffi::CString::new("tutorial").unwrap();
     let start = rs_host::host_varp(h, name.as_ptr());
@@ -26,12 +29,12 @@ fn a_suppressed_island_still_records_labels_and_advances() {
     // ★ The label was RECORDED even though nothing was drawn — that is the
     // whole point of the channel.
     assert_ne!(
-        rs_engine::wheels::hint(),
+        rs_engine::wheels::hint(pid),
         rs_engine::wheels::HintLabel::None,
         "the island marks its first target; suppression must record it, not lose it"
     );
     assert!(
-        rs_engine::wheels::tut_com().is_some(),
+        rs_engine::wheels::tut_com(pid).is_some(),
         "the first tutorial panel was opened engine-side and should have been recorded"
     );
 

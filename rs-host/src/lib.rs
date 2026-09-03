@@ -1393,16 +1393,28 @@ pub extern "C" fn host_free(h: *mut c_void) {
     }
 }
 
-// -- the wheel label channel (Task 4) ---------------------------------------
+// -- the wheel label channel (Task 3 + Task 4) -------------------------------
 //
-// ★ NONE OF THESE TOUCH `host`. `rs_engine::wheels` is a process-global
-// label store (see that module's doc comment -- the same reasoning
-// `rs-pathfinder`'s COLLISION_FLAGS already relies on). The four readers
-// below still accept an unused `h: *mut c_void` for API symmetry with every
-// other accessor in this file (never dereferenced, so a NULL `h` is safe
-// here specifically, unlike almost every other fn in this file) -- but
-// `host_wheels_suppress` DROPS it entirely. See that function's own doc
-// comment for why a handle parameter there would be worse than useless.
+// ★ WAS "NONE OF THESE TOUCH `host`." `rs_engine::wheels` used to be a
+// process-global label store (see that module's OLD doc comment -- the same
+// reasoning `rs-pathfinder`'s COLLISION_FLAGS relies on), and a single
+// process-wide value needed nothing from `host` to read. Task 3 keyed the
+// store by pid instead, because one engine can now hold more than one active
+// player and a single global would have let one agent's wheel clobber
+// another's. The four readers below still take an unused `h: *mut c_void`
+// for API symmetry (never dereferenced, so a NULL `h` is still safe here) --
+// but now also take the `pid` whose wheels to read, which the caller gets
+// from `host_pid` below. `host_wheels_suppress` DROPS its handle entirely;
+// see that function's own doc comment for why a handle parameter there would
+// be worse than useless.
+
+/// The pid of the agent this host booted. ★ TS needs it to read this player's
+/// wheels now that the label store is per-player, and Task 4's second agent
+/// makes "the host's player" ambiguous -- so it is explicit from here on.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_pid(h: *mut c_void) -> u32 {
+    host_ref(h).pid as u32
+}
 
 /// # ★★ MUST NOT PANIC. -1 is the error sentinel on every accessor here.
 ///
@@ -1411,8 +1423,8 @@ pub extern "C" fn host_free(h: *mut c_void) {
 /// not. It reaches the teacher through `truth.ts` and must never appear in
 /// `ClientState` -- an agent reading it would be reading a wheel we removed.
 #[unsafe(no_mangle)]
-pub extern "C" fn host_hint_kind(_h: *mut c_void) -> i32 {
-    match rs_engine::wheels::hint() {
+pub extern "C" fn host_hint_kind(_h: *mut c_void, pid: u16) -> i32 {
+    match rs_engine::wheels::hint(pid) {
         rs_engine::wheels::HintLabel::None => 0,
         rs_engine::wheels::HintLabel::Npc(_) => 1,
         rs_engine::wheels::HintLabel::Tile { .. } => 2,
@@ -1421,8 +1433,8 @@ pub extern "C" fn host_hint_kind(_h: *mut c_void) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn host_hint_a(_h: *mut c_void) -> i32 {
-    match rs_engine::wheels::hint() {
+pub extern "C" fn host_hint_a(_h: *mut c_void, pid: u16) -> i32 {
+    match rs_engine::wheels::hint(pid) {
         rs_engine::wheels::HintLabel::None => -1,
         rs_engine::wheels::HintLabel::Npc(n) => n as i32,
         rs_engine::wheels::HintLabel::Tile { x, .. } => x as i32,
@@ -1431,16 +1443,16 @@ pub extern "C" fn host_hint_a(_h: *mut c_void) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn host_hint_b(_h: *mut c_void) -> i32 {
-    match rs_engine::wheels::hint() {
+pub extern "C" fn host_hint_b(_h: *mut c_void, pid: u16) -> i32 {
+    match rs_engine::wheels::hint(pid) {
         rs_engine::wheels::HintLabel::Tile { z, .. } => z as i32,
         _ => -1,
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn host_flash_tab(_h: *mut c_void) -> i32 {
-    rs_engine::wheels::flash_tab().map(|t| t as i32).unwrap_or(-1)
+pub extern "C" fn host_flash_tab(_h: *mut c_void, pid: u16) -> i32 {
+    rs_engine::wheels::flash_tab(pid).map(|t| t as i32).unwrap_or(-1)
 }
 
 /// ★★ THE SWITCH. Off by default; a VLA run turns it on before the first tick.
