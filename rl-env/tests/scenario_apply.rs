@@ -122,3 +122,51 @@ fn load_is_reproducible() {
     let c2 = h2.engine.get_player(a2).unwrap().player.pathing.coord;
     assert_eq!((c1.x(), c1.z()), (c2.x(), c2.z()), "seeded jitter is reproducible");
 }
+
+/// ★★ Task 6. `stat_index` knew SEVEN of the twenty-one stats -- the combat
+/// ones the duel work needed -- so any `XpGain` or `Stat` condition over
+/// Woodcutting, Cooking or Fishing was unauthorable.
+///
+/// ★★ AND THE TRAP IN FIXING IT: `content/274/scripts/player/configs/
+/// stat.constant` numbers the skills 1..19 in the interface's order and says
+/// `^woodcutting = 18`, but `StatBlock` is indexed by `PlayerStat`
+/// (`rs-pack/src/types.rs:952`), where `Woodcutting = 8`. Reading a stat by the
+/// constant's number returns a DIFFERENT skill's level, silently.
+#[test]
+fn stat_index_covers_the_non_combat_skills() {
+    use rl_env::scenario::stat_index;
+
+    // The engine's index, not stat.constant's number.
+    assert_eq!(stat_index("cooking"), Some(7));
+    assert_eq!(stat_index("woodcutting"), Some(8));
+    assert_eq!(stat_index("fishing"), Some(10));
+    assert_eq!(stat_index("firemaking"), Some(11));
+    assert_eq!(stat_index("mining"), Some(14));
+    assert_eq!(stat_index("runecraft"), Some(20));
+
+    // The combat stats keep their existing answers.
+    assert_eq!(stat_index("attack"), Some(0));
+    assert_eq!(stat_index("defence"), Some(1));
+    assert_eq!(stat_index("strength"), Some(2));
+    assert_eq!(stat_index("hitpoints"), Some(3));
+    assert_eq!(stat_index("ranged"), Some(4));
+    assert_eq!(stat_index("prayer"), Some(5));
+    assert_eq!(stat_index("magic"), Some(6));
+
+    // The two aliases scenarios on disk already use.
+    assert_eq!(stat_index("defense"), Some(1), "the alternate spelling still resolves");
+    assert_eq!(stat_index("hp"), Some(3), "the alias still resolves");
+}
+
+/// ★★ AN UNKNOWN NAME MUST RETURN `None`, NOT ABORT. `PlayerStat::
+/// from_config_str` PANICS on an unrecognised string (`types.rs:999`), so
+/// `stat_index` has to reject before it calls -- otherwise a typo in a task
+/// file kills the process instead of being reported alongside every other
+/// unresolved name.
+#[test]
+fn an_unknown_stat_name_is_none_and_does_not_panic() {
+    use rl_env::scenario::stat_index;
+    assert_eq!(stat_index("not_a_skill"), None);
+    assert_eq!(stat_index(""), None);
+    assert_eq!(stat_index("stat18"), Some(18), "the engine's own filler names still resolve");
+}

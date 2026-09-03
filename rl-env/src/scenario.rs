@@ -49,10 +49,43 @@ impl Scenario {
 
 /// OSRS stat order used by `stats.levels`: 0=Attack 1=Defence 2=Strength
 /// 3=Hitpoints 4=Ranged 5=Prayer 6=Magic ... (matches rs-stat PlayerStat).
+/// Resolves a stat debugname to its ENGINE index.
+///
+/// ★★ NOT `stat.constant`'s NUMBER. `content/274/scripts/player/configs/
+/// stat.constant` numbers the skills 1..19 in the interface's order and says
+/// `^woodcutting = 18`; `StatBlock` is indexed by `PlayerStat`
+/// (`rs-pack/src/types.rs:952`), where `Woodcutting = 8`. Reading a stat by the
+/// constant's number returns a different skill's level, silently, and looks
+/// like a training bug.
+///
+/// ★★ THE GUARD IS REQUIRED, NOT DEFENSIVE. `PlayerStat::from_config_str`
+/// PANICS on an unrecognised name (`types.rs:999`), so an unknown name has to
+/// be rejected BEFORE the call. Without this a typo in a task file aborts the
+/// process instead of being reported alongside every other unresolved name --
+/// and `Task::resolve` exists precisely to report them all at once.
+///
+/// ★ Two aliases are kept for scenarios already on disk (`mirror_melee.ron`):
+/// `defense` and `hp`. `from_config_str` knows neither.
 pub fn stat_index(name: &str) -> Option<usize> {
-    Some(match name {
-        "attack" => 0, "defence" | "defense" => 1, "strength" => 2,
-        "hitpoints" | "hp" => 3, "ranged" => 4, "prayer" => 5, "magic" => 6,
-        _ => return None,
-    })
+    use rs_pack::types::PlayerStat;
+    let canonical = match name {
+        "defense" => "defence",
+        "hp" => "hitpoints",
+        other => other,
+    };
+    if !KNOWN_STATS.contains(&canonical) {
+        return None;
+    }
+    Some(PlayerStat::from_config_str(canonical) as usize)
 }
+
+/// Every name `PlayerStat::from_config_str` accepts. Kept in sync with it by
+/// `stat_index_covers_the_non_combat_skills`; the list exists because that
+/// function panics rather than returning an Option.
+const KNOWN_STATS: &[&str] = &[
+    "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic",
+    "cooking", "woodcutting", "fletching", "fishing", "firemaking", "crafting",
+    "smithing", "mining", "herblore", "agility", "thieving", "stat18", "stat19",
+    "runecraft",
+];
+
