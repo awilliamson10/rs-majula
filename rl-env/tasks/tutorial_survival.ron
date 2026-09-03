@@ -28,7 +28,8 @@
 // Instructions: content/274/scripts/tutorial/scripts/tut_chatbox_steps.rs2
 Task(
     name: "tutorial_survival",
-    budget_ticks: 400,
+    budget_ticks: 4000,
+    budget_turns: 200,
     start: Start(
         at: Coord(3094, 0, 3107),
         seed: 4242,

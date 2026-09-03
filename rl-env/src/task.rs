@@ -68,6 +68,14 @@ pub struct Milestone { pub name: String, pub when: Condition }
 pub struct Task {
     pub name: String,
     pub budget_ticks: u32,
+    /// Model calls before the episode ends.
+    ///
+    /// ★ THE AGENT'S CLOCK, where `budget_ticks` is the engine's. A turn is a
+    /// millisecond input schedule spanning an arbitrary number of server ticks,
+    /// and the cost driver is images per request, not ticks (see the baseline
+    /// harness design §3.1). `budget_ticks` stays as the backstop, because one
+    /// turn may legally contain `wait(600000)`.
+    pub budget_turns: u32,
     pub start: Start,
     pub progress: Vec<Milestone>,
     pub goal: Condition,

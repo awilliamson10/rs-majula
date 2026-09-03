@@ -12,6 +12,7 @@ fn parses_a_minimal_task() {
 Task(
     name: "smoke",
     budget_ticks: 64,
+    budget_turns: 100,
     start: Start(
         at: Coord(3222, 0, 3218),
         seed: 4242,
@@ -46,6 +47,7 @@ fn an_unknown_varp_fails_resolution_rather_than_scoring_zero_forever() {
 Task(
     name: "typo",
     budget_ticks: 8,
+    budget_turns: 100,
     start: Start(
         at: Coord(3222, 0, 3218), seed: 1, jitter: 0,
         loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
@@ -67,6 +69,7 @@ fn an_unknown_obj_in_a_condition_also_fails() {
 Task(
     name: "typo2",
     budget_ticks: 8,
+    budget_turns: 100,
     start: Start(
         at: Coord(3222, 0, 3218), seed: 1, jitter: 0,
         loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
@@ -91,6 +94,7 @@ fn a_varbit_named_as_a_varp_fails_with_a_useful_message() {
 Task(
     name: "varbit_confusion",
     budget_ticks: 8,
+    budget_turns: 100,
     start: Start(
         at: Coord(3222, 0, 3218), seed: 1, jitter: 0,
         loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
@@ -112,6 +116,7 @@ fn an_npc_start_resolves_to_a_spawn_coordinate() {
 Task(
     name: "at_the_cook",
     budget_ticks: 8,
+    budget_turns: 100,
     start: Start(
         at: Npc("cook"), seed: 1, jitter: 0,
         loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
@@ -124,4 +129,21 @@ Task(
     let t: Task = ron::from_str(ron).expect("parse");
     let r = t.resolve(&o).unwrap_or_else(|e| panic!("unresolved: {e:?}"));
     assert!(r.spot.0 > 0 && r.spot.2 > 0, "cook spawn resolved to {:?}", r.spot);
+}
+
+/// ✎ Spec §3.1. A turn is the agent's clock now; a tick is the engine's. Both
+/// are hard stops and a task file must carry both.
+#[test]
+fn a_task_carries_both_a_turn_budget_and_a_tick_budget() {
+    let t = Task::load("tasks/tutorial_survival.ron").expect("load tutorial task");
+    assert!(t.budget_turns > 0, "budget_turns must be set");
+    assert!(t.budget_ticks > 0, "budget_ticks must be set");
+    // The tick backstop must outlast the turn budget, or the turn budget can
+    // never be the binding constraint and the field is decorative.
+    assert!(
+        (t.budget_ticks as u64) > (t.budget_turns as u64),
+        "budget_ticks {} must exceed budget_turns {}",
+        t.budget_ticks,
+        t.budget_turns,
+    );
 }
