@@ -19,7 +19,7 @@ pub enum Terminal {
     DeathOrTimeout(u32),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 pub struct Loadout {
     pub stats: Vec<(String, u8)>,      // (stat debugname, level) e.g. ("strength", 99)
     pub worn: Vec<String>,             // obj debugnames to equip

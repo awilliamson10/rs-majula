@@ -202,3 +202,221 @@ fn resolve_condition(c: &Condition, o: &Ontology, errs: &mut Vec<String>) {
         Condition::Not(c) => resolve_condition(c, o, errs),
     }
 }
+
+use std::collections::HashMap;
+
+/// ★ THE 64-MILESTONE CEILING, STATED RATHER THAN DISCOVERED. A `u64` mask is
+/// what keeps [`Armed::fold`] allocation-free on the tick path. Tutorial Island
+/// has thirteen. A task wanting more needs a different carrier, and it is
+/// refused at arm time rather than silently truncated.
+pub const MAX_MILESTONES: usize = 64;
+
+/// What the world looked like when the task was armed. Only the DELTA
+/// conditions need it -- `VarpDelta` and `XpGain` are the two that are
+/// meaningless as absolutes.
+#[derive(Debug)]
+struct Baseline {
+    varps: HashMap<String, i32>,
+    xp: Vec<i32>,
+    start_tick: u64,
+}
+
+/// A resolved task, bound to one player, folding every tick.
+///
+/// ★ `Debug` is derived so `Task::arm`'s `Result<Armed, String>` satisfies
+/// `expect_err` in the >64-milestone test -- `Result::expect_err` requires
+/// the `Ok` side to be `Debug` even though that branch is never printed.
+#[derive(Debug)]
+pub struct Armed {
+    task: Task,
+    base: Baseline,
+    latched: u64,
+    raw: u64,
+    goal: bool,
+    failed: bool,
+    turns: u32,
+}
+
+impl Task {
+    /// Binds this task to `pid` and snapshots the baselines the delta
+    /// conditions need. Fails when the task declares more milestones than the
+    /// mask can carry.
+    pub fn arm(self, env: &crate::EnvHarness, pid: u16) -> Result<Armed, String> {
+        if self.progress.len() > MAX_MILESTONES {
+            return Err(format!(
+                "task {:?} declares {} milestones; the mask carries at most {}",
+                self.name,
+                self.progress.len(),
+                MAX_MILESTONES
+            ));
+        }
+        let cache = crate::cache();
+        let mut varps = HashMap::new();
+        let mut xp = Vec::new();
+        if let Some(active) = env.engine.get_player(pid) {
+            xp = active.player.stats.xp.to_vec();
+            // Snapshot every varp any VarpDelta in this task names.
+            let mut names = Vec::new();
+            collect_delta_varps(&self.goal, &mut names);
+            if let Some(f) = &self.fail {
+                collect_delta_varps(f, &mut names);
+            }
+            for m in &self.progress {
+                collect_delta_varps(&m.when, &mut names);
+            }
+            for n in names {
+                if let Some(v) = cache.varps.get_by_debugname(&n) {
+                    varps.insert(n, active.player.vars.get(v.id).as_int());
+                }
+            }
+        }
+        Ok(Armed {
+            task: self,
+            base: Baseline { varps, xp, start_tick: env.clock() },
+            latched: 0,
+            raw: 0,
+            goal: false,
+            failed: false,
+            turns: 0,
+        })
+    }
+}
+
+fn collect_delta_varps(c: &Condition, out: &mut Vec<String>) {
+    match c {
+        Condition::VarpDelta(name, _) => out.push(name.clone()),
+        Condition::All(cs) | Condition::Any(cs) => {
+            for c in cs {
+                collect_delta_varps(c, out);
+            }
+        }
+        Condition::Not(c) => collect_delta_varps(c, out),
+        _ => {}
+    }
+}
+
+impl Armed {
+    /// ★★ CALLED AT THE END OF EVERY `host_step`, NOT AT TURN BOUNDARIES. A
+    /// turn is an input schedule spanning many ticks, and a condition can go
+    /// true and false inside one. Sampling at the turn boundary misses it and
+    /// presents as "the model never did that step" -- a metric bug wearing a
+    /// model bug's clothes.
+    pub fn fold(&mut self, env: &crate::EnvHarness, pid: u16) {
+        let mut raw = 0u64;
+        for (i, m) in self.task.progress.iter().enumerate() {
+            if self.eval(&m.when, env, pid) {
+                raw |= 1u64 << i;
+            }
+        }
+        self.raw = raw;
+        self.latched |= raw;
+        if !self.goal && self.eval(&self.task.goal, env, pid) {
+            self.goal = true;
+        }
+        if !self.failed {
+            if let Some(f) = &self.task.fail {
+                if self.eval(f, env, pid) {
+                    self.failed = true;
+                }
+            }
+        }
+    }
+
+    pub fn latched(&self) -> u64 { self.latched }
+    pub fn raw(&self) -> u64 { self.raw }
+    pub fn goal(&self) -> bool { self.goal }
+    pub fn failed(&self) -> bool { self.failed }
+    pub fn turns(&self) -> u32 { self.turns }
+    pub fn note_turn(&mut self) { self.turns = self.turns.saturating_add(1); }
+    pub fn turns_exhausted(&self) -> bool { self.turns >= self.task.budget_turns }
+    pub fn milestone_names(&self) -> Vec<&str> {
+        self.task.progress.iter().map(|m| m.name.as_str()).collect()
+    }
+
+    /// ★★ NEVER PANICS. This runs behind `host_step`, and every panic in an
+    /// `extern "C"` frame aborts the process with no JS-visible error. An
+    /// unresolvable name is `false` -- `Task::resolve` already failed loud at
+    /// load, so reaching here means the cache changed under a resolved task.
+    fn eval(&self, c: &Condition, env: &crate::EnvHarness, pid: u16) -> bool {
+        let Some(active) = env.engine.get_player(pid) else {
+            // A departed player satisfies Death and nothing else.
+            return matches!(c, Condition::Death);
+        };
+        let cache = crate::cache();
+        match c {
+            Condition::Varp(name, cmp, want) => match cache.varps.get_by_debugname(name) {
+                Some(v) => cmp.holds(active.player.vars.get(v.id).as_int() as i64, *want as i64),
+                None => false,
+            },
+            Condition::VarpDelta(name, want) => match cache.varps.get_by_debugname(name) {
+                Some(v) => {
+                    let now = active.player.vars.get(v.id).as_int();
+                    let was = self.base.varps.get(name).copied().unwrap_or(0);
+                    (now as i64 - was as i64) >= *want as i64
+                }
+                None => false,
+            },
+            Condition::Varbit(name, cmp, want) => match cache.varbits.get_by_debugname(name) {
+                Some(vb) => {
+                    let raw = active.player.vars.get(vb.basevar).as_int() as u32;
+                    // end_bit is INCLUSIVE, so a one-bit varbit has
+                    // start_bit == end_bit. Guard the 32-bit case, where the
+                    // shift would overflow.
+                    let width = vb.end_bit.saturating_sub(vb.start_bit) as u32;
+                    let mask = if width >= 31 { u32::MAX } else { (1u32 << (width + 1)) - 1 };
+                    let val = (raw >> vb.start_bit) & mask;
+                    cmp.holds(val as i64, *want as i64)
+                }
+                None => false,
+            },
+            Condition::Stat(name, cmp, want) => match crate::scenario::stat_index(name) {
+                Some(i) => cmp.holds(active.player.stats.levels[i] as i64, *want as i64),
+                None => false,
+            },
+            Condition::XpGain(name, want) => match crate::scenario::stat_index(name) {
+                Some(i) => {
+                    let now = active.player.stats.xp[i] as i64;
+                    let was = self.base.xp.get(i).copied().unwrap_or(0) as i64;
+                    (now - was) >= *want as i64
+                }
+                None => false,
+            },
+            Condition::Inv(name, cmp, want) => {
+                let Some(obj) = cache.objs.get_by_debugname(name) else { return false };
+                let Some(inv) = cache
+                    .invs
+                    .get_by_debugname("inv")
+                    .and_then(|i| active.player.invs.get(&i.id))
+                else {
+                    return false;
+                };
+                cmp.holds(inv.total(obj.id) as i64, *want as i64)
+            }
+            Condition::Worn(name) => {
+                let Some(obj) = cache.objs.get_by_debugname(name) else { return false };
+                // ★ 94 mirrors `apply_loadout_stats_inv`'s own fallback for the
+                // worn container; keeping the two identical is what stops a
+                // loadout and a condition disagreeing about where gear lives.
+                let worn_id = cache.invs.get_by_debugname("worn").map(|i| i.id).unwrap_or(94);
+                active
+                    .player
+                    .invs
+                    .get(&worn_id)
+                    .is_some_and(|w| w.total(obj.id) > 0)
+            }
+            Condition::Coord { x, z, level, radius } => {
+                let c0 = active.player.pathing.coord;
+                c0.y() == *level
+                    && (c0.x() as i32 - *x as i32).abs() <= *radius as i32
+                    && (c0.z() as i32 - *z as i32).abs() <= *radius as i32
+            }
+            Condition::Timeout => {
+                env.clock().saturating_sub(self.base.start_tick) >= self.task.budget_ticks as u64
+            }
+            Condition::Death => active.player.stats.levels[3] == 0,
+            Condition::All(cs) => cs.iter().all(|c| self.eval(c, env, pid)),
+            Condition::Any(cs) => cs.iter().any(|c| self.eval(c, env, pid)),
+            Condition::Not(c) => !self.eval(c, env, pid),
+        }
+    }
+}
