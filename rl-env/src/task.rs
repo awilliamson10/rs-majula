@@ -18,6 +18,7 @@
 use crate::ontology::{EntityKind, Ontology};
 use crate::scenario::{stat_index, Loadout};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Cmp { Eq, Ne, Lt, Le, Gt, Ge }
@@ -203,8 +204,6 @@ fn resolve_condition(c: &Condition, o: &Ontology, errs: &mut Vec<String>) {
     }
 }
 
-use std::collections::HashMap;
-
 /// ★ THE 64-MILESTONE CEILING, STATED RATHER THAN DISCOVERED. A `u64` mask is
 /// what keeps [`Armed::fold`] allocation-free on the tick path. Tutorial Island
 /// has thirteen. A task wanting more needs a different carrier, and it is
@@ -338,10 +337,43 @@ impl Armed {
     /// unresolvable name is `false` -- `Task::resolve` already failed loud at
     /// load, so reaching here means the cache changed under a resolved task.
     fn eval(&self, c: &Condition, env: &crate::EnvHarness, pid: u16) -> bool {
-        let Some(active) = env.engine.get_player(pid) else {
-            // A departed player satisfies Death and nothing else.
-            return matches!(c, Condition::Death);
-        };
+        // ★★ PLAYER-INDEPENDENT ARMS GO FIRST, AND THE COMBINATORS ALWAYS
+        // RECURSE, EVEN FOR A DEPARTED PLAYER. `Timeout` needs only the
+        // engine clock and this task's own baseline -- no player at all --
+        // and a departed player unambiguously satisfies `Death`. The
+        // combinators (`All`/`Any`/`Not`) must reach their children
+        // regardless of whether THIS node happens to need `active`, or a
+        // composed condition like `Any([Death, Timeout])` returns false at
+        // this top-level call before ever recursing into the `Death` arm
+        // that would have said true. That was the actual shape of a bug
+        // caught in review: an earlier version short-circuited on a missing
+        // player with `matches!(c, Condition::Death)`, which silently
+        // stopped `Timeout` (and any `fail` built on it, e.g. Tutorial
+        // Island's) from firing the instant the player force-logged-out.
+        // Do NOT collapse this back into a single early return on a missing
+        // player -- that collapse is precisely what broke it.
+        match c {
+            Condition::All(cs) => return cs.iter().all(|c| self.eval(c, env, pid)),
+            Condition::Any(cs) => return cs.iter().any(|c| self.eval(c, env, pid)),
+            Condition::Not(c) => return !self.eval(c, env, pid),
+            Condition::Timeout => {
+                return env.clock().saturating_sub(self.base.start_tick)
+                    >= self.task.budget_ticks as u64;
+            }
+            // A departed player IS dead -- there is no HP left to check.
+            Condition::Death => {
+                return match env.engine.get_player(pid) {
+                    None => true,
+                    Some(active) => match stat_index("hitpoints") {
+                        Some(i) => active.player.stats.levels[i] == 0,
+                        None => false,
+                    },
+                };
+            }
+            _ => {}
+        }
+        // Every remaining variant needs a live player; without one, false.
+        let Some(active) = env.engine.get_player(pid) else { return false };
         let cache = crate::cache();
         match c {
             Condition::Varp(name, cmp, want) => match cache.varps.get_by_debugname(name) {
@@ -369,11 +401,11 @@ impl Armed {
                 }
                 None => false,
             },
-            Condition::Stat(name, cmp, want) => match crate::scenario::stat_index(name) {
+            Condition::Stat(name, cmp, want) => match stat_index(name) {
                 Some(i) => cmp.holds(active.player.stats.levels[i] as i64, *want as i64),
                 None => false,
             },
-            Condition::XpGain(name, want) => match crate::scenario::stat_index(name) {
+            Condition::XpGain(name, want) => match stat_index(name) {
                 Some(i) => {
                     let now = active.player.stats.xp[i] as i64;
                     let was = self.base.xp.get(i).copied().unwrap_or(0) as i64;
@@ -410,13 +442,15 @@ impl Armed {
                     && (c0.x() as i32 - *x as i32).abs() <= *radius as i32
                     && (c0.z() as i32 - *z as i32).abs() <= *radius as i32
             }
-            Condition::Timeout => {
-                env.clock().saturating_sub(self.base.start_tick) >= self.task.budget_ticks as u64
-            }
-            Condition::Death => active.player.stats.levels[3] == 0,
-            Condition::All(cs) => cs.iter().all(|c| self.eval(c, env, pid)),
-            Condition::Any(cs) => cs.iter().any(|c| self.eval(c, env, pid)),
-            Condition::Not(c) => !self.eval(c, env, pid),
+            // Handled (and returned from) in the player-independent match
+            // above. Reachable only if that match's exhaustiveness is ever
+            // broken by a refactor -- `false` rather than `unreachable!()`,
+            // because eval must never panic no matter how it is misused.
+            Condition::Timeout
+            | Condition::Death
+            | Condition::All(_)
+            | Condition::Any(_)
+            | Condition::Not(_) => false,
         }
     }
 }

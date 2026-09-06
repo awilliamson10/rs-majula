@@ -127,3 +127,56 @@ fn the_turn_budget_is_a_separate_stop_from_the_tick_budget() {
     armed.note_turn();
     assert!(armed.turns_exhausted(), "two turns of a two-turn budget is exhausted");
 }
+
+#[test]
+fn a_departed_player_still_gets_correct_timeout_death_and_composed_answers() {
+    let mut env = EnvHarness::boot_seeded(4242);
+    let pid = env.spawn_and_equip("scorer", CoordGrid::new(3222, 0, 3218), &Loadout::default());
+
+    // fail: bare Death.  progress[0]: Any([Death, <something false>]) -- the
+    // composed case a naive "departed player satisfies Death and nothing
+    // else" early return gets wrong, because it never recurses into Any.
+    // goal stays Condition::Timeout (from axe_task), with a tiny budget so
+    // the clock-driven leg is cheap to drive to completion in the test.
+    let mut t = axe_task();
+    t.budget_ticks = 5;
+    t.fail = Some(Condition::Death);
+    t.progress[0].when = Condition::Any(vec![
+        Condition::Death,
+        Condition::Inv("bronze_axe".into(), Cmp::Ge, 1),
+    ]);
+    let mut armed = t.arm(&env, pid).expect("arm");
+
+    armed.fold(&env, pid);
+    assert!(!armed.failed(), "the player is alive, so Death must not be true yet");
+    assert!(!armed.goal(), "budget_ticks=5 has not elapsed yet");
+
+    // Depart the player BEFORE the budget elapses, so a false "not yet timed
+    // out" on the next fold proves Timeout is reading the clock rather than
+    // returning false because the player is gone.
+    env.engine.remove_player(pid);
+    armed.fold(&env, pid);
+    assert!(armed.failed(), "a departed player IS dead -- fail: Death must fire");
+    assert_eq!(
+        armed.latched() & 1,
+        1,
+        "Any([Death, ..]) must recurse into Death for a departed player, not \
+         short-circuit false at the Any node"
+    );
+    assert!(
+        !armed.goal(),
+        "Timeout must still read the clock for a departed player -- budget_ticks=5 \
+         has not elapsed yet, so this must not have flipped true just because the \
+         player left"
+    );
+
+    for _ in 0..5 {
+        env.cycle();
+    }
+    armed.fold(&env, pid);
+    assert!(
+        armed.goal(),
+        "and once the budget genuinely elapses, Timeout must fire for a departed \
+         player exactly as it would for a live one"
+    );
+}
