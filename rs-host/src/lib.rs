@@ -18,7 +18,7 @@
 //! thread; the fused loop's consumer (Bun) is single-threaded by construction.
 
 use std::collections::BTreeMap;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rl_env::tape::TUTORIAL_SPAWN;
@@ -163,6 +163,15 @@ pub struct Host {
     /// range between two field reads, and the resulting row would be half one
     /// npc and half another with nothing reporting an error.
     npc_slots: Vec<u16>,
+    /// The armed task, folded at the end of every [`host_step`].
+    ///
+    /// ★ `None` until `host_task_load`. Every reader degrades to zero rather
+    /// than aborting: the TypeScript side calls these each turn and a wrong
+    /// call order must not take the process with it.
+    task: Option<rl_env::task::Armed>,
+    /// Milestone names, owned for the life of the armed task so
+    /// [`host_task_milestone_name`] can hand out stable pointers.
+    task_names: Vec<CString>,
 }
 
 /// Boots the full world and spawns one fresh player at an ARBITRARY coordinate.
@@ -269,6 +278,8 @@ pub extern "C" fn host_new_at(seed: u64, x: u16, level: u8, z: u16) -> *mut c_vo
         cache,
         empty: Vec::new(),
         npc_slots: Vec::new(),
+        task: None,
+        task_names: Vec::new(),
     })) as *mut c_void
 }
 
@@ -331,6 +342,16 @@ pub extern "C" fn host_step(h: *mut c_void) -> u32 {
         while let Ok(buf) = agent.rx.try_recv() {
             agent.out.extend_from_slice(&buf);
         }
+    }
+    // ★★ THE SCORER'S TICK HOOK. Folded here, at the end of every step, rather
+    // than at a turn boundary: a turn is an input schedule spanning many ticks
+    // and a condition can go true and false inside one (catch the shrimp, cook
+    // the shrimp). Sampling at the boundary misses it and presents as "the
+    // model never did that step".
+    //
+    // ★ `first_pid` only, exactly like `host_varp`. The baseline is one agent.
+    if let Some(task) = host.task.as_mut() {
+        task.fold(&host.env, host.first_pid);
     }
     // ★ The FIRST agent's length, which is what this return has always meant:
     // `host/src/ffi.ts`'s `step()` sizes its `toArrayBuffer` view of
@@ -664,6 +685,91 @@ pub extern "C" fn host_varp(h: *mut c_void, name: *const c_char) -> i32 {
     host.env
         .try_player_varp(host.first_pid, n)
         .unwrap_or(HOST_VARP_UNKNOWN)
+}
+
+pub const HOST_TASK_BAD_PATH: i32 = -1;
+pub const HOST_TASK_PARSE: i32 = -2;
+pub const HOST_TASK_RESOLVE: i32 = -3;
+pub const HOST_TASK_ARM: i32 = -4;
+
+/// Loads, resolves and arms a task file. Returns its milestone count, or a
+/// negative code.
+///
+/// # ★ THIS IS THE SCORER, AND IT IS ENGINE TRUTH
+/// Same rule as [`host_varp`]: the TypeScript side exposes it from `truth.ts`
+/// only. A milestone mask must never reach `ClientState` -- the agent's
+/// observation is a pure function of the client's decoded state, and an
+/// engine-truth field in it would break faithfulness silently.
+///
+/// Fails loud (negative, never zero-and-silent) because the failure being
+/// designed against is a task that loads fine and then scores zero forever.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_task_load(h: *mut c_void, path: *const c_char) -> i32 {
+    let host = host_ref(h);
+    if path.is_null() {
+        return HOST_TASK_BAD_PATH;
+    }
+    let Ok(p) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+        return HOST_TASK_BAD_PATH;
+    };
+    let Ok(task) = rl_env::task::Task::load(p) else {
+        return HOST_TASK_PARSE;
+    };
+    let o = rl_env::ontology::build();
+    if task.resolve(&o).is_err() {
+        return HOST_TASK_RESOLVE;
+    }
+    let Ok(armed) = task.arm(&host.env, host.first_pid) else {
+        return HOST_TASK_ARM;
+    };
+    host.task_names = armed
+        .milestone_names()
+        .iter()
+        .map(|n| CString::new(*n).unwrap_or_else(|_| CString::new("?").unwrap()))
+        .collect();
+    let n = host.task_names.len() as i32;
+    host.task = Some(armed);
+    n
+}
+
+/// The LATCHED milestone bitmask -- the metric. Monotone: a run's score cannot
+/// go down. Zero when no task is armed.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_task_mask(h: *mut c_void) -> u64 {
+    host_ref(h).task.as_ref().map(|t| t.latched()).unwrap_or(0)
+}
+
+/// This tick's UN-LATCHED mask. Recorded alongside the latched one so a task
+/// the agent enters and loses is visible in the record. The metric is
+/// monotone; the record does not have to be.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_task_raw(h: *mut c_void) -> u64 {
+    host_ref(h).task.as_ref().map(|t| t.raw()).unwrap_or(0)
+}
+
+/// Bit 0: the goal condition has fired. Bit 1: the fail condition has.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_task_flags(h: *mut c_void) -> u32 {
+    match host_ref(h).task.as_ref() {
+        Some(t) => (t.goal() as u32) | ((t.failed() as u32) << 1),
+        None => 0,
+    }
+}
+
+/// Milestone `i`'s name, or an empty string when there is no such milestone.
+///
+/// ★★ THE POINTER IS INTO A `CString` THE HOST OWNS, valid until the next
+/// `host_task_load`. Returning one into a temporary would hand back freed
+/// memory, and the symptom is garbage milestone names in a report rather than
+/// a crash.
+#[unsafe(no_mangle)]
+pub extern "C" fn host_task_milestone_name(h: *mut c_void, i: u32) -> *const c_char {
+    static EMPTY: &[u8] = b"\0";
+    let host = host_ref(h);
+    match host.task_names.get(i as usize) {
+        Some(c) => c.as_ptr(),
+        None => EMPTY.as_ptr() as *const c_char,
+    }
 }
 
 /// Engine-truth position. ★ For the Task-4 state-parity test ONLY. The agent
