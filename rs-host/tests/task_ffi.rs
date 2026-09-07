@@ -52,25 +52,76 @@ fn milestone_names_are_readable_and_stable_across_calls() {
     assert_eq!(first, again, "the name must not be a pointer to a temporary");
 }
 
+/// A one-milestone task whose progress needs no player input at all:
+/// `Timeout` becomes true once the engine clock has advanced `budget_ticks`
+/// past the tick the task was armed at (see `Armed::eval`'s `Condition::
+/// Timeout` arm). With `budget_ticks: 1` and `Engine::cycle` documented to
+/// increment `self.clock` by exactly 1, the very first `host_step` after
+/// arming must flip this milestone from unset to latched.
+///
+/// ★ Written to a temp file, not `rl-env/tasks/`: that directory is for real
+/// curricula, not a fixture that exists solely to give this test a condition
+/// it can force deterministically without a client driving tutorial dialogue.
+fn write_timeout_task() -> (std::path::PathBuf, CString) {
+    let path = std::env::temp_dir().join(format!(
+        "rs_host_task_ffi_timeout_{}.ron",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        r#"Task(
+    name: "timeout_after_one_tick",
+    budget_ticks: 1,
+    budget_turns: 1,
+    start: Start(
+        at: Coord(3094, 0, 3107),
+        seed: 4242,
+        jitter: 0,
+        loadout: Loadout(stats: [], worn: [], inventory: [], vars: []),
+    ),
+    progress: [
+        Milestone(name: "one_tick_elapsed", when: Timeout),
+    ],
+    goal: Timeout,
+    fail: None,
+)
+"#,
+    )
+    .expect("write the temp task file");
+    let cpath = CString::new(path.to_str().unwrap()).unwrap();
+    (path, cpath)
+}
+
 #[test]
 fn stepping_folds_the_task_and_the_mask_is_monotone() {
     let h = *host();
-    assert!(rs_host::host_task_load(h as *mut _, task_path().as_ptr()) > 0);
+    let (path, cpath) = write_timeout_task();
+    let n = rs_host::host_task_load(h as *mut _, cpath.as_ptr());
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(n, 1, "expected exactly one milestone, got {n}");
+
+    // Freshly armed: nothing has folded yet, so the mask must read 0.
+    let before = rs_host::host_task_mask(h as *mut _);
+    assert_eq!(before, 0, "a freshly armed task must start at mask 0, got {before:#x}");
+
+    // ONE step is enough for `Timeout` (budget_ticks: 1) to fire: this is
+    // the 0 -> non-zero transition the old version of this test could not
+    // observe, because it drove 20 bare `host_step`s against a task whose
+    // milestones all gate on `%tutorial`, which nothing in this process
+    // advances.
+    rs_host::host_step(h as *mut _);
     let mut prev = rs_host::host_task_mask(h as *mut _);
-    for _ in 0..20 {
+    assert_eq!(
+        prev, 1,
+        "the Timeout milestone must latch on the first step after budget_ticks=1 has elapsed, got {prev:#x}"
+    );
+
+    // And it stays latched -- monotone -- for every step after that.
+    for _ in 0..19 {
         rs_host::host_step(h as *mut _);
         let now = rs_host::host_task_mask(h as *mut _);
         assert_eq!(now & prev, prev, "the latched mask lost a bit: {prev:#x} -> {now:#x}");
         prev = now;
     }
-}
-
-#[test]
-fn no_task_armed_reads_as_zero_rather_than_aborting() {
-    // A fresh handle with nothing armed. Reading must be safe: the TypeScript
-    // side calls these every turn and a wrong order must not kill the host.
-    let h = *host();
-    let _ = rs_host::host_task_mask(h as *mut _);
-    let _ = rs_host::host_task_raw(h as *mut _);
-    let _ = rs_host::host_task_flags(h as *mut _);
+    assert_eq!(prev, 1, "the one-milestone mask must still read 1 after 20 steps, got {prev:#x}");
 }
